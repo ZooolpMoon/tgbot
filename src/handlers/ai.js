@@ -17,6 +17,8 @@ export async function handleAIRequest({
 }) {
   const nowSec = Math.floor(Date.now() / 1000);
   const todayStr = getDateKey(env);
+  const ownerName = env.BOT_OWNER_NAME ? String(env.BOT_OWNER_NAME).trim() : "管理员";
+  const ownerUsername = env.BOT_OWNER_USERNAME ? String(env.BOT_OWNER_USERNAME).trim() : "Zooolp_admin";
 
   let quotaReserved = false;
   let pointsCharged = false;
@@ -75,8 +77,8 @@ export async function handleAIRequest({
 
   // 构造 system prompt
   let baseSystemPrompt = isMaster
-    ? "你是一个高效专业的 AI 助手。\n【对话者身份确认】：\n1. 当前与你对话的用户是你的管理员 <填写为你的称呼>。\n2. 你是 AI 助手，绝不可自称为 <填写为你的称呼>。\n3. 当用户问“我是谁”时回答“你是管理员 <填写为你的称呼>”；当用户问“你是谁”时回答“我是你的 AI 助手”。\n4. 称呼对方为【管理员】，回答要简洁干练、直奔主题。"
-    : "你是一个通用的 AI 助手。\n【访客模式】：\n1. 你是管理员 @Zooolp_admin 拥有的个人 AI 助手。\n2. 当访客问“你是谁”或“谁是你的管理员”时，清晰说明你是 <填写为你的称呼> 的 AI 助手。\n3. 绝不泄露关于管理员的敏感隐私。";
+    ? `你是一个高效专业的 AI 助手。\n【对话者身份确认】：\n1. 当前与你对话的用户是你的管理员 ${ownerName}。\n2. 你是 AI 助手，绝不可自称为 ${ownerName}。\n3. 当用户问“我是谁”时回答“你是管理员 ${ownerName}”；当用户问“你是谁”时回答“我是你的 AI 助手”。\n4. 称呼对方为【管理员】，回答要简洁干练、直奔主题。`
+    : `你是一个通用的 AI 助手。\n【访客模式】：\n1. 你是管理员 @${ownerUsername} 拥有的个人 AI 助手。\n2. 当访客问“你是谁”或“谁是你的管理员”时，清晰说明你是 ${ownerName} 的 AI 助手。\n3. 绝不泄露关于管理员的敏感隐私。`;
 
   baseSystemPrompt += `\n【语言偏好】：优先使用 ${userConfig.lang === "en" ? "English" : "中文"}。`;
   if (isGroupCtx) {

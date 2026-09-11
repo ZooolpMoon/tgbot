@@ -5,6 +5,7 @@
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
+import { randomFloat } from "../utils/random.js";
 
 export const WheelGame = {
   async renderMain(token, env, chatId, userKey, messageId) {
@@ -42,7 +43,7 @@ export const WheelGame = {
     if (afterDeduct === null) return answerCallback(token, callbackId, "❌ 积分不足，无法下注！", true);
 
     let currentBalance = afterDeduct;
-    const roll = Math.random() * 100;
+    const roll = randomFloat() * 100;
     let multiplier, emoji, label;
     if (roll < 30) { multiplier = 0; emoji = "💀"; label = "失去本金"; }
     else if (roll < 55) { multiplier = 0.5; emoji = "😐"; label = "拿回一半"; }

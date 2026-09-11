@@ -5,6 +5,7 @@
 import { answerCallback } from "../telegram/api.js";
 import { sendMessage } from "../telegram/api.js";
 import { refundPoint } from "../services/points.js";
+import { escapeHtml } from "../utils/html.js";
 
 // 上架/下架
 export async function actionToggleItem(token, env, callback, itemId) {
@@ -47,7 +48,7 @@ export async function actionShip(token, env, callback, orderId) {
       token, o.chat_id,
       `🚚 <b>订单已发货</b>\n-------------------------\n` +
       `🧾 订单号：<code>${o.order_no}</code>\n` +
-      `${o.item_icon} 商品：${o.item_name}\n\n` +
+      `${o.item_icon} 商品：${escapeHtml(o.item_name)}\n\n` +
       `如有疑问请联系管理员。`,
       "HTML"
     );
@@ -103,7 +104,7 @@ export async function actionCancel(token, env, callback, orderId) {
       token, o.chat_id,
       `❌ <b>订单已取消</b>\n-------------------------\n` +
       `🧾 订单号：<code>${o.order_no}</code>\n` +
-      `${o.item_icon} 商品：${o.item_name}\n` +
+      `${o.item_icon} 商品：${escapeHtml(o.item_name)}\n` +
       `💰 已退还 <b>${o.price}</b> 积分。`,
       "HTML"
     );

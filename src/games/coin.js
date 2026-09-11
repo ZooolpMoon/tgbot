@@ -5,6 +5,7 @@
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
+import { randomInt } from "../utils/random.js";
 
 export const CoinGame = {
   async renderMain(token, env, chatId, userKey, messageId) {
@@ -57,7 +58,7 @@ export const CoinGame = {
     if (afterDeduct === null) return answerCallback(token, callbackId, "❌ 积分不足，无法下注！", true);
 
     let currentBalance = afterDeduct;
-    const result = Math.random() < 0.5 ? "heads" : "tails";
+    const result = randomInt(2) === 0 ? "heads" : "tails";
     const isWin = result === choice;
     const resultText = result === "heads" ? "👑 正面" : "🌵 反面";
     const choiceText = choice === "heads" ? "👑 正面" : "🌵 反面";

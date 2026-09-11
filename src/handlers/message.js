@@ -35,11 +35,18 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   let isCommandLike = userText.startsWith("/");
 
   if (isGroupCtx) {
+    const mentionEntities = Array.isArray(message.entities)
+      ? message.entities.filter(e => e.type === "mention" || e.type === "bot_command")
+      : [];
+
     if (botUsername) {
       isMentioned = userText.toLowerCase().includes(`@${botUsername}`);
     } else {
-      const entities = message.entities?.some(e => e.type === "mention" || e.type === "bot_command");
-      isMentioned = userText.includes("@") || Boolean(entities);
+      isMentioned = mentionEntities.length > 0;
+      if (!isMentioned) {
+        const mentionNames = [...userText.matchAll(/@([\w]+)/g)].map(m => m[1].toLowerCase());
+        isMentioned = mentionNames.some(name => name.includes("bot"));
+      }
     }
 
     if (!isMentioned && !isCommandLike) return;
@@ -101,9 +108,10 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   // ==========================================
   if (command === "/shop" || command === "/store") {
     if (isGroupCtx) {
+      const botMention = botUsername ? `@${botUsername}` : "Bot";
       await sendAutoDelete(
         token, chatId,
-        "🛒 商城功能仅支持<b>私聊</b>使用。\n\n请点击下方链接直接与 Bot 私聊：\n👉 私聊我：@Zooolp_bot",
+        `🛒 商城功能仅支持<b>私聊</b>使用。\n\n请点击下方链接直接与 Bot 私聊：\n👉 私聊我：${botMention}`,
         "HTML", isGroupCtx, ctx
       );
       return;

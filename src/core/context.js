@@ -21,6 +21,7 @@ export function resolveUserContext(payload) {
   const msg = payload.message || payload.edited_message;
 
   const build = (chat, from) => {
+    if (!chat || !from || chat.id == null || from.id == null) return null;
     const chatType = chat.type || "private";
     const chatId = String(chat.id);
     const userId = String(from.id);

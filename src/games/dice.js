@@ -5,6 +5,7 @@
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
+import { randomInt } from "../utils/random.js";
 
 export const DiceGame = {
   async renderMain(token, env, chatId, userKey, messageId) {
@@ -58,9 +59,9 @@ export const DiceGame = {
     if (afterDeduct === null) return answerCallback(token, callbackId, "❌ 积分不足，无法下注！", true);
 
     let currentBalance = afterDeduct;
-    const d1 = Math.floor(Math.random() * 6) + 1;
-    const d2 = Math.floor(Math.random() * 6) + 1;
-    const d3 = Math.floor(Math.random() * 6) + 1;
+    const d1 = randomInt(6) + 1;
+    const d2 = randomInt(6) + 1;
+    const d3 = randomInt(6) + 1;
     const sum = d1 + d2 + d3;
     const icons = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"];
     const diceStr = `${icons[d1 - 1]} ${icons[d2 - 1]} ${icons[d3 - 1]}`;

@@ -131,3 +131,39 @@ CREATE TABLE IF NOT EXISTS shop_order_log (
   created_at TEXT    DEFAULT CURRENT_TIMESTAMP
 );
 `;
+
+let schemaReady = false;
+let schemaPromise = null;
+
+function splitSchemaStatements(sql) {
+  return sql
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n")
+    .split(";")
+    .map((stmt) => stmt.trim())
+    .filter(Boolean);
+}
+
+/**
+ * 幂等初始化表结构。
+ * 每个 Worker isolate 只会真正执行一次；
+ * 重复部署或冷启动都不会破坏已有数据。
+ */
+export async function ensureSchema(env) {
+  if (!env?.DB) return;
+  if (schemaReady) return;
+
+  if (!schemaPromise) {
+    schemaPromise = env.DB.batch(
+      splitSchemaStatements(SCHEMA_SQL).map((stmt) => env.DB.prepare(stmt))
+    ).then(() => {
+      schemaReady = true;
+    }).catch((err) => {
+      schemaPromise = null;
+      throw err;
+    });
+  }
+
+  return schemaPromise;
+}

@@ -7,6 +7,8 @@ import { getUserPoints } from "../services/users.js";
 import { escapeHtml } from "../utils/html.js";
 import { answerCallback } from "../telegram/api.js";
 import { tryDeductPoints, refundPoint, logPointChange } from "../services/points.js";
+import { randomInt } from "../utils/random.js";
+import { logError } from "../core/logger.js";
 
 export async function renderShopHome(token, env, chatId, userKey, messageId = null) {
   if (!env.DB) {
@@ -114,6 +116,7 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   }
 
   // 扣库存
+  let stockDecremented = false;
   if (item.stock > 0) {
     const stockRes = await env.DB.prepare(
       "UPDATE shop_items SET stock = stock - 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND stock > 0"
@@ -123,15 +126,28 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
       await refundPoint(env, userKey, item.price, `商品 [${item.name}] 库存不足自动退款`);
       return answerCallback(token, callback.id, "❌ 手慢了，已被抢完", true);
     }
+    stockDecremented = true;
   }
 
   // 创建订单
-  const orderNo = "S" + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
+  const orderNo = "S" + Date.now().toString(36).toUpperCase() + randomInt(1679616).toString(36).padStart(4, "0").toUpperCase();
 
-  await env.DB.prepare(`
-    INSERT INTO shop_orders (order_no, user_key, user_id, chat_id, item_id, item_name, item_icon, price, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-  `).bind(orderNo, userKey, userId, chatId, item.id, item.name, item.icon, item.price).run();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO shop_orders (order_no, user_key, user_id, chat_id, item_id, item_name, item_icon, price, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+    `).bind(orderNo, userKey, userId, chatId, item.id, item.name, item.icon, item.price).run();
+  } catch (e) {
+    // 订单创建失败时回滚：退回积分，并恢复已扣减的库存。
+    if (stockDecremented) {
+      await env.DB.prepare(
+        "UPDATE shop_items SET stock = stock + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+      ).bind(item.id).run();
+    }
+    await refundPoint(env, userKey, item.price, `创建订单失败自动退款 [${item.name}]`);
+    logError("商城创建订单失败:", e);
+    return answerCallback(token, callback.id, "❌ 下单失败，积分和库存已自动退回", true);
+  }
 
   await logPointChange(env, userKey, -item.price, afterDeduct, `兑换 [${item.name}] 订单 ${orderNo}`);
 
@@ -153,18 +169,18 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
     ]
   };
 
-    await editMessageText(token, chatId, messageId, successText, keyboard, "HTML");
+  await editMessageText(token, chatId, messageId, successText, keyboard, "HTML");
 
   // 通知管理员（新订单）
-	try {
-	  const { notifyAdminNewOrder } = await import("./notify.js");
-      await notifyAdminNewOrder(token, env,
-        { order_no: orderNo, price: item.price, chat_id: chatId, created_at: new Date().toISOString() },
-        item,
-        { userId, firstName }
+  try {
+    const { notifyAdminNewOrder } = await import("./notify.js");
+    await notifyAdminNewOrder(token, env,
+      { order_no: orderNo, price: item.price, chat_id: chatId, created_at: new Date().toISOString() },
+      item,
+      { userId, firstName }
     );
   } catch (e) {
-    console.error("通知管理员失败:", e);
+    logError("通知管理员失败:", e);
   }
 }
 

@@ -2,7 +2,27 @@
 
 ## 📅 版本历史
 
-### v2.0.0 — 2026-09（当前版本）
+### v2.0.2 — 2026-09-11
+
+**部署与配置**
+
+- 🚀 完成 Cloudflare Workers 全流程部署
+- 🔗 配置 Telegram webhook 指向 Worker
+- 🤖 启用 Workers AI 绑定，修复「Cloudflare Workers AI 未绑定」报错
+- 🗄️ 重建 D1 数据库 `tgbot-db` 并绑定，自动建表验证通过
+- 🔐 拆分配置：新增 `wrangler.production.toml`（本地生产，含真实密钥）与 `wrangler.toml`（GitHub 模板，占位符）
+- 🙈 更新 `.gitignore`，忽略生产配置，避免密钥上传
+- 📝 更新 README 与 CHANGELOG
+
+### v2.0.1 — 2026-09-11
+
+**修复**
+
+- 🐛 修复群聊中误触发机器人回复的问题：仅在实际提及 Bot 或命令消息时才响应
+- 📝 补充部署说明和环境变量说明，便于本地/云端快速部署
+- 🔍 优化 README 文档结构，整理功能、目录和版历史
+
+### v2.0.0 — 2026-09
 
 **🎉 商城时代**
 

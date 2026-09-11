@@ -21,7 +21,6 @@ export async function ensurePointsLogTable(env) {
 export async function logPointChange(env, userKey, changeAmount, balanceAfter, reason) {
   if (!env.DB || !userKey) return;
   try {
-    await ensurePointsLogTable(env);
     await env.DB.prepare(
       "INSERT INTO points_log (user_key, change_amount, balance_after, reason) VALUES (?, ?, ?, ?)"
     ).bind(userKey, Math.trunc(changeAmount), Math.trunc(balanceAfter), String(reason || "未说明")).run();
@@ -44,13 +43,11 @@ export async function refundPoint(env, userKey, amount, reason) {
   if (safeAmount <= 0) return;
 
   const result = await env.DB.prepare(
-    "UPDATE users SET points = points + ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ?"
-  ).bind(safeAmount, userKey).run();
+    "UPDATE users SET points = points + ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ? RETURNING points"
+  ).bind(safeAmount, userKey).first();
 
-  if (result.meta.changes > 0) {
-    const user = await env.DB.prepare("SELECT points FROM users WHERE user_key = ?").bind(userKey).first();
-    const balance = Number(user?.points);
-    await logPointChange(env, userKey, safeAmount, Number.isFinite(balance) ? balance : 0, reason);
+  if (result && Number.isFinite(Number(result.points))) {
+    await logPointChange(env, userKey, safeAmount, Number(result.points), reason);
   }
 }
 

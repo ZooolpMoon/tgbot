@@ -8,28 +8,30 @@ export async function upsertUserInfo(env, uctx) {
   if (!env.DB || !uctx) return;
   const { userKey, userId, username, firstName, sceneKey, chatId, chatType } = uctx;
 
-  await env.DB.prepare(`
-    INSERT INTO users (user_key, user_id, username, first_name, updated_at)
-    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(user_key) DO UPDATE SET
-      user_id = EXCLUDED.user_id,
-      username = EXCLUDED.username,
-      first_name = EXCLUDED.first_name,
-      updated_at = CURRENT_TIMESTAMP
-  `).bind(userKey, userId, username || "无用户名", firstName || "未命名").run();
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO users (user_key, user_id, username, first_name, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_key) DO UPDATE SET
+        user_id = EXCLUDED.user_id,
+        username = EXCLUDED.username,
+        first_name = EXCLUDED.first_name,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(userKey, userId, username || "无用户名", firstName || "未命名"),
 
-  await env.DB.prepare(`
-    INSERT INTO user_scenes (scene_key, user_key, chat_id, chat_type, user_id, username, first_name, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(scene_key) DO UPDATE SET
-      user_key = EXCLUDED.user_key,
-      chat_id = EXCLUDED.chat_id,
-      chat_type = EXCLUDED.chat_type,
-      user_id = EXCLUDED.user_id,
-      username = EXCLUDED.username,
-      first_name = EXCLUDED.first_name,
-      updated_at = CURRENT_TIMESTAMP
-  `).bind(sceneKey, userKey, chatId, chatType, userId, username || "无用户名", firstName || "未命名").run();
+    env.DB.prepare(`
+      INSERT INTO user_scenes (scene_key, user_key, chat_id, chat_type, user_id, username, first_name, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(scene_key) DO UPDATE SET
+        user_key = EXCLUDED.user_key,
+        chat_id = EXCLUDED.chat_id,
+        chat_type = EXCLUDED.chat_type,
+        user_id = EXCLUDED.user_id,
+        username = EXCLUDED.username,
+        first_name = EXCLUDED.first_name,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(sceneKey, userKey, chatId, chatType, userId, username || "无用户名", firstName || "未命名")
+  ]);
 }
 
 export async function saveSceneConfig(env, uctx, config) {
@@ -69,7 +71,7 @@ export async function saveSceneConfig(env, uctx, config) {
 export async function getUserPoints(env, userKey) {
   if (!env.DB) return DEFAULTS.POINTS;
   const u = await env.DB.prepare("SELECT points FROM users WHERE user_key = ?").bind(userKey).first();
-  return u && Number.isFinite(Number(u.points)) ? Math.max(0, Math.floor(Number(u.points))) : 0;
+  return u && Number.isFinite(Number(u.points)) ? Math.max(0, Math.floor(Number(u.points))) : DEFAULTS.POINTS;
 }
 
 export async function loadUserConfig(env, userKey, sceneKey) {
@@ -84,15 +86,17 @@ export async function loadUserConfig(env, userKey, sceneKey) {
 
   if (!env.DB) return config;
 
-  const u = await env.DB.prepare("SELECT points FROM users WHERE user_key = ?").bind(userKey).first();
+  const [u, s] = await Promise.all([
+    env.DB.prepare("SELECT points FROM users WHERE user_key = ?").bind(userKey).first(),
+    env.DB.prepare(
+      "SELECT lang, custom_prompt, max_daily, rate_limit_sec, last_msg_time FROM user_scenes WHERE scene_key = ?"
+    ).bind(sceneKey).first()
+  ]);
+
   if (u) {
     const p = Number(u.points);
     config.points = Number.isFinite(p) ? Math.max(0, Math.floor(p)) : DEFAULTS.POINTS;
   }
-
-  const s = await env.DB.prepare(
-    "SELECT lang, custom_prompt, max_daily, rate_limit_sec, last_msg_time FROM user_scenes WHERE scene_key = ?"
-  ).bind(sceneKey).first();
 
   if (s) {
     config.lang = s.lang || DEFAULTS.LANG;

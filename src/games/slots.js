@@ -5,6 +5,7 @@
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
+import { randomInt } from "../utils/random.js";
 
 export const SlotsGame = {
   async renderMain(token, env, chatId, userKey, messageId) {
@@ -40,9 +41,9 @@ export const SlotsGame = {
 
     let currentBalance = afterDeduct;
     const icons = ["🍎", "🍊", "🍇", "🍒", "🔔", "💎"];
-    const r1 = icons[Math.floor(Math.random() * icons.length)];
-    const r2 = icons[Math.floor(Math.random() * icons.length)];
-    const r3 = icons[Math.floor(Math.random() * icons.length)];
+    const r1 = icons[randomInt(icons.length)];
+    const r2 = icons[randomInt(icons.length)];
+    const r3 = icons[randomInt(icons.length)];
     const slotsStr = `[ ${r1} | ${r2} | ${r3} ]`;
 
     let multiplier = 0;

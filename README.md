@@ -2,6 +2,8 @@
 
 一个基于 **Cloudflare Workers + D1 + Workers AI** 的 Telegram 机器人，支持 AI 对话、全局积分、每日签到、多人在线小游戏、积分商城，以及完整的后台管理控制台。
 
+> 当前版本：v2.0.2（2026-09-11）
+
 ---
 
 ## 📑 目录
@@ -21,6 +23,52 @@
 - [🛠️ 常用命令](#️-常用命令)
 - [⚖️ 合规说明](#️-合规说明)
 - [🔐 安全说明](#-安全说明)
+
+---
+
+## 🚀 快速开始
+
+### 1. 环境准备
+
+- Node.js 18+（推荐 LTS）
+- Cloudflare account
+- Telegram Bot Token
+- Cloudflare D1 数据库
+- Cloudflare Workers AI（可选：AI 对话功能依赖）
+
+### 2. 配置环境变量
+
+在 Cloudflare Worker 环境变量中设置：
+
+- `BOT_TOKEN`：Telegram Bot Token
+- `BOT_USERNAME`：Bot 用户名（如 `@MyBot` 或 `MyBot`，推荐设置）
+- `MY_TELEGRAM_ID`：管理员 Telegram 用户 ID
+- `APP_TIMEZONE`：时区，默认 `Asia/Shanghai`
+- `DB`：D1 数据库绑定
+- `AI`：Workers AI 绑定
+
+### 3. 初始化数据库
+
+数据库表会在 Bot 第一次收到请求时**自动创建**（`src/core/db.js` 的 `ensureSchema` 会执行 `SCHEMA_SQL`，全部为 `CREATE TABLE IF NOT EXISTS`，幂等且不破坏已有数据）。
+
+如需手动初始化，可执行 `SCHEMA_SQL`，包含以下表：
+
+- `users`
+- `user_scenes`
+- `chat_history`
+- `daily_stats`
+- `daily_checkin`
+- `points_log`
+- `shop_items`
+- `shop_orders`
+- `shop_order_log`
+
+### 4. 部署
+
+1. 使用生产配置部署：`npx wrangler deploy -c wrangler.production.toml`
+2. 确保 webhook 指向 Worker 入口
+3. 设置 Telegram webhook：`https://api.telegram.org/bot<token>/setWebhook?url=<worker_url>`
+4. 向 Bot 发送 `/start` 进行初始化
 
 ---
 
@@ -442,8 +490,10 @@ graph LR
 
 ```
 tgbot/
-├── wrangler.toml                    # Cloudflare Workers 配置
+├── wrangler.toml                    # Cloudflare Workers 配置（GitHub 模板）
+├── wrangler.production.toml         # 生产配置（本地，勿提交）
 ├── README.md                        # 项目说明
+├── CHANGELOG.md                     # 版本历史
 │
 └── src/
     ├── index.js                     # 🚀 Worker 入口
@@ -553,17 +603,34 @@ mkdir tgbot
 cd tgbot
 ```
 
-### 5. 创建 `wrangler.toml`
+### 5. 准备配置文件
+
+项目拆分为两个配置文件：
+
+| 文件 | 用途 | 是否提交 GitHub |
+|------|------|----------------|
+| `wrangler.toml` | GitHub 模板，只含占位符，不含真实密钥 | ✅ 提交 |
+| `wrangler.production.toml` | 生产配置，含真实 Token / ID / D1 database_id | ❌ 已加入 `.gitignore` |
+
+`wrangler.production.toml` 示例：
 
 ```toml
-name = "my-telegram-bot"
+name = "tgbot"
 main = "src/index.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2025-01-01"
+
+[vars]
+BOT_TOKEN = "你的机器人Token"
+BOT_USERNAME = "Zooolp_bot"
+MY_TELEGRAM_ID = "你的Telegram数字ID"
+APP_TIMEZONE = "Asia/Shanghai"
+BOT_OWNER_NAME = "管理员"
+BOT_OWNER_USERNAME = "Zooolp_admin"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "你的数据库名"
-database_id = "你的数据库ID"
+database_name = "tgbot-db"
+database_id = "你的D1数据库ID"
 
 [ai]
 binding = "AI"
@@ -572,20 +639,20 @@ binding = "AI"
 ### 6. 创建 D1 数据库
 
 ```bash
-wrangler d1 create my-bot-db
+wrangler d1 create tgbot-db
 ```
 
-把输出的 `database_id` 填到 `wrangler.toml`。
+把输出的 `database_id` 填到 `wrangler.production.toml`。
 
 ### 7. 初始化数据库表
 
-把 `src/core/db.js` 里的 `SCHEMA_SQL` 内容**全选**复制到 Cloudflare Dashboard → D1 → Console 执行。
+部署后第一次收到 Bot 消息时，Worker 会自动调用 `ensureSchema` 建表，无需手动执行。
 
-所有表都是 `CREATE TABLE IF NOT EXISTS`，可以**重复执行**。
+（可选）如需手动执行，可把 `src/core/db.js` 里的 `SCHEMA_SQL` 复制到 Cloudflare Dashboard → D1 → Console 执行；所有语句都是 `CREATE TABLE IF NOT EXISTS`，可以**重复执行**。
 
 ### 8. 配置环境变量
 
-Cloudflare Dashboard → Workers & Pages → 你的 Worker → Settings → Variables：
+生产环境变量写在 `wrangler.production.toml` 的 `[vars]` 中：
 
 | 变量名 | 说明 | 必填 |
 |--------|------|------|
@@ -593,12 +660,15 @@ Cloudflare Dashboard → Workers & Pages → 你的 Worker → Settings → Vari
 | `MY_TELEGRAM_ID` | 管理员 Telegram 数字 ID | ✅ |
 | `BOT_USERNAME` | 机器人用户名（不含 @） | 建议 |
 | `APP_TIMEZONE` | 时区（默认 `Asia/Shanghai`） | 可选 |
-| `ADMIN_NOTIFY_CHAT_ID` | 商城订单通知会话（默认用 `MY_TELEGRAM_ID`） | 可选 |
+| `BOT_OWNER_NAME` | 管理员显示名称 | 可选 |
+| `BOT_OWNER_USERNAME` | 管理员用户名 | 可选 |
+
+> 若更看重安全性，可把 `BOT_TOKEN` 改为 Worker Secret，而不是写入 `[vars]`。
 
 ### 9. 部署
 
 ```bash
-wrangler deploy
+wrangler deploy -c wrangler.production.toml
 ```
 
 ### 10. 绑定 Webhook
@@ -794,8 +864,8 @@ export async function actionRefundOnly(token, env, callback, orderId) {
 ## 🛠️ 常用命令
 
 ```bash
-# 部署到生产环境
-wrangler deploy
+# 部署到生产环境（使用本地生产配置）
+wrangler deploy -c wrangler.production.toml
 
 # 本地预览
 wrangler dev
@@ -804,10 +874,10 @@ wrangler dev
 wrangler tail
 
 # 操作数据库
-wrangler d1 execute my-bot-db --remote --command "SELECT * FROM users LIMIT 10;"
+wrangler d1 execute tgbot-db --remote --command "SELECT * FROM users LIMIT 10;"
 
 # 导出数据
-wrangler d1 export my-bot-db --output=backup.sql --remote
+wrangler d1 export tgbot-db --output=backup.sql --remote
 
 # 查看 Worker 版本
 wrangler versions list
@@ -856,7 +926,7 @@ wrangler versions list
 
 ## 🔐 安全说明
 
-- **BOT_TOKEN** 通过环境变量注入，不写入代码
+- **BOT_TOKEN** 仅存放在本地的 `wrangler.production.toml`，已通过 `.gitignore` 排除，不写入代码或 GitHub
 - **MY_TELEGRAM_ID** 用于管理员权限校验，非管理员无法访问 `/admin`
 - **管理员会话 30 分钟自动过期**，需重新 `/admin` 解锁
 - **积分变动全部有日志**（`points_log`）

@@ -50,8 +50,15 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   const chatId = uctx.chatId;
   const sceneKey = uctx.sceneKey;
   const userKey = uctx.userKey;
+  const data = callback?.data || "";
+
+  if (!callback?.message?.message_id) {
+    if (callback?.id) {
+      await answerCallback(token, callback.id, "❌ 无效的回调消息", true);
+    }
+    return;
+  }
   const msgId = callback.message.message_id;
-  const data = callback.data;
 
   if (env.DB) ctx.waitUntil(upsertUserInfo(env, uctx));
 

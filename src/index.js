@@ -5,6 +5,7 @@ import { resolveUserContext } from "./core/context.js";
 import { handleCallback } from "./handlers/callback.js";
 import { handleMessage } from "./handlers/message.js";
 import { logError } from "./core/logger.js";
+import { ensureSchema } from "./core/db.js";
 
 export default {
   async fetch(request, env, ctx) {
@@ -16,6 +17,8 @@ export default {
     if (!token) return new Response("Bot Token Missing", { status: 500 });
 
     try {
+      // 首次请求时自动建表（IF NOT EXISTS，幂等，不破坏已有数据）
+      await ensureSchema(env);
       const payload = await request.json();
       const uctx = resolveUserContext(payload);
       if (!uctx) return new Response("OK", { status: 200 });
