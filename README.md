@@ -288,7 +288,7 @@ flowchart TD
     CBAdmin -->|是| CBAdminRoute[管理员路由分发]
 
     MSG --> GroupCheck{群聊?}
-    GroupCheck -->|是| MentionCheck{@BOT 或 /指令?}
+    GroupCheck -->|是| MentionCheck{"@BOT 或 /指令?"}
     MentionCheck -->|否| Silent[静默忽略]
     MentionCheck -->|是| CleanText[清理文本]
     GroupCheck -->|否| CleanText
