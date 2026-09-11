@@ -1,11 +1,11 @@
-name = "tgbot"
+name = "你的项目名称"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "tg_bot_db"
-database_id = "d2e6c2e9-b15e-41fa-8e07-75137fa1c063"
+database_name = "你的数据库名称"
+database_id = "你的数据库id"
 
 [ai]
 binding = "AI"
