@@ -4,8 +4,8 @@ compatibility_date = "2024-01-01"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "你的数据库名称"
-database_id = "你的数据库id"
+database_name = "your-db-name"
+database_id = "YOUR_DATABASE_ID_HERE"
 
 [ai]
 binding = "AI"
