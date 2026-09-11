@@ -1,0 +1,47 @@
+// ==========================================
+// /profile
+// ==========================================
+
+import { sendAutoDelete } from "../../telegram/auto-delete.js";
+import { getDateKey } from "../../services/time.js";
+import { escapeHtml } from "../../utils/html.js";
+
+export async function cmdProfile({ env, ctx, token, chatId, uctx, userConfig, isGroupCtx, isMaster, sceneKey, userKey }) {
+  let dailyCount = 0;
+  let totalCheckins = 0;
+  const todayStr = getDateKey(env);
+
+  if (env.DB) {
+    const row = await env.DB.prepare(
+      "SELECT count FROM daily_stats WHERE scene_key = ? AND date_str = ?"
+    ).bind(sceneKey, todayStr).first();
+    dailyCount = row ? Number(row.count) || 0 : 0;
+
+    const ck = await env.DB.prepare(
+      "SELECT COUNT(*) AS total FROM daily_checkin WHERE user_key = ?"
+    ).bind(userKey).first();
+    totalCheckins = Number(ck?.total) || 0;
+  }
+
+  const limitStr = userConfig.maxDaily === -1 ? "无限制" : `${dailyCount}/${userConfig.maxDaily} 条`;
+  const sourceText = isGroupCtx ? `👥 群聊 (${uctx.chatId})` : `💬 私聊`;
+
+  const profileText =
+    `👤 <b>个人信息卡片</b>\n` +
+    `-------------------------\n` +
+    `🆔 <b>用户 ID:</b> <code>${uctx.userId}</code>\n` +
+    `🧩 <b>积分键:</b> <code>${escapeHtml(userKey)}</code>\n` +
+    `📍 <b>当前场景:</b> ${escapeHtml(sceneKey)}\n` +
+    `🗂️ <b>来源:</b> ${sourceText}\n` +
+    `👤 <b>名字:</b> ${escapeHtml(uctx.firstName || "未命名")}\n` +
+    `🏷️ <b>用户名:</b> ${escapeHtml(uctx.username ? "@" + uctx.username : "无用户名")}\n` +
+    `👑 <b>身份:</b> ${isMaster ? "最高管理员" : "普通用户"}\n` +
+    `🪙 <b>全局积分:</b> ${userConfig.points}\n` +
+    `📅 <b>累计签到:</b> ${totalCheckins} 天\n` +
+    `📅 <b>本场景今日额度:</b> ${limitStr}\n` +
+    `⏱️ <b>本场景冷却:</b> ${userConfig.rateLimitSec} 秒\n` +
+    `🌐 <b>偏好语言:</b> ${userConfig.lang}\n` +
+    `📝 <b>自定义设定:</b> ${escapeHtml(userConfig.customPrompt) || "未设置"}`;
+
+  await sendAutoDelete(token, chatId, profileText, "HTML", isGroupCtx, ctx);
+}
