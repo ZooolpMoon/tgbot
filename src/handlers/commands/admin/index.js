@@ -10,7 +10,7 @@ import { logPointChange } from "../../../services/points.js";
 import { ERR } from "../../../config/messages.js";
 import { RULES } from "../../../config/constants.js";
 
-async function checkAdminUnlocked(env, isMaster, chatId) {
+export async function checkAdminUnlocked(env, isMaster, chatId) {
   if (!isMaster) return false;
   if (!env.DB) return true;
   const now = Math.floor(Date.now() / 1000);

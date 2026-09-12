@@ -3,6 +3,7 @@
 // ==========================================
 
 import { POINTS } from "./constants.js";
+import { escapeHtml } from "../utils/html.js";
 
 export const ERR = {
   PERMISSION_DENIED: "❌ 权限不足：只有管理员可以访问管理控制台。",
@@ -19,14 +20,15 @@ export const ERR = {
 
 export const TIPS = {
   MENU_TITLE: "👑 <b>管理员控制台</b>\n-------------------------\n点击下方按钮查看或编辑用户数据：",
-  WELCOME: (name, user, tag, pts, quota, lang) =>
-    `👋 您好，${name}（${user}）！\n` +
-    `📌 当前身份：${tag}\n\n` +
-    `当前全局积分：${pts}\n` +
-    `本场景今日额度：${quota}\n` +
-    `当前语言：${lang}\n\n` +
-    `📅 输入 /checkin 每日签到领 ${POINTS.CHECKIN_REWARD} 积分\n` +
-    `📖 输入 /help 查看完整指令列表\n` +
-    `🎮 输入 /game 打开游戏大厅\n\n` +
-    `输入 /admin 进入管理控制台`
+  WELCOME: (name, user, tag, pts, quota, lang, isMaster = false) =>
+    `👋 <b>您好，${escapeHtml(name)}（${escapeHtml(user)}）！</b>\n` +
+    `-------------------------\n` +
+    `📌 当前身份：${escapeHtml(tag)}\n` +
+    `🪙 全局积分：<b>${pts}</b>\n` +
+    `📅 本场景今日额度：<b>${quota}</b>\n` +
+    `🌐 语言偏好：<b>${escapeHtml(lang)}</b>\n\n` +
+    `📅 <code>/checkin</code> 每日签到 +${POINTS.CHECKIN_REWARD}\n` +
+    `📖 <code>/help</code> 查看指令列表\n` +
+    `🎮 <code>/game</code> 打开游戏大厅` +
+    (isMaster ? `\n\n👑 <code>/admin</code> 进入管理控制台` : ``)
 };

@@ -29,19 +29,22 @@ export async function cmdProfile({ env, ctx, token, chatId, uctx, userConfig, is
   const profileText =
     `👤 <b>个人信息卡片</b>\n` +
     `-------------------------\n` +
-    `🆔 <b>用户 ID:</b> <code>${uctx.userId}</code>\n` +
-    `🧩 <b>积分键:</b> <code>${escapeHtml(userKey)}</code>\n` +
-    `📍 <b>当前场景:</b> ${escapeHtml(sceneKey)}\n` +
-    `🗂️ <b>来源:</b> ${sourceText}\n` +
     `👤 <b>名字:</b> ${escapeHtml(uctx.firstName || "未命名")}\n` +
     `🏷️ <b>用户名:</b> ${escapeHtml(uctx.username ? "@" + uctx.username : "无用户名")}\n` +
     `👑 <b>身份:</b> ${isMaster ? "最高管理员" : "普通用户"}\n` +
-    `🪙 <b>全局积分:</b> ${userConfig.points}\n` +
+    `🪙 <b>全局积分:</b> <b>${userConfig.points}</b>\n` +
     `📅 <b>累计签到:</b> ${totalCheckins} 天\n` +
     `📅 <b>本场景今日额度:</b> ${limitStr}\n` +
     `⏱️ <b>本场景冷却:</b> ${userConfig.rateLimitSec} 秒\n` +
-    `🌐 <b>偏好语言:</b> ${userConfig.lang}\n` +
-    `📝 <b>自定义设定:</b> ${escapeHtml(userConfig.customPrompt) || "未设置"}`;
+    `🌐 <b>偏好语言:</b> ${escapeHtml(userConfig.lang)}\n` +
+    `📝 <b>自定义设定:</b> ${escapeHtml(userConfig.customPrompt) || "未设置"}` +
+    (isMaster
+      ? `\n\n🔍 <b>管理员技术信息</b>\n` +
+        `🆔 <b>用户 ID:</b> <code>${escapeHtml(String(uctx.userId))}</code>\n` +
+        `🧩 <b>积分键:</b> <code>${escapeHtml(userKey)}</code>\n` +
+        `📍 <b>场景键:</b> <code>${escapeHtml(sceneKey)}</code>\n` +
+        `🗂️ <b>来源:</b> ${escapeHtml(sourceText)}`
+      : ``);
 
   await sendAutoDelete(token, chatId, profileText, "HTML", isGroupCtx, ctx);
 }

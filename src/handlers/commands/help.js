@@ -51,6 +51,7 @@ function buildHelpText(isMaster, isGroupCtx) {
 
   if (isPrivate) {
     adminCmds.push(`/shop_admin - 🛒 商城管理（仅私聊，需先 /admin）`);
+    adminCmds.push(`/shop_add - ➕ 添加商品（仅私聊，需先 /admin）`);
   }
 
   // ---------- 拼接 ----------

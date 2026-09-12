@@ -12,7 +12,8 @@ import {
   cmdUsersGroup,
   cmdStats,
   cmdAddPoints,
-  cmdAdminRoot
+  cmdAdminRoot,
+  checkAdminUnlocked
 } from "./commands/admin/index.js";
 import { handleAIRequest } from "./ai.js";
 import { upsertUserInfo, loadUserConfig } from "../services/users.js";
@@ -36,14 +37,21 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   let isCommandLike = userText.startsWith("/");
 
   if (isGroupCtx) {
-    const mentionEntities = Array.isArray(message.entities)
-      ? message.entities.filter(e => e.type === "mention" || e.type === "bot_command")
-      : [];
-
     if (botUsername) {
-      isMentioned = userText.toLowerCase().includes(`@${botUsername}`);
+      const mentionEntities = Array.isArray(message.entities)
+        ? message.entities.filter(e => e.type === "mention")
+        : [];
+      isMentioned = mentionEntities.some(e => {
+        const mentionText = userText.slice(e.offset || 0, (e.offset || 0) + (e.length || 0));
+        return mentionText.toLowerCase() === `@${botUsername}`;
+      });
+      if (!isMentioned) {
+        isMentioned = userText.toLowerCase().includes(`@${botUsername}`);
+      }
     } else {
-      isMentioned = mentionEntities.length > 0;
+      isMentioned = Array.isArray(message.entities)
+        ? message.entities.some(e => e.type === "mention" || e.type === "bot_command")
+        : false;
       if (!isMentioned) {
         const mentionNames = [...userText.matchAll(/@([\w]+)/g)].map(m => m[1].toLowerCase());
         isMentioned = mentionNames.some(name => name.includes("bot"));
@@ -63,6 +71,17 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     }
   } else {
     isMentioned = true;
+  }
+
+  // 忽略发给其他机器人的指令（例如 /start@OtherBot）
+  if (botUsername && isCommandLike) {
+    const firstToken = userText.split(/\s+/)[0] || "";
+    if (firstToken.includes("@")) {
+      const target = firstToken.split("@").slice(1).join("@").toLowerCase();
+      if (target && target !== botUsername) return;
+      userText = userText.replace(/@\w+/g, "").trim();
+      if (!userText) return;
+    }
   }
 
   const username = uctx.username ? `@${uctx.username}` : "无用户名";
@@ -145,6 +164,10 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
       await sendAutoDelete(token, chatId, "🛒 商城管理仅支持私聊使用", null, isGroupCtx, ctx);
       return;
     }
+    if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+      await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
+      return;
+    }
     const { renderShopAdmin } = await import("../shop/admin.js");
     await renderShopAdmin(token, env, chatId, null);
     return;
@@ -160,6 +183,10 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     }
     if (isGroupCtx) {
       await sendAutoDelete(token, chatId, "🛒 添加商品仅支持<b>私聊</b>使用。", "HTML", isGroupCtx, ctx);
+      return;
+    }
+    if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+      await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
       return;
     }
     const addArg = userText.split(/\s+/).slice(1).join(" ").trim().toLowerCase();

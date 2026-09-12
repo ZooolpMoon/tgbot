@@ -7,7 +7,7 @@ import { saveSceneConfig } from "../../services/users.js";
 import { getDateKey } from "../../services/time.js";
 import { TIPS } from "../../config/messages.js";
 
-export async function cmdStart({ env, ctx, token, chatId, uctx, userConfig, isGroupCtx, firstName, username, sceneKey }) {
+export async function cmdStart({ env, ctx, token, chatId, uctx, userConfig, isGroupCtx, isMaster, firstName, username, sceneKey }) {
   let dailyCount = 0;
   const todayStr = getDateKey(env);
 
@@ -22,6 +22,6 @@ export async function cmdStart({ env, ctx, token, chatId, uctx, userConfig, isGr
   const limitStr = userConfig.maxDaily === -1 ? "无限制" : `${dailyCount}/${userConfig.maxDaily} 条`;
   const tag = isGroupCtx ? "👥 群聊成员（本群独立场景）" : "💬 私聊用户";
 
-  const welcome = TIPS.WELCOME(firstName, username, tag, userConfig.points, limitStr, userConfig.lang);
-  await sendAutoDelete(token, chatId, welcome, null, isGroupCtx, ctx);
+  const welcome = TIPS.WELCOME(firstName, username, tag, userConfig.points, limitStr, userConfig.lang, isMaster);
+  await sendAutoDelete(token, chatId, welcome, "HTML", isGroupCtx, ctx);
 }
