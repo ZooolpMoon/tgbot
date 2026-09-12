@@ -10,6 +10,7 @@ import { cmdSetLang } from "./setlang.js";    // 语言更改指令
 import { cmdSetPrompt } from "./setprompt.js";// AI 自定义指令
 import { cmdClear } from "./clear.js";        // 清除 AI 上下文指令
 import { cmdGame } from "./game.js";          // 游戏指令
+import { cmdPoints } from "./points.js";      // 积分流水指令
 
 export const COMMANDS = {
   "/start": cmdStart,
@@ -22,7 +23,9 @@ export const COMMANDS = {
   "/setprompt": cmdSetPrompt,
   "/clear": cmdClear,
   "/game": cmdGame,
-  "/games": cmdGame
+  "/games": cmdGame,
+  "/points": cmdPoints,
+  "/mypoints": cmdPoints
 };
 
 export async function dispatchCommand(cmd, ctxObj) {

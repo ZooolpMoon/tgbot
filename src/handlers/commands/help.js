@@ -20,7 +20,8 @@ function buildHelpText(isMaster, isGroupCtx) {
   userCmds.push(
     `/start - 开始使用 / 查看欢迎信息`,
     `/help - 📖 查看本指令列表`,
-    `/checkin - 📅 每日签到（+5 积分，北京时间）`
+    `/checkin - 📅 每日签到（+5 积分，北京时间）`,
+    `/points - 📜 查看我的积分流水`
   );
 
   // 商城：仅私聊
