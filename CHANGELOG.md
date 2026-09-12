@@ -25,7 +25,7 @@
 
 ### 修复与优化
 
-- 📄 许可信息统一为 **GPL-3.0**：仓库根目录的 `LICENSE` 一直是完整的 GPL-3.0 全文，README 的「许可」章节此前误写为 MIT，现已改正并在 `package.json` 补上 `"license": "GPL-3.0-only"`
+- 📄 许可信息统一为 **GPL-3.0**：仓库根目录的 `LICENSE` 一直是完整的 GPL-3.0 全文，README 的「许可」章节此前误写为 MIT，现已改正并在 `package.json` 补上 `"license": "GPL-3.0-or-later"`（第 3 版或更高版本）
 - 📖 重写 README：重排章节结构，补齐新指令、配置项、数据库表、备份/安全与常见问题
 - 🔒 配置备份脚本改为从本地未跟踪文件 `.config-backup` 读取目标仓库，公开仓库里不再出现私有仓库名
 - 🧾 订单取消改为原子状态流转（`WHERE status = 'pending'`），避免并发下重复退款

@@ -2,6 +2,7 @@ node_modules/
 .wrangler/
 .dev.vars
 .config-backup
+.local/
 *.log
 wrangler.production.toml
 .vs/
