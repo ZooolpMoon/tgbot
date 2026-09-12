@@ -6,36 +6,29 @@
 
 ---
 
-## 🌍 开源模板 vs 生产实例
+## 🌍 仓库用途与部署方式
 
-本仓库是**开源模板**：所有配置都是占位符，不含任何密钥、账号 ID 或机器人用户名，任何人 clone 后填上自己的参数即可部署。
+本仓库既是**开源项目**也是**代码备份**：本地写完代码 `git push`，就同时完成了开源发布与备份。
 
-生产环境请使用**独立的私有仓库**（例如 `tgbot-prod`）：
-
-| | 开源模板仓库（本仓库） | 生产实例仓库（私有） |
-|---|---|---|
-| 可见性 | Public | Private |
-| 内容 | 代码 + CI 自检，全占位符 | 同一份代码 + 生产 Secrets/Variables |
-| 部署 | 默认不部署（缺 Secrets 会跳过） | push 到 main 自动部署 |
-| 真实密钥 | ❌ 永不出现 | 只存于 Actions Secrets，不写入文件 |
-
-**同步方式**（两个仓库共用一份代码）：
+部署在**本地**完成，不依赖 GitHub Actions：
 
 ```bash
-# 本地一个工作目录，配两个远端
-git remote set-url origin https://github.com/<你的账号>/tgbot.git          # 开源模板（公开）
-git remote add prod https://github.com/<你的账号>/tgbot-prod.git           # 生产实例（私有）
-
-# 开发完成后，推给开源仓库；再推给生产仓库触发自动部署
-git push origin main
-git push prod main
+npm run deploy:prod    # 部署到 Cloudflare Workers（使用本地生产配置）
+npm run dev            # 本地开发预览（读取被忽略的 .dev.vars）
+npm run check          # 提交前的语法 / import 自检
 ```
 
-本地部署（不进任何仓库）仍然使用被 `.gitignore` 忽略的 `wrangler.production.toml`：
+三个配置文件的边界：
 
-```bash
-npm run deploy:prod
-```
+| 文件 | 作用 | 是否进仓库 |
+|------|------|-----------|
+| `wrangler.toml` | 模板配置，全部是占位符 | ✅ 提交（公开） |
+| `wrangler.production.toml` | 生产配置：真实 Token / 账号 ID / D1 database_id | ❌ 已 gitignore，仅本地 |
+| `.dev.vars` | 本地 `wrangler dev` 用的变量 | ❌ 已 gitignore，仅本地 |
+
+> ⚠️ 因为本仓库是公开的，`wrangler.production.toml` 和 `.dev.vars` **永远不会**被提交。
+> 也就是说 GitHub 上只有代码，**这份含 Bot Token 的配置需要你另行备份**（密码管理器 / 私有存储），
+> 否则换电脑时需要重新向 BotFather 取 Token 并重建配置。
 
 ---
 
@@ -48,7 +41,7 @@ npm run deploy:prod
 - [🎮 游戏模块](#-游戏模块)
 - [🛒 商城模块](#-商城模块)
 - [📁 目录结构](#-目录结构)
-- [🌍 开源模板 vs 生产实例](#-开源模板-vs-生产实例)
+- [🌍 仓库用途与部署方式](#-仓库用途与部署方式)
 - [🚀 部署步骤](#-部署步骤)
 - [📖 指令列表](#-指令列表)
 - [🔧 常见问题](#-常见问题)
@@ -977,14 +970,14 @@ npm run deploy:prod
 wrangler versions list
 ```
 
-### 🔄 CI/CD 自动部署（GitHub Actions）
+### 🔄 GitHub Actions（可选，本机部署用不到）
 
-仓库内置两个工作流：
+日常工作流是**本地部署**：写完代码 `git push` 备份，部署执行 `npm run deploy:prod`，不需要任何 Actions 配置。仓库里的两个工作流只是给"想在 CI 里部署"的人准备的：
 
 | 工作流 | 触发时机 | 作用 |
 |--------|---------|------|
 | `.github/workflows/ci.yml` | push / PR | `npm ci` + `npm run check`（语法与 import 路径自检） |
-| `.github/workflows/deploy.yml` | push 到 main / 手动触发 | 自检通过后生成生产配置并执行 `wrangler deploy` |
+| `.github/workflows/deploy.yml` | push 到 main / 手动触发 | 自检通过后生成生产配置并执行 `wrangler deploy`（没配 Secrets 时自动跳过） |
 
 **启用自动部署**：到仓库 `Settings → Secrets and variables → Actions` 添加以下 Secrets：
 
