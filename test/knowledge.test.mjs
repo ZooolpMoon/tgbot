@@ -11,7 +11,8 @@ import { KB } from "../src/config/constants.js";
 import {
   chunkText, encodeEmbedding, decodeEmbedding, cosineSimilarity, bigramScore,
   ingestDocument, searchKnowledge, buildKnowledgeContext, listDocuments,
-  setDocumentEnabled, deleteDocument, countChunks, KB_GLOBAL_SCOPE
+  setDocumentEnabled, deleteDocument, countChunks, KB_GLOBAL_SCOPE,
+  buildKnowledgeInstruction, resolveAnswerMode
 } from "../src/services/knowledge.js";
 
 // ---- 假的 Workers AI：把文本映射成「关键词命中」的 4 维向量 ----
@@ -191,6 +192,49 @@ test("searchKnowledge：没有 Workers AI 时退化为关键词检索", { skip: 
   db.close();
 });
 
+test("检索门槛：语义勉强过线但没有关键词重叠的资料会被丢弃", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  // 含「退货」的文本给 [1,0]；其它文本给一个与查询余弦≈0.35 的向量
+  // （0.35 高于最低阈值 0.30，但低于「强相关」0.45）
+  const env = makeEnv(db, {
+    AI: {
+      async run(_m, opts = {}) {
+        if (Array.isArray(opts.text)) {
+          return { data: opts.text.map((t) => (String(t).includes("退货") ? [1, 0] : [0.35, 0.93675])) };
+        }
+        return { response: "ok" };
+      }
+    }
+  });
+
+  await ingestDocument(env, { scopeKey: KB_GLOBAL_SCOPE, title: "运费说明", content: "运费由买家承担，偏远地区另计。" });
+  await ingestDocument(env, { scopeKey: KB_GLOBAL_SCOPE, title: "退货政策", content: "退货：7 天无理由退货。" });
+
+  const hits = await searchKnowledge(env, KB_GLOBAL_SCOPE, "退货政策是什么");
+  assert.equal(hits.length, 1, "只应保留真正相关的资料（无关资料不该被注入提示词）");
+  assert.equal(hits[0].title, "退货政策");
+  assert.ok(hits[0].keyword > 0, "结果里应保留关键词分数");
+  db.close();
+});
+
+test("回答模式：hybrid 允许用 AI 自己的知识回答，strict 只依据资料", () => {
+  assert.equal(resolveAnswerMode({}), "hybrid");
+  assert.equal(resolveAnswerMode({ KB_ANSWER_MODE: "strict" }), "strict");
+  assert.equal(resolveAnswerMode({ KB_ANSWER_MODE: "STRICT" }), "strict");
+  assert.equal(resolveAnswerMode({ KB_ANSWER_MODE: "其它值" }), "hybrid");
+
+  const context = "【资料：退货政策】\n7 天无理由退货";
+  const hybrid = buildKnowledgeInstruction(context);
+  assert.ok(hybrid.includes("【知识库资料】"));
+  assert.ok(hybrid.includes("不要因为「资料里没写」就拒绝回答"), "hybrid 要允许用自己的知识回答");
+  assert.ok(hybrid.includes("不要编造"), "hybrid 也要禁止编造来源");
+
+  const strict = buildKnowledgeInstruction(context, "strict");
+  assert.ok(strict.includes("只依据上面的资料回答"));
+  assert.ok(strict.includes("如实说明「资料中未提及」"));
+  assert.ok(!strict.includes("不要因为「资料里没写」就拒绝回答"));
+});
+
 test("searchKnowledge：本群资料与全局资料一起参与，停用后立刻失效", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
   const db = createTestDB();
   const env = makeEnv(db);
@@ -304,6 +348,66 @@ test("AI 对话：命中知识库时把资料拼进提示词", { skip: !hasSqlit
   const systemPrompt = aiCalls[0].messages[0].content;
   assert.ok(systemPrompt.includes("【知识库资料】"), "提示词应包含检索到的资料");
   assert.ok(systemPrompt.includes("退货政策"));
+  assert.ok(systemPrompt.includes("不要因为「资料里没写」就拒绝回答"), "默认 hybrid：资料没覆盖也要用 AI 自己的知识回答");
+  assert.ok(!systemPrompt.includes("只依据上面的资料回答"), "hybrid 不应该限制成只能依据资料");
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("AI 对话：strict 模式下才要求「只依据资料」", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 100);
+  const env = makeEnv(db, { KB_ANSWER_MODE: "strict" });
+  const ctx = makeCtx();
+  resetCalls();
+
+  await ingestDocument(env, {
+    scopeKey: KB_GLOBAL_SCOPE, title: "退货政策", content: "退货：7 天内可无理由退货。"
+  });
+
+  await handleMessage({
+    env, ctx, token: "TEST_TOKEN", myId: "999",
+    uctx: {
+      chatId: "1", userId: "999", chatType: "private",
+      userKey: "user:999", sceneKey: "private:1",
+      username: "admin", firstName: "管理员"
+    },
+    isGroupCtx: false,
+    payload: { message: { text: "退货怎么办", entities: [] } }
+  });
+
+  assert.equal(aiCalls.length, 1);
+  const systemPrompt = aiCalls[0].messages[0].content;
+  assert.ok(systemPrompt.includes("只依据上面的资料回答"));
+  assert.ok(systemPrompt.includes("如实说明「资料中未提及」"));
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("AI 对话：知识库没有相关资料时，提示词里完全不带资料段落", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 100);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  // 库里只有无关资料
+  await ingestDocument(env, { scopeKey: KB_GLOBAL_SCOPE, title: "群规", content: "本群禁止广告刷屏。" });
+
+  await handleMessage({
+    env, ctx, token: "TEST_TOKEN", myId: "999",
+    uctx: {
+      chatId: "1", userId: "999", chatType: "private",
+      userKey: "user:999", sceneKey: "private:1"
+    },
+    isGroupCtx: false,
+    payload: { message: { text: "帮我写一段 Python 快速排序", entities: [] } }
+  });
+
+  assert.equal(aiCalls.length, 1);
+  const systemPrompt = aiCalls[0].messages[0].content;
+  assert.ok(!systemPrompt.includes("【知识库资料】"), "没有命中时不应注入资料段落");
+  assert.ok(!systemPrompt.includes("资料中未提及"));
   await Promise.all(ctx.pending);
   db.close();
 });

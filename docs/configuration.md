@@ -17,6 +17,7 @@
 | `AI_MODELS` | 可选 | 内置回退链 | 逗号分隔的模型列表，覆盖默认主 / 备模型 |
 | `AI_HISTORY_MAX_CHARS` | 可选 | `6000` | AI 上下文字符预算（`>= 500` 才生效） |
 | `KB_EMBED_MODEL` | 可选 | `@cf/baai/bge-m3` | 知识库向量模型；换模型后需在面板里「🧠 重建索引」 |
+| `KB_ANSWER_MODE` | 可选 | `hybrid` | 知识库回答模式：`hybrid` 资料没覆盖时用 AI 自己的知识回答；`strict` 只依据资料 |
 
 ### 关于 AI 模型
 

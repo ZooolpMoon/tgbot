@@ -103,8 +103,14 @@ export const KB = {
   // 每次检索取回的资料条数、相似度阈值与拼进提示词的最大长度
   TOP_K: 4,
   MIN_SCORE: 0.30,
+  // 语义分数达到该值才算「强相关」；低于它时必须有真实关键词重叠才采用，
+  // 避免「勉强过线的无关资料」被拼进提示词，导致模型被迫说「资料中未提及」
+  STRONG_SCORE: 0.45,
   MIN_SCORE_KEYWORD: 0.12,
   MAX_CONTEXT_CHARS: 2000,
+  // 回答模式：hybrid = 资料优先，资料没覆盖就用 AI 自己的知识正常回答；
+  //           strict = 只依据资料，资料没有就明说（客服式严格问答）
+  ANSWER_MODE: "hybrid",
   // 向量模型（可用环境变量 KB_EMBED_MODEL 覆盖；换模型后需要重建索引）
   EMBED_MODEL: "@cf/baai/bge-m3",
   EMBED_BATCH: 8

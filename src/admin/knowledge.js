@@ -23,7 +23,7 @@ import { buildGroupScopeKey } from "../core/context.js";
 import {
   KB_GLOBAL_SCOPE, ingestDocument, listDocuments, getDocument,
   setDocumentEnabled, deleteDocument, kbStats, searchKnowledge,
-  reindexKnowledge, moveDocumentScope, copyDocumentToScope
+  reindexKnowledge, moveDocumentScope, copyDocumentToScope, resolveAnswerMode
 } from "../services/knowledge.js";
 import { logAdminAction } from "../services/admin-log.js";
 import { logError } from "../core/logger.js";
@@ -140,7 +140,9 @@ export async function renderKnowledgeHome(token, env, chatId, messageId, uctx) {
   text += `当前作用域：<b>${scope.label}</b>\n`;
   text += `${LAYOUT.DIVIDER}\n`;
   text += `📄 文档：<b>${stats.docs}</b> 篇 · 🧩 分块：<b>${stats.chunks}</b> / ${KB.MAX_TOTAL_CHUNKS}\n`;
-  text += `🤖 向量模型：<code>${escapeHtml(model)}</code>${aiReady ? "" : "（⚠️ 未绑定 Workers AI，将退化为关键词检索）"}\n\n`;
+  const answerMode = resolveAnswerMode(env);
+  text += `🤖 向量模型：<code>${escapeHtml(model)}</code>${aiReady ? "" : "（⚠️ 未绑定 Workers AI，将退化为关键词检索）"}\n`;
+  text += `💬 回答模式：${answerMode === "strict" ? "严格（只依据资料；资料没写就说未提及）" : "混合（资料优先，资料没覆盖时用 AI 自己的知识回答）"}\n\n`;
   text += `用户提问时，AI 会先检索这里的资料再回答。\n`;
   text += scope.isGroup
     ? `💡 这里管理的是<b>本群</b>知识库；想管理全局知识库，请在<b>私聊</b>里打开 /admin。\n`
@@ -421,7 +423,8 @@ export async function handleKnowledgeInput({ env, token, chatId, uctx, userText,
   // ---- 检索测试 ----
   if (step === "test:query") {
     await clearSession(env, chatId);
-    const hits = await searchKnowledge(env, scopeKey, text, { topK: 5, minScore: 0 });
+    // 检索测试是调试工具：阈值放到 0，把候选全部列出来（方便判断资料够不够）
+    const hits = await searchKnowledge(env, scopeKey, text, { topK: 5, minScore: 0, strongScore: 0 });
 
     let body = `🔍 <b>检索测试</b>\n${LAYOUT.DIVIDER}\n`;
     body += `❓ 问题：${escapeHtml(text)}\n`;
@@ -431,7 +434,8 @@ export async function handleKnowledgeInput({ env, token, chatId, uctx, userText,
       body += `<i>没有命中任何资料。请确认文档已启用、内容与问题相关。</i>`;
     } else {
       hits.forEach((hit, index) => {
-        body += `<b>${index + 1}. ${escapeHtml(hit.title)}</b> · 相似度 ${hit.score.toFixed(3)}\n`;
+        body += `<b>${index + 1}. ${escapeHtml(hit.title)}</b> · 综合分 ${hit.score.toFixed(3)}` +
+          (hit.keyword !== undefined ? ` · 关键词 ${Number(hit.keyword).toFixed(2)}` : "") + `\n`;
         body += `${escapeHtml(hit.content.slice(0, 200))}${hit.content.length > 200 ? "…" : ""}\n\n`;
       });
       body += `<i>相似度仅供判断资料是否匹配；越低说明越需要补充资料。</i>`;
