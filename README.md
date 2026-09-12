@@ -658,6 +658,7 @@ wrangler d1 create tgbot-db
 |--------|------|------|
 | `BOT_TOKEN` | Telegram Bot Token | ✅ |
 | `MY_TELEGRAM_ID` | 管理员 Telegram 数字 ID | ✅ |
+| `WEBHOOK_SECRET` | webhook 安全令牌（可选，需与 setWebhook 的 secret_token 一致） | 可选 |
 | `BOT_USERNAME` | 机器人用户名（不含 @） | 建议 |
 | `APP_TIMEZONE` | 时区（默认 `Asia/Shanghai`） | 可选 |
 | `BOT_OWNER_NAME` | 管理员显示名称 | 可选 |
