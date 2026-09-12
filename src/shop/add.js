@@ -4,8 +4,9 @@
 
 import { sendMessage } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
+import { logAdminAction } from "../services/admin-log.js";
 
-const CATEGORY_MAP = {
+export const CATEGORY_MAP = {
   "1": "virtual",
   "虚拟": "virtual",
   "虚拟物品": "virtual",
@@ -50,7 +51,7 @@ export async function cancelAddItem(token, env, chatId) {
   return sendMessage(token, chatId, "🚫 已取消添加商品。");
 }
 
-export async function handleAddItemInput({ env, token, chatId, userText }) {
+export async function handleAddItemInput({ env, token, chatId, userText, adminId = null }) {
   if (!env.DB) return false;
 
   const session = await env.DB.prepare(
@@ -156,6 +157,11 @@ export async function handleAddItemInput({ env, token, chatId, userText }) {
   `).bind(s.name, s.description, s.icon, s.price, s.stock, s.category).run();
 
   await env.DB.prepare("DELETE FROM shop_add_sessions WHERE chat_id = ?").bind(chatId).run();
+
+  await logAdminAction(env, {
+    adminId, chatId, action: "shop_item_add",
+    detail: `${s.icon} ${s.name} 价格 ${s.price} 库存 ${s.stock}`
+  });
 
   const catText = { virtual: "虚拟物品", physical: "实物商品", service: "服务" }[s.category] || s.category;
   return sendMessage(

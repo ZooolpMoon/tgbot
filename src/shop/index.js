@@ -203,16 +203,24 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
 
 // ---------- 我的订单 ----------
 export async function renderMyOrders(token, env, chatId, userKey, messageId, page = 1) {
-  if (!env.DB) return;
+  if (!env.DB) {
+    const text = "❌ 商城未启用（未绑定数据库）。";
+    return messageId
+      ? editMessageText(token, chatId, messageId, text)
+      : sendMessage(token, chatId, text);
+  }
 
-  const pageSize = 5;
-  const offset = (page - 1) * pageSize;
+  const pageSize = SHOP.ORDERS_PER_PAGE;
+  let safePage = Math.max(1, Math.floor(Number(page) || 1));
 
   const countRes = await env.DB.prepare(
     "SELECT COUNT(*) AS total FROM shop_orders WHERE user_key = ?"
   ).bind(userKey).first();
   const total = Number(countRes?.total) || 0;
   const totalPages = Math.ceil(total / pageSize) || 1;
+  if (safePage > totalPages) safePage = totalPages;
+
+  const offset = (safePage - 1) * pageSize;
 
   const { results } = await env.DB.prepare(
     "SELECT id, order_no, item_name, item_icon, price, status, created_at FROM shop_orders WHERE user_key = ? ORDER BY id DESC LIMIT ? OFFSET ?"
@@ -226,8 +234,10 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
   };
 
   let text = `📜 <b>我的订单</b>\n`;
-  text += `页码：<b>${page} / ${totalPages}</b>（共 ${total} 条）\n`;
+  text += `页码：<b>${safePage} / ${totalPages}</b>（共 ${total} 条）\n`;
   text += `-------------------------\n\n`;
+
+  const inline_keyboard = [];
 
   if (!results || results.length === 0) {
     text += `<i>还没有兑换记录，去商城看看吧～</i>\n`;
@@ -237,15 +247,26 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
       text += `🧾 <code>${o.order_no}</code> · 🪙 ${o.price}\n`;
       text += `📌 状态：${statusMap[o.status] || o.status}\n`;
       text += `🕒 ${o.created_at}\n\n`;
+
+      // 待处理订单允许用户自助取消并退款
+      if (o.status === "pending") {
+        inline_keyboard.push([
+          { text: `❌ 取消订单 ${o.order_no} 并退款`, callback_data: `shop_ucancel_${o.id}_${safePage}` }
+        ]);
+      }
     });
   }
 
-  const inline_keyboard = [];
   const navRow = [];
-  if (page > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `shop_orders_${page - 1}` });
-  if (page < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `shop_orders_${page + 1}` });
+  if (safePage > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `shop_orders_${safePage - 1}` });
+  if (safePage < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `shop_orders_${safePage + 1}` });
   if (navRow.length > 0) inline_keyboard.push(navRow);
   inline_keyboard.push([{ text: "🔙 返回商城", callback_data: "shop_home" }]);
 
-  return editMessageText(token, chatId, messageId, text, { inline_keyboard }, "HTML");
+  const keyboard = { inline_keyboard };
+
+  if (!messageId) {
+    return sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML");
+  }
+  return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
 }

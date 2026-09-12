@@ -107,6 +107,7 @@ export async function renderShopAdminItem(token, env, chatId, messageId, itemId)
 
   const keyboard = {
     inline_keyboard: [
+      [{ text: "✏️ 编辑名称/价格/库存/说明", callback_data: `shop_admin_edit_${item.id}` }],
       [
         { text: item.enabled ? "🚫 下架" : "✅ 上架", callback_data: `shop_admin_toggle_${item.id}` },
         { text: "🗑️ 删除", callback_data: `shop_admin_del_${item.id}` }
