@@ -35,7 +35,7 @@
 
 **一个仓库，两个用途**：它既是开源项目，也是代码备份。本地写完代码 `git push`，开源发布与备份一次完成。
 
-部署**在本地执行**，不依赖 GitHub Actions：
+部署**在本地执行**，仓库里不跑 CI/CD（只有代码 + 本地脚本）：
 
 ```bash
 npm run deploy:prod    # 部署到 Cloudflare Workers（读取本地生产配置）
@@ -657,9 +657,6 @@ tgbot/
 │   ├── backup.mjs               # D1 导出（npm run backup）
 │   ├── backup-config.mjs        # 配置备份到私有仓库（npm run backup:config）
 │   └── check.mjs                # 语法 + import 自检（npm run check）
-├── .github/workflows/
-│   ├── ci.yml                   # push / PR 自检
-│   └── deploy.yml               # 可选的 CI 自动部署（未配 Secrets 时跳过）
 └── src/
     ├── index.js                 # Worker 入口：安全校验 → 建表 → 分发
     ├── config/                  # constants.js（常量/回调前缀）· messages.js（文案）
@@ -719,16 +716,11 @@ npx wrangler d1 execute tgbot-db --remote --command "SELECT * FROM users LIMIT 1
 npx wrangler d1 execute tgbot-db --remote --file=some.sql -c wrangler.production.toml
 ```
 
-### CI（可选）
+### 关于 CI/CD
 
-仓库里有两个工作流，**本地部署用不到**，留着是给「想在 CI 里部署」的场景：
+本仓库**不包含任何 GitHub Actions 工作流**：它的定位是「代码备份 + 开源」，部署在本地用 `npm run deploy:prod` 完成，提交前用 `npm run check` 做语法与 import 自检即可，不需要在 GitHub 上跑任何自动化。
 
-| 工作流 | 触发 | 作用 |
-|--------|------|------|
-| `.github/workflows/ci.yml` | push / PR | `npm ci` + `npm run check` 自检 |
-| `.github/workflows/deploy.yml` | push 到 main / 手动 | 自检后部署；**没配 Secrets 时只打 warning 并跳过** |
-
-想启用 CI 自动部署，需要在仓库 `Settings → Secrets and variables → Actions` 配置 `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`、`D1_DATABASE_ID`、`BOT_TOKEN`、`MY_TELEGRAM_ID`（可选 `WEBHOOK_SECRET`），以及非敏感的 Variables `WORKER_NAME`、`D1_DATABASE_NAME`、`BOT_USERNAME`、`APP_TIMEZONE`、`BOT_OWNER_NAME`、`BOT_OWNER_USERNAME`。
+这样也顺带避免了把部署凭据（Cloudflare API Token 等）挂在一个公开仓库的 Actions Secrets 里。
 
 ---
 
@@ -763,9 +755,8 @@ npm run backup:config
 
 ### 3. 定时备份（可选）
 
-1. **Windows 计划任务**：每天执行 `npm run backup`，起始位置设为项目根目录
-2. **GitHub Actions**：配好 `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` 后，用 cron 定时 `wrangler d1 export` 并把结果上传为 artifact
-3. **Workers Cron Triggers**：`wrangler.toml` 加 `[triggers] crons = ["0 18 * * *"]`，在 `src/index.js` 的 `scheduled()` 里导出到 R2
+1. **Windows 计划任务**：每天执行 `npm run backup`（起始位置设为项目根目录），需要的话再追加一次 `npm run backup:config`
+2. **Workers Cron Triggers**：`wrangler.toml` 加 `[triggers] crons = ["0 18 * * *"]`，在 `src/index.js` 的 `scheduled()` 里导出到 R2
 
 > 数据库表结构与增量迁移都由 Worker 自动完成，恢复后无需手动建表。
 
