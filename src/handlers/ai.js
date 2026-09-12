@@ -4,12 +4,12 @@
 
 import { sendMessage, sendChatAction } from "../telegram/api.js";
 import { sendAutoDelete } from "../telegram/auto-delete.js";
-import { AI_MODEL, AI_MAX_TOKENS, POINTS, RULES } from "../config/constants.js";
+import { AI_MODELS, AI_MAX_TOKENS, POINTS, RULES } from "../config/constants.js";
 import { ERR } from "../config/messages.js";
 import { getDateKey } from "../services/time.js";
 import { reserveDailyQuota, refundDailyQuota } from "../services/quota.js";
 import { tryDeductPoints, refundPoint, logPointChange } from "../services/points.js";
-import { logError } from "../core/logger.js";
+import { logError, logWarn } from "../core/logger.js";
 
 export async function handleAIRequest({
   env, ctx, token, chatId, userKey, sceneKey, isGroupCtx, isMaster,
@@ -88,8 +88,9 @@ export async function handleAIRequest({
     baseSystemPrompt += `\n【用户个性化要求】：${userConfig.customPrompt}`;
   }
 
-  // 组装消息
-  let messages = [{ role: "system", content: baseSystemPrompt }];
+  // 组装消息：按字符预算截断历史，避免长对话超出模型上下文
+  const historyBudget = resolveHistoryBudget(env);
+  let historyMessages = [];
   if (env.DB) {
     const historyRow = await env.DB.prepare(
       "SELECT messages FROM chat_history WHERE scene_key = ?"
@@ -98,14 +99,18 @@ export async function handleAIRequest({
       try {
         const parsed = JSON.parse(historyRow.messages);
         if (Array.isArray(parsed)) {
-          messages = messages.concat(parsed.filter((m) => m && m.role !== "system"));
+          historyMessages = trimHistory(parsed, historyBudget);
         }
       } catch (e) {
         logError("历史消息解析失败：", e);
       }
     }
   }
-  messages.push({ role: "user", content: userText });
+  historyMessages.push({
+    role: "user",
+    content: clampMessage(userText, RULES.HISTORY_MESSAGE_MAX_CHARS)
+  });
+  const messages = [{ role: "system", content: baseSystemPrompt }, ...historyMessages];
 
   ctx.waitUntil(sendChatAction(token, chatId, "typing"));
 
@@ -115,17 +120,14 @@ export async function handleAIRequest({
     return;
   }
 
-  let aiResponse;
-  try {
-    aiResponse = await env.AI.run(AI_MODEL, { messages, max_tokens: AI_MAX_TOKENS });
-  } catch (aiErr) {
-    logError("Workers AI 调用失败：", aiErr);
+  const { text: replyText, model: usedModel, fallback } = await runAIWithFallback(env, messages);
+
+  if (!replyText) {
     await rollback(env, pointsCharged, quotaReserved, userKey, sceneKey, chargedDateStr || todayStr, previousLastMsgTime);
     await sendAutoDelete(token, chatId, ERR.AI_ERROR, null, isGroupCtx, ctx);
     return;
   }
-
-  const replyText = aiResponse.response || aiResponse.choices?.[0]?.message?.content || "AI 未能生成回复";
+  if (fallback) logWarn(`主模型不可用，已回退到 ${usedModel}`);
 
   // 记录积分流水（扣分）
   if (env.DB && pointsCharged) {
@@ -142,15 +144,97 @@ export async function handleAIRequest({
         "INSERT INTO daily_stats (scene_key, date_str, count) VALUES (?, ?, 1) ON CONFLICT(scene_key, date_str) DO UPDATE SET count = count + 1"
       ).bind(sceneKey, todayStr).run();
     }
-    messages.push({ role: "assistant", content: replyText });
-    const nonSystem = messages.filter((m) => m.role !== "system");
-    const trimmed = [messages[0], ...nonSystem.slice(-RULES.HISTORY_LIMIT)];
+    // 不改动已发送给模型的 messages，单独构造待落库的历史
+    const nonSystem = [...messages.filter((m) => m.role !== "system"), { role: "assistant", content: replyText }];
+    // 双重限制：条数上限 + 字符上限
+    const byCount = nonSystem.slice(-RULES.HISTORY_LIMIT);
+    const trimmed = [messages[0], ...trimHistory(byCount, historyBudget)];
     await env.DB.prepare(
       "INSERT INTO chat_history (scene_key, messages, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(scene_key) DO UPDATE SET messages = EXCLUDED.messages, updated_at = CURRENT_TIMESTAMP"
     ).bind(sceneKey, JSON.stringify(trimmed)).run();
   })());
 
   await sendMessage(token, chatId, replyText);
+}
+
+// ==========================================
+// 🤖 模型回退与上下文裁剪
+// ==========================================
+
+/** 解析可用模型列表：env.AI_MODELS（逗号分隔）优先，其次内置回退链 */
+function resolveModels(env) {
+  const raw = env?.AI_MODELS ? String(env.AI_MODELS) : "";
+  const custom = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return custom.length > 0 ? custom : AI_MODELS;
+}
+
+/** 历史字符预算：env.AI_HISTORY_MAX_CHARS 可覆盖 */
+function resolveHistoryBudget(env) {
+  const n = Number(env?.AI_HISTORY_MAX_CHARS);
+  return Number.isFinite(n) && n >= 500 ? Math.floor(n) : RULES.HISTORY_MAX_CHARS;
+}
+
+function clampMessage(content, maxChars) {
+  const text = typeof content === "string" ? content : String(content ?? "");
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars) + "…（已截断）";
+}
+
+/**
+ * 从最新消息往前累加，直到超出字符预算为止。
+ * 单条超长消息会被截断后保留，保证上下文不为空。
+ */
+function trimHistory(list, maxChars) {
+  const normalized = (list || [])
+    .filter((m) => m && typeof m.content === "string" && m.content && m.role !== "system")
+    .map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: clampMessage(m.content, RULES.HISTORY_MESSAGE_MAX_CHARS)
+    }));
+
+  const kept = [];
+  let used = 0;
+  for (let i = normalized.length - 1; i >= 0; i--) {
+    const msg = normalized[i];
+    const cost = msg.content.length + 8;
+    if (kept.length > 0 && used + cost > maxChars) break;
+    kept.unshift(msg);
+    used += cost;
+  }
+  return kept;
+}
+
+function extractReplyText(res) {
+  if (!res) return "";
+  const text = res.response || res.choices?.[0]?.message?.content || res.result?.response || "";
+  return typeof text === "string" ? text.trim() : "";
+}
+
+/**
+ * 依次尝试主模型与备选模型。
+ * 主模型报错或返回空内容时自动切换下一个，全部失败才判定为异常。
+ */
+async function runAIWithFallback(env, messages) {
+  const models = resolveModels(env);
+  let lastError = null;
+
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    try {
+      const res = await env.AI.run(model, { messages, max_tokens: AI_MAX_TOKENS });
+      const text = extractReplyText(res);
+      if (text) {
+        return { text, model, fallback: i > 0 };
+      }
+      lastError = new Error("模型返回空内容");
+    } catch (e) {
+      lastError = e;
+    }
+    logWarn(`模型 ${model} 调用失败${i < models.length - 1 ? `，尝试回退到 ${models[i + 1]}` : ""}：`, lastError?.message || lastError);
+  }
+
+  logError("所有 AI 模型均调用失败：", lastError);
+  return { text: "", model: null, fallback: false };
 }
 
 async function rollback(env, pointsCharged, quotaReserved, userKey, sceneKey, dateStr, prevLastMsgTime) {
