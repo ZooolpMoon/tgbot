@@ -21,6 +21,7 @@ export function getAdminMainKeyboard(showShop = true) {
       { text: "📊 系统运行状态", callback_data: "admin_status" },
       { text: "📈 使用统计", callback_data: "admin_stats" }
     ],
+    [{ text: "🎟️ 兑换码", callback_data: "admin_codes_1" }],
     [{ text: "📋 操作日志（审计）", callback_data: "admin_logs_1" }],
     [{ text: "🧹 清空我的记忆", callback_data: "admin_clear_history" }],
     [{ text: "❌ 关闭菜单", callback_data: "admin_close" }]

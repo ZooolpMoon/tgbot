@@ -10,6 +10,7 @@ import { tryDeductPoints, refundPoint, logPointChange } from "../services/points
 import { randomInt } from "../utils/random.js";
 import { logError } from "../core/logger.js";
 import { SHOP } from "../config/constants.js";
+import { getOrderNote, cancelOrderNote } from "./notes.js";
 
 export async function renderShopHome(token, env, chatId, userKey, messageId = null, page = 1) {
   if (!env.DB) {
@@ -71,20 +72,27 @@ export async function renderShopHome(token, env, chatId, userKey, messageId = nu
 
 // ---------- 商品详情 ----------
 export async function renderShopItem(token, env, chatId, userKey, messageId, itemId) {
-  if (!env.DB) return;
+  if (!env.DB) {
+    const text = "❌ 商城未启用（未绑定数据库）。";
+    return messageId ? editMessageText(token, chatId, messageId, text) : sendMessage(token, chatId, text);
+  }
 
   const item = await env.DB.prepare(
     "SELECT id, name, description, icon, price, stock, category, enabled FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   if (!item || item.enabled !== 1) {
-    return editMessageText(token, chatId, messageId, "❌ 该商品已下架或不存在。",
-      { inline_keyboard: [[{ text: "🔙 返回商城", callback_data: "shop_home" }]] });
+    const text = "❌ 该商品已下架或不存在。";
+    const keyboard = { inline_keyboard: [[{ text: "🔙 返回商城", callback_data: "shop_home" }]] };
+    return messageId
+      ? editMessageText(token, chatId, messageId, text, keyboard)
+      : sendMessageWithKeyboard(token, chatId, text, keyboard);
   }
 
   const pts = await getUserPoints(env, userKey);
   const stockText = item.stock === -1 ? "无限" : (item.stock > 0 ? `${item.stock}` : "已售罄");
   const catText = { virtual: "虚拟物品", physical: "实物商品", service: "服务" }[item.category] || item.category;
+  const note = await getOrderNote(env, chatId, item.id);
 
   const text =
     `${item.icon} <b>${escapeHtml(item.name)}</b>\n` +
@@ -92,7 +100,8 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
     `📂 <b>分类：</b> ${catText}\n` +
     `💰 <b>价格：</b> 🪙 ${item.price}\n` +
     `📦 <b>库存：</b> ${stockText}\n` +
-    `🪙 <b>我的积分：</b> ${pts}\n\n` +
+    `🪙 <b>我的积分：</b> ${pts}\n` +
+    `🧾 <b>下单备注：</b> ${note ? escapeHtml(note) : "（未填写）"}\n\n` +
     `📝 <b>说明：</b>\n${escapeHtml(item.description) || "（无）"}\n`;
 
   const inline_keyboard = [];
@@ -105,8 +114,16 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
     inline_keyboard.push([{ text: `✅ 确认兑换 · 🪙 ${item.price}`, callback_data: `shop_buy_${item.id}` }]);
   }
 
+  // 实物/服务类商品常需要地址或联系方式，这里提供可选的备注
+  inline_keyboard.push([
+    { text: note ? "✍️ 修改备注" : "✍️ 填写备注", callback_data: `shop_note_${item.id}` }
+  ]);
+
   inline_keyboard.push([{ text: "🔙 返回商城", callback_data: "shop_home" }]);
 
+  if (!messageId) {
+    return sendMessageWithKeyboard(token, chatId, text, { inline_keyboard }, "HTML");
+  }
   return editMessageText(token, chatId, messageId, text, { inline_keyboard }, "HTML");
 }
 
@@ -146,14 +163,17 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
     stockDecremented = true;
   }
 
+  // 下单备注（用户在商品详情里填写过才存在）
+  const note = await getOrderNote(env, chatId, item.id);
+
   // 创建订单
   const orderNo = "S" + Date.now().toString(36).toUpperCase() + randomInt(1679616).toString(36).padStart(4, "0").toUpperCase();
 
   try {
     await env.DB.prepare(`
-      INSERT INTO shop_orders (order_no, user_key, user_id, chat_id, item_id, item_name, item_icon, price, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-    `).bind(orderNo, userKey, userId, chatId, item.id, item.name, item.icon, item.price).run();
+      INSERT INTO shop_orders (order_no, user_key, user_id, chat_id, item_id, item_name, item_icon, price, status, remark)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    `).bind(orderNo, userKey, userId, chatId, item.id, item.name, item.icon, item.price, note || "").run();
   } catch (e) {
     // 订单创建失败时回滚：退回积分，并恢复已扣减的库存。
     if (stockDecremented) {
@@ -166,6 +186,9 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
     return answerCallback(token, callback.id, "❌ 下单失败，积分和库存已自动退回", true);
   }
 
+  // 订单已创建，清掉备注草稿（失败时不清理，用户不用重填）
+  await cancelOrderNote(env, chatId);
+
   await logPointChange(env, userKey, -item.price, afterDeduct, `兑换 [${item.name}] 订单 ${orderNo}`);
 
   await answerCallback(token, callback.id, `✅ 兑换成功！订单 ${orderNo}`);
@@ -176,7 +199,9 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
     `🧾 <b>订单号：</b> <code>${orderNo}</code>\n` +
     `${item.icon} <b>商品：</b> ${escapeHtml(item.name)}\n` +
     `💰 <b>消耗积分：</b> ${item.price}\n` +
-    `🪙 <b>当前积分：</b> ${afterDeduct}\n\n` +
+    `🪙 <b>当前积分：</b> ${afterDeduct}\n` +
+    (note ? `🧾 <b>备注：</b> ${escapeHtml(note)}\n` : ``) +
+    `\n` +
     `⏳ 请等待管理员处理发货。`;
 
   const keyboard = {
@@ -192,7 +217,7 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   try {
     const { notifyAdminNewOrder } = await import("./notify.js");
     await notifyAdminNewOrder(token, env,
-      { order_no: orderNo, price: item.price, chat_id: chatId, created_at: new Date().toISOString() },
+      { order_no: orderNo, price: item.price, chat_id: chatId, created_at: new Date().toISOString(), remark: note || "" },
       item,
       { userId, firstName }
     );

@@ -6,6 +6,7 @@ import { handleCallback } from "./handlers/callback.js";
 import { handleMessage } from "./handlers/message.js";
 import { logError } from "./core/logger.js";
 import { ensureSchema } from "./core/db.js";
+import { runScheduledTasks } from "./services/daily.js";
 
 export default {
   async fetch(request, env, ctx) {
@@ -46,6 +47,18 @@ export default {
     } catch (e) {
       logError("Worker 运行异常:", e);
       return new Response("OK", { status: 200 });
+    }
+  },
+
+  // 定时任务（Cron Triggers）：清理过期数据 + 推送每日概况
+  async scheduled(event, env, ctx) {
+    try {
+      await ensureSchema(env);
+      const task = runScheduledTasks(env, env.BOT_TOKEN);
+      if (ctx?.waitUntil) ctx.waitUntil(task);
+      else await task;
+    } catch (e) {
+      logError("定时任务运行异常:", e);
     }
   }
 };

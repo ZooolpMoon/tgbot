@@ -85,6 +85,8 @@ export const ADMIN_CALLBACK = {
   BLOCK_PREFIX: "admin_block_",
   CLEARMEM_PREFIX: "admin_clearmem_",
   LOGS_PREFIX: "admin_logs_",
+  CODES_PREFIX: "admin_codes_",
+  CODE_TOGGLE_PREFIX: "admin_code_toggle_",
   BROADCAST_CONFIRM: "admin_broadcast_confirm",
   BROADCAST_CANCEL: "admin_broadcast_cancel"
 };

@@ -2,7 +2,8 @@
 // 🔘 callback_query 总入口
 // ==========================================
 
-import { answerCallback, deleteMessage, editMessageText } from "../telegram/api.js";
+import { answerCallback, deleteMessage, editMessageText, sendMessage } from "../telegram/api.js";
+import { escapeHtml } from "../utils/html.js";
 import { ADMIN_CALLBACK, RULES } from "../config/constants.js";
 
 // ---- 游戏 ----
@@ -51,6 +52,8 @@ import { renderItemEditMenu, startEditField } from "../shop/edit.js";
 import { renderPointsLog } from "./commands/points.js";
 import { renderRank, closeRank } from "./commands/rank.js";
 import { startBroadcast, cancelBroadcast } from "./commands/broadcast.js";
+import { renderCodeList, handleCodeToggle } from "./commands/codes.js";
+import { beginOrderNote } from "../shop/notes.js";
 
 // ---- 服务 ----
 import { upsertUserInfo, isUserBlocked } from "../services/users.js";
@@ -148,6 +151,27 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     const page = parseInt(data.replace("shop_orders_", ""), 10) || 1;
     await renderMyOrders(token, env, chatId, userKey, msgId, page);
     await answerCallback(token, callback.id, "我的订单");
+    return;
+  }
+  // 填写下单备注
+  if (data.startsWith("shop_note_")) {
+    const itemId = parseInt(data.replace("shop_note_", ""), 10);
+    if (!Number.isInteger(itemId)) {
+      await answerCallback(token, callback.id, "⚠️ 商品参数无效", true);
+      return;
+    }
+    const kept = await beginOrderNote(env, chatId, itemId);
+    await answerCallback(token, callback.id, "请回复备注内容");
+    await sendMessage(
+      token, chatId,
+      `🧾 <b>填写下单备注</b>\n-------------------------\n` +
+      (kept ? `当前备注：${escapeHtml(kept)}\n\n` : ``) +
+      `请直接回复备注内容（例如收货地址、联系方式或想要的款式）。\n` +
+      `• 回复 <code>-</code> 可清空备注\n` +
+      `• 发送 <code>/cancel</code> 放弃填写\n\n` +
+      `备注会随订单一起发给管理员。`,
+      "HTML"
+    );
     return;
   }
   // 用户自助取消待处理订单并退款
@@ -392,6 +416,16 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       const page = parseInt(data.replace(ADMIN_CALLBACK.LOGS_PREFIX, ""), 10) || 1;
       await renderAdminLogs(token, env, chatId, msgId, page);
       await answerCallback(token, callback.id, `操作日志第 ${page} 页`);
+    }
+
+    // ---------- 兑换码 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.CODE_TOGGLE_PREFIX)) {
+      await handleCodeToggle({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.CODES_PREFIX)) {
+      const page = parseInt(data.replace(ADMIN_CALLBACK.CODES_PREFIX, ""), 10) || 1;
+      await renderCodeList(token, env, chatId, msgId, page);
+      await answerCallback(token, callback.id, `兑换码第 ${page} 页`);
     }
 
     // ---------- 删除场景 ----------

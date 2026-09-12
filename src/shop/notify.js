@@ -31,7 +31,9 @@ export async function notifyAdminNewOrder(token, env, order, item, userInfo) {
     `-------------------------\n` +
     `🧾 订单号：<code>${order.order_no}</code>\n` +
     `${item.icon} 商品：<b>${escapeHtml(item.name)}</b>\n` +
-    `💰 消耗积分：${order.price}\n\n` +
+    `💰 消耗积分：${order.price}\n` +
+    (order.remark ? `🧾 备注：${escapeHtml(order.remark)}\n` : ``) +
+    `\n` +
     `👤 用户：<b>${escapeHtml(userInfo.firstName || "未命名")}</b>\n` +
     `🆔 用户 ID：<code>${userInfo.userId}</code>\n` +
     `💬 下单会话：<code>${order.chat_id}</code>\n` +

@@ -9,6 +9,7 @@ import { ERR } from "../config/messages.js";
 import { getDateKey } from "../services/time.js";
 import { reserveDailyQuota, refundDailyQuota } from "../services/quota.js";
 import { tryDeductPoints, refundPoint, logPointChange } from "../services/points.js";
+import { resolveHistoryBudget, clampMessage, trimHistory } from "../services/history.js";
 import { logError, logWarn } from "../core/logger.js";
 
 export async function handleAIRequest({
@@ -167,42 +168,6 @@ function resolveModels(env) {
   const raw = env?.AI_MODELS ? String(env.AI_MODELS) : "";
   const custom = raw.split(",").map((s) => s.trim()).filter(Boolean);
   return custom.length > 0 ? custom : AI_MODELS;
-}
-
-/** 历史字符预算：env.AI_HISTORY_MAX_CHARS 可覆盖 */
-function resolveHistoryBudget(env) {
-  const n = Number(env?.AI_HISTORY_MAX_CHARS);
-  return Number.isFinite(n) && n >= 500 ? Math.floor(n) : RULES.HISTORY_MAX_CHARS;
-}
-
-function clampMessage(content, maxChars) {
-  const text = typeof content === "string" ? content : String(content ?? "");
-  if (text.length <= maxChars) return text;
-  return text.slice(0, maxChars) + "…（已截断）";
-}
-
-/**
- * 从最新消息往前累加，直到超出字符预算为止。
- * 单条超长消息会被截断后保留，保证上下文不为空。
- */
-function trimHistory(list, maxChars) {
-  const normalized = (list || [])
-    .filter((m) => m && typeof m.content === "string" && m.content && m.role !== "system")
-    .map((m) => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: clampMessage(m.content, RULES.HISTORY_MESSAGE_MAX_CHARS)
-    }));
-
-  const kept = [];
-  let used = 0;
-  for (let i = normalized.length - 1; i >= 0; i--) {
-    const msg = normalized[i];
-    const cost = msg.content.length + 8;
-    if (kept.length > 0 && used + cost > maxChars) break;
-    kept.unshift(msg);
-    used += cost;
-  }
-  return kept;
 }
 
 function extractReplyText(res) {

@@ -29,7 +29,8 @@ function buildHelpText(isMaster, isGroupCtx) {
   if (isPrivate) {
     userCmds.push(
       `/shop - 🛒 打开积分商城`,
-      `/orders - 📜 查看我的订单（待处理可自助取消退款）`
+      `/orders - 📜 查看我的订单（待处理可自助取消退款）`,
+      `/redeem &lt;兑换码&gt; - 🎟️ 兑换积分`
     );
   }
 
@@ -49,7 +50,9 @@ function buildHelpText(isMaster, isGroupCtx) {
     `/users_group - 👥 群聊用户管理（需先 /admin）`,
     `/stats - 📈 系统使用统计（需先 /admin）`,
     `/addpoints &lt;场景ID&gt; &lt;数量&gt; - 🪙 增减用户全局积分（需先 /admin）`,
-    `/clearmem &lt;群ID&gt; [用户ID] - 🧹 清除指定场景/群组 AI 记忆（需先 /admin）`
+    `/clearmem &lt;群ID&gt; [用户ID] - 🧹 清除指定场景/群组 AI 记忆（需先 /admin）`,
+    `/code_new &lt;积分&gt; [次数] [有效天数] - 🎟️ 生成兑换码（需先 /admin）`,
+    `/code_list - 🎟️ 兑换码列表与启停（需先 /admin）`
   ];
 
   if (isPrivate) {

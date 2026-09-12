@@ -177,6 +177,48 @@ CREATE TABLE IF NOT EXISTS broadcast_drafts (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ==========================================
+-- 🎟️ 兑换码
+-- ==========================================
+
+-- 兑换码（当前只发积分，points 即面额）
+CREATE TABLE IF NOT EXISTS redeem_codes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  code       TEXT    NOT NULL UNIQUE,
+  points     INTEGER NOT NULL,
+  max_uses   INTEGER NOT NULL DEFAULT 1,   -- 0 = 不限次数
+  used_count INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT    DEFAULT NULL,         -- 'YYYY-MM-DD'，NULL = 永久
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT    DEFAULT '',
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_redeem_codes_code ON redeem_codes(code);
+
+-- 兑换记录：UNIQUE 保证「每个码每人只能兑一次」
+CREATE TABLE IF NOT EXISTS redeem_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  code_id    INTEGER NOT NULL,
+  code       TEXT    NOT NULL,
+  user_key   TEXT    NOT NULL,
+  points     INTEGER NOT NULL,
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(code_id, user_key)
+);
+CREATE INDEX IF NOT EXISTS idx_redeem_logs_user ON redeem_logs(user_key, id DESC);
+
+-- ==========================================
+-- 🧾 下单草稿（填写订单备注用）
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS shop_order_drafts (
+  chat_id    TEXT PRIMARY KEY,
+  item_id    INTEGER NOT NULL,
+  note       TEXT    DEFAULT '',
+  pending    INTEGER NOT NULL DEFAULT 0,   -- 1 = 正在等用户回复备注内容
+  updated_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 let schemaReady = false;

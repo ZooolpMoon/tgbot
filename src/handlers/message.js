@@ -6,6 +6,7 @@
 // ==========================================
 
 import { sendAutoDelete } from "../telegram/auto-delete.js";
+import { sendMessage } from "../telegram/api.js";
 import { dispatchCommand } from "./commands/index.js";
 import {
   cmdUsersPrivate,
@@ -24,6 +25,10 @@ import { cmdShopEdit, handleEditItemInput } from "../shop/edit.js";
 import { cmdRank } from "./commands/rank.js";
 import { cmdBroadcast } from "./commands/broadcast.js";
 import { cmdClearMem } from "./commands/clearmem.js";
+import { cmdRedeem } from "./commands/redeem.js";
+import { cmdCodeNew, cmdCodeList } from "./commands/codes.js";
+import { renderShopItem } from "../shop/index.js";
+import { getPendingNoteRequest, saveOrderNote, cancelOrderNote } from "../shop/notes.js";
 
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
   const message = payload.message || payload.edited_message;
@@ -162,6 +167,20 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   }
 
   // ==========================================
+  // 🎟️ 兑换码
+  // ==========================================
+  if (command === "/redeem" || command === "/use") {
+    return cmdRedeem(baseCtx);
+  }
+  if (command === "/code_new" || command === "/code_list" || command === "/codes") {
+    if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+      await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
+      return;
+    }
+    return command === "/code_new" ? cmdCodeNew(baseCtx) : cmdCodeList(baseCtx);
+  }
+
+  // ==========================================
   // 🏆 积分排行榜（所有用户）
   // ==========================================
   if (command === "/rank" || command === "/top" || command === "/leaderboard") {
@@ -269,6 +288,31 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
 
     const editHandled = await handleEditItemInput({ env, token, chatId, userText, adminId: userId });
     if (editHandled) return;
+  }
+
+  // ==========================================
+  // 🧾 商城下单备注输入（私聊，任何用户）
+  // ==========================================
+  if (!isGroupCtx) {
+    const pendingNote = await getPendingNoteRequest(env, chatId);
+    if (pendingNote) {
+      if (isCommandLike) {
+        // 输入备注期间仍然允许用指令；只有 /cancel 用来放弃填写
+        if (/^\/(cancel|取消)$/i.test(command)) {
+          await cancelOrderNote(env, chatId);
+          await sendMessage(token, chatId, "🚫 已取消填写备注。");
+          return;
+        }
+      } else {
+        const saved = await saveOrderNote(env, chatId, userText);
+        await sendMessage(
+          token, chatId,
+          saved ? `✅ 备注已保存：\n${saved}` : "🧹 已清空备注。"
+        );
+        await renderShopItem(token, env, chatId, userKey, null, pendingNote.itemId);
+        return;
+      }
+    }
   }
 
   // ==========================================

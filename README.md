@@ -2,7 +2,7 @@
 
 一个跑在 **Cloudflare Workers + D1 + Workers AI** 上的 Telegram 机器人：AI 对话、全局积分、连续签到、小游戏、积分商城，外加一套完整的管理后台与审计日志。
 
-> 当前版本：**v1.2.0**（2026-09-12） · 变更见 [CHANGELOG.md](CHANGELOG.md)
+> 当前版本：**v1.3.0**（2026-09-12） · 变更见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -106,10 +106,28 @@ npm run backup:config
 
 - 用户：浏览商品 → 兑换（自动扣分、扣库存、生成订单）→ 在我的订单里查看进度
 - 用户可对**待处理订单自助取消并退款**（积分与库存同时回滚）
+- **下单备注**：实物/服务类商品可先填地址或联系方式（`✍️ 填写备注`），备注随订单一起发给管理员
 - 管理员：引导式添加商品 `/shop_add`、引导式编辑商品 `/shop_edit <商品ID>`
 - 管理员：上架/下架、删除、标记发货、标记完成、取消并退款
 - 商品支持无限库存（`-1`）与有限库存；订单保存商品快照，改价改名不影响历史订单
 - 新订单自动通知管理员；用户自助取消也会通知管理员
+
+### 🎟️ 兑换码
+
+- 管理员用 `/code_new <积分> [次数] [有效天数]` 生成形如 `TG7KQ2M4XZ` 的兑换码
+- 用户在私聊发送 `/redeem <兑换码>` 领取积分
+- **每个码每人只能兑一次**（数据库唯一约束兜底），可选「总次数上限」与「过期日期」
+- 次数上限、过期时间、已用次数都能在管理控制台 → `🎟️ 兑换码` 里查看，并可随时停用/启用
+- 兑换会写进 `points_log` 流水，管理操作写进 `admin_logs`
+
+### ⏰ 定时任务
+
+部署时注册一个 Cron 触发器（默认每天 UTC 16:00 = 北京时间 00:00），做两件事：
+
+1. **清理**：过期管理员会话、7 天前的群发草稿、1 天前的下单/添加/编辑草稿，并把过期兑换码自动停用
+2. **日报**：给管理员推送昨日概况（活跃场景、消息量、签到人数、兑换码使用、待处理订单列表），并附「查看待处理订单」按钮
+
+想改时间就改 `wrangler.toml` / `wrangler.production.toml` 里的 `[triggers] crons`（UTC 时间），不想要就把这一段删掉。
 
 ### 👑 管理后台
 
@@ -194,6 +212,7 @@ npm run deploy:prod
 ```
 
 成功后终端会输出 Worker 地址，形如 `https://tgbot.<你的子域>.workers.dev`。
+部署时也会一并注册 `[triggers]` 里的 Cron（默认每天跑一次定时任务：清理过期数据 + 给管理员发日报）；不需要就把它从配置里删掉。
 
 ### 5. 绑定 Telegram Webhook
 
@@ -289,6 +308,7 @@ INSERT INTO shop_items (name, description, icon, price, stock, category, enabled
 | `/clear` | — | 清空当前场景的对话记忆 |
 | `/shop` | `/store` | 积分商城（**仅私聊**） |
 | `/orders` | `/myorders` | 我的订单（**仅私聊**，待处理可取消退款） |
+| `/redeem <兑换码>` | `/use` | 用兑换码领积分（**仅私聊**） |
 
 ### 管理员
 
@@ -306,10 +326,12 @@ INSERT INTO shop_items (name, description, icon, price, stock, category, enabled
 | `/shop_add` | 引导式添加商品（仅私聊） |
 | `/shop_edit <商品ID>` | 引导式编辑商品：名称/价格/库存/分类/图标/说明（仅私聊） |
 | `/broadcast <内容>` | 群发给所有未封禁的私聊用户（仅私聊，二次确认） |
+| `/code_new <积分> [次数] [有效天数]` | 生成兑换码（次数 0 = 不限，天数 0 = 永久） |
+| `/code_list` | 兑换码列表、启用/停用（也可从控制台 `🎟️ 兑换码` 进入） |
 
 ### 管理控制台按钮
 
-`/admin` 面板里还能做：私聊/群聊用户列表翻页、场景编辑（限额、频率、封禁、清空记忆、删除场景）、积分增减与流水、系统状态、使用统计、操作日志、群发入口。
+`/admin` 面板里还能做：私聊/群聊用户列表翻页、场景编辑（限额、频率、封禁、清空记忆、删除场景）、积分增减与流水、系统状态、使用统计、兑换码、操作日志、群发入口。
 
 ---
 
@@ -646,7 +668,7 @@ graph LR
 
 ```
 tgbot/
-├── package.json                 # 脚本：dev / deploy:prod / check / backup*
+├── package.json                 # 脚本：dev / deploy:prod / check / test / backup*
 ├── wrangler.toml                # 开源模板配置（占位符）
 ├── wrangler.production.toml     # 生产配置（本地，gitignore）
 ├── .dev.vars                    # 本地开发变量（gitignore）
@@ -657,6 +679,8 @@ tgbot/
 │   ├── backup.mjs               # D1 导出（npm run backup）
 │   ├── backup-config.mjs        # 配置备份到私有仓库（npm run backup:config）
 │   └── check.mjs                # 语法 + import 自检（npm run check）
+├── test/                        # 🧪 测试用例（node --test：结构/签到/积分/兑换码/商城/定时任务/入口链路）
+├── test-helpers/d1.mjs          # 测试用 D1 替身（基于 node:sqlite，跑真实 SQL）
 └── src/
     ├── index.js                 # Worker 入口：安全校验 → 建表 → 分发
     ├── config/                  # constants.js（常量/回调前缀）· messages.js（文案）
@@ -666,11 +690,16 @@ tgbot/
     │   ├── message.js           # 消息总入口：群聊判定 → 封禁校验 → 指令/AI
     │   ├── callback.js          # 按钮总入口：商城 → 游戏 → 积分 → 管理员
     │   ├── ai.js                # AI 对话：配额 → 扣分 → 模型回退 → 裁剪历史
-    │   └── commands/            # 各指令实现 + commands/admin/
+    │   └── commands/            # 各指令实现（含 redeem.js / codes.js）+ commands/admin/
     ├── admin/                   # 管理面板 UI（用户·积分·限额·频率·统计·日志）
     ├── games/                   # 游戏注册表 + 4 个游戏
     ├── shop/                    # 商城（用户侧·管理员侧·添加·编辑·动作·通知）
-    ├── services/                # users · points · quota · time · checkin · admin-log
+    │   └── notes.js             # 🧾 下单备注草稿
+    ├── services/                # 业务服务层
+    │   ├── users.js · points.js · quota.js · time.js · checkin.js · admin-log.js
+    │   ├── redeem.js            # 🎟️ 兑换码生成/兑换/列表
+    │   ├── daily.js             # ⏰ 定时任务：清理 + 日报
+    │   └── history.js           # 🧠 AI 上下文裁剪（可单测）
     └── utils/                   # html.js（转义）· random.js（加密随机数）
 ```
 
@@ -696,6 +725,9 @@ tgbot/
 | `shop_edit_sessions` | 引导式「编辑商品」的中间状态 |
 | `admin_logs` | 管理员操作审计 |
 | `broadcast_drafts` | 群发草稿与进度游标（支持断点续发） |
+| `redeem_codes` | 兑换码：面额、次数上限、已用次数、过期日、启用状态 |
+| `redeem_logs` | 兑换记录（`UNIQUE(code_id, user_key)` 保证每人一次） |
+| `shop_order_drafts` | 下单草稿：待填写/已填写的订单备注 |
 
 ---
 
@@ -706,6 +738,7 @@ tgbot/
 npm run deploy:prod                    # 部署到 Cloudflare（用 wrangler.production.toml）
 npm run dev                            # 本地预览（用 .dev.vars）
 npm run check                          # 语法 + import 自检
+npm test                               # 跑测试（内存 SQLite，43 个用例）
 
 # 日志与版本
 npx wrangler tail                      # 实时日志
@@ -721,6 +754,27 @@ npx wrangler d1 execute tgbot-db --remote --file=some.sql -c wrangler.production
 本仓库**不包含任何 GitHub Actions 工作流**：它的定位是「代码备份 + 开源」，部署在本地用 `npm run deploy:prod` 完成，提交前用 `npm run check` 做语法与 import 自检即可，不需要在 GitHub 上跑任何自动化。
 
 这样也顺带避免了把部署凭据（Cloudflare API Token 等）挂在一个公开仓库的 Actions Secrets 里。
+
+### 🧪 测试
+
+```bash
+npm test        # = node --test，自动发现 test/*.test.mjs
+```
+
+用 Node 自带的 `node:test` + `node:sqlite` 在**内存数据库**里跑真实 SQL，覆盖：
+
+| 测试文件 | 覆盖内容 |
+|---------|---------|
+| `test/schema.test.mjs` | 建表、幂等迁移（老库补 `blocked`）、唯一约束 |
+| `test/checkin.test.mjs` | 连续签到天数、递增奖励、里程碑、日期平移 |
+| `test/points.test.mjs` | 原子扣分、退款流水、余额边界 |
+| `test/redeem.test.mjs` | 兑换码生成/兑换/重复/领完/过期/停用/分页 |
+| `test/shop.test.mjs` | 取消退款幂等、库存回滚、下单备注全流程 |
+| `test/daily.test.mjs` | 定时任务的清理规则与昨日概况统计 |
+| `test/history.test.mjs` | AI 上下文裁剪、随机数、HTML 转义 |
+| `test/flows.test.mjs` | 入口链路（桩掉 Telegram API 驱动消息/回调） |
+
+> `node:sqlite` 需要 Node 22.5+；低版本会自动跳过依赖它的用例，其余断言照常执行。
 
 ---
 
@@ -840,6 +894,17 @@ cp ../tgbot-config/wrangler.production.toml ../tgbot-config/.dev.vars .
 npx wrangler login && npm run deploy:prod
 ```
 数据库与表结构不用管：Worker 首次请求会自动建表 / 迁移。
+
+### Q13. 没收到每日概况推送
+1. 确认 `wrangler.production.toml` 里有 `[triggers] crons = ["0 16 * * *"]`，并且重新部署过一次（Cron 是部署时注册的）
+2. Cloudflare 后台 → Workers → 该 Worker → Settings → Triggers 里应该能看到这个 Cron
+3. 确认 `MY_TELEGRAM_ID`（或 `ADMIN_NOTIFY_CHAT_ID`）正确，且管理员与 bot 私聊过（Telegram 不允许给没私聊过的用户发消息）
+4. Cron 用的是 UTC 时间，`0 16 * * *` = 北京时间次日 00:00；想立刻验证可以先临时改成 `*/5 * * * *` 部署一次
+
+### Q14. 兑换码提示「已被领完」/「已经兑换过」
+- 「已被领完」= 该码的总次数用完了（`max_uses`），或已被管理员停用/过期
+- 「已经兑换过」= 同一个码同一个人只能兑一次，这是防刷设计
+- 管理员可以在 `/admin → 🎟️ 兑换码` 里查看每个码的 `已用/上限`，并随时停用或重新启用
 
 ---
 
