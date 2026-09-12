@@ -469,3 +469,68 @@ test("群规历史面板：显示版本与回滚按钮", { skip: !hasSqlite && "
   await Promise.all(ctx.pending);
   db.close();
 });
+
+// ==========================================
+// 7. /help 的可见性跟着身份走
+// ==========================================
+
+test("/help：机器人角色按能力裁，本群管理员也能看到执法指令", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:777", 0);
+  seedUser(db, "user:42", 0);
+  seedUser(db, "user:111", 0);
+  // 关掉群里的指令回执自动删除，测试不用等 5 秒
+  db.exec(`INSERT INTO scene_settings (scene_key, name, value)
+           VALUES ('group:-100', 'autodelete.cmd', '0')`);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+  chatMembers["-100:42"] = { status: "administrator", can_restrict_members: true, user: { id: 42 } };
+  chatMembers["-100:111"] = { status: "member", user: { id: 111 } };
+
+  // 执法员（bot_admins）私聊 /help：能看到执法指令，看不到用户管理
+  const { setAdmin } = await import("../src/services/admins.js");
+  await setAdmin(env, "777", "moderator", { by: "999" });
+  await handleMessage({
+    env, ctx, token: "TEST_TOKEN", myId: "999", isGroupCtx: false,
+    uctx: {
+      chatId: "777", userId: "777", chatType: "private",
+      userKey: "user:777", sceneKey: "private:777", username: "mod", firstName: "执法员"
+    },
+    payload: { message: { text: "/help", entities: [] } }
+  });
+  const modHelp = sentTexts().join("\n");
+  assert.match(modHelp, /\/mute/, "执法员应看到执法指令");
+  assert.doesNotMatch(modHelp, /\/users/, "执法员不该看到用户管理");
+  assert.doesNotMatch(modHelp, /仅管理员可用/, "执法员不该被当成普通用户");
+
+  // 本群管理员（没有机器人角色）在群里 /help：能看到执法指令
+  resetCalls();
+  await handleMessage({
+    env, ctx, token: "TEST_TOKEN", myId: "999", isGroupCtx: true,
+    uctx: {
+      chatId: "-100", userId: "42", chatType: "supergroup",
+      userKey: "user:42", sceneKey: "group:-100:user:42", username: "gadmin", firstName: "群管"
+    },
+    payload: { message: { text: "/help", entities: [] } }
+  });
+  const groupAdminHelp = sentTexts().join("\n");
+  assert.match(groupAdminHelp, /你是本群管理员/, "本群管理员应看到自己的那一档");
+  assert.doesNotMatch(groupAdminHelp, /仅管理员可用/);
+  assert.doesNotMatch(groupAdminHelp, /\/users/, "本群管理员不该看到用户管理");
+
+  // 普通成员在群里 /help：还是「仅管理员可用」
+  resetCalls();
+  await handleMessage({
+    env, ctx, token: "TEST_TOKEN", myId: "999", isGroupCtx: true,
+    uctx: {
+      chatId: "-100", userId: "111", chatType: "supergroup",
+      userKey: "user:111", sceneKey: "group:-100:user:111", username: "member", firstName: "成员"
+    },
+    payload: { message: { text: "/help", entities: [] } }
+  });
+  const memberHelp = sentTexts().join("\n");
+  assert.match(memberHelp, /仅管理员可用/, "普通成员不该看到管理员那部分");
+  await Promise.all(ctx.pending);
+  db.close();
+});

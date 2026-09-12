@@ -13,6 +13,7 @@ import { grid, clampPage, totalPagesOf, pageOffset, pagerRow, compactLabel, LAYO
 import { ADMIN_CALLBACK } from "../config/constants.js";
 import { logAdminAction } from "../services/admin-log.js";
 import { formatAppTime } from "../services/time.js";
+import { logError } from "../core/logger.js";
 import {
   ASSIGNABLE_ROLES, CAPABILITIES, ROLES, capabilitiesOf, isAssignableRole,
   listAdmins, removeAdmin, roleLabel, setAdmin
@@ -21,6 +22,20 @@ import {
 const PER_PAGE = 6;
 /** 引导会话 30 分钟有效，和其它引导流程一致 */
 const SESSION_TTL_MINUTES = 30;
+
+/**
+ * 授权 / 改角色 / 移除之后，让输入框命令菜单立刻跟上。
+ * 菜单哈希里带了「挂给谁」，所以下一次 isolate 自检本来也会同步（或让管理员发 /syncmenu）；
+ * 这里只是不等那一刻 —— 新增的管理员一进去就能在输入框里看到自己那份。
+ */
+async function refreshCommandMenu(env, token) {
+  try {
+    const { syncCommandMenu } = await import("../services/command-menu.js");
+    await syncCommandMenu(env, token, { force: true });
+  } catch (e) {
+    logError("刷新命令菜单失败：", e);
+  }
+}
 
 // ---------- 引导会话 ----------
 async function setSession(env, chatId, step, draft = null) {
@@ -300,6 +315,8 @@ export async function handleAdminGuideInput({ env, token, chatId, userText, admi
       action: res.created ? "admin_add" : "admin_update",
       detail: `${draft.userId} → ${draft.role}${note ? `（${note}）` : ""}`
     });
+    // 菜单里带上「挂给谁」，改了名单就让输入框菜单跟着变
+    await refreshCommandMenu(env, token);
     await sendMessage(
       token, chatId,
       `✅ <b>已${res.created ? "添加" : "更新"}管理员</b>\n` +
@@ -380,6 +397,7 @@ export async function handleAdminsCallback({ env, token, callback, chatId, msgId
     await logAdminAction(env, {
       adminId, chatId, action: "admin_update", detail: `${userId} → ${role}（改角色）`
     });
+    if (res.ok) await refreshCommandMenu(env, token);
     await answerCallback(token, callback.id, res.ok ? `✅ 已改为${roleLabel(role)}` : `⚠️ ${res.error}`, !res.ok);
     await renderAdminDetail(token, env, chatId, msgId, userId);
     return;
@@ -391,6 +409,8 @@ export async function handleAdminsCallback({ env, token, callback, chatId, msgId
     await logAdminAction(env, {
       adminId, chatId, action: "admin_remove", detail: `${userId}（${res.ok ? "成功" : res.error}）`
     });
+    // 移除后要把他那份管理菜单清掉，否则输入框里还留着点不动的命令
+    if (res.ok) await refreshCommandMenu(env, token);
     await answerCallback(token, callback.id, res.ok ? "🗑️ 已移除" : `⚠️ ${res.error}`, !res.ok);
     await renderAdminsPanel(token, env, chatId, msgId);
     return;

@@ -12,6 +12,7 @@ import {
 } from "../src/services/command-menu.js";
 import { COMMANDS } from "../src/handlers/commands/registry.js";
 import { getSetting } from "../src/services/settings.js";
+import { removeAdmin, setAdmin } from "../src/services/admins.js";
 
 const apiCalls = [];
 globalThis.fetch = async (url, opts = {}) => {
@@ -64,6 +65,70 @@ test("menuHash：内容变了哈希就变", () => {
   const c = menuHash([[{ command: "help", description: "帮助" }]]);
   assert.notEqual(a, b);
   assert.equal(a, c);
+});
+
+test("buildCommandMenu：管理指令按角色 capability 裁，本群管理员只拿执法指令", () => {
+  const names = (list) => list.map((c) => c.command);
+  const admin = names(buildCommandMenu({ includeAdmin: true, inGroup: false, role: "admin" }));
+  const moderator = names(buildCommandMenu({ includeAdmin: true, inGroup: false, role: "moderator" }));
+  const owner = names(buildCommandMenu({ includeAdmin: true, inGroup: false, role: "owner" }));
+
+  assert.ok(admin.includes("users"), "管理员能管用户");
+  assert.ok(!admin.includes("admins"), "管理员不能管权限（/admins 只给拥有者）");
+  assert.ok(owner.includes("admins"), "拥有者有权限管理");
+  assert.ok(moderator.includes("mute"), "执法员有执法指令");
+  assert.ok(!moderator.includes("users"), "执法员没有用户管理");
+  assert.ok(!moderator.includes("code_new"), "执法员没有兑换码");
+  assert.ok(!moderator.includes("broadcast"), "执法员不能群发");
+
+  const groupAdmins = names(buildCommandMenu({ includeAdmin: true, inGroup: true, groupAdmin: true }));
+  for (const cmd of ["ban", "unban", "kick", "groupban", "mute", "unmute", "rules"]) {
+    assert.ok(groupAdmins.includes(cmd), `本群管理员菜单应有 /${cmd}`);
+  }
+  assert.ok(!groupAdmins.includes("guard"), "/guard 面板仍只给机器人管理员");
+  assert.ok(!groupAdmins.includes("users"), "本群管理员看不到用户管理");
+  assert.ok(groupAdmins.includes("report"), "群里普通人可用的举报要留着");
+});
+
+test("syncCommandMenu：按多管理员模型挂作用域，移除管理员后清空他那一份", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = makeEnv(db);
+  db.exec(`INSERT INTO user_scenes (scene_key, user_key, chat_id, chat_type, user_id)
+           VALUES ('group:-100:user:777', 'user:777', '-100', 'supergroup', '777')`);
+  await setAdmin(env, "777", "moderator", { by: "999" });
+  resetCalls();
+  resetCommandMenuCache();
+
+  const first = await syncCommandMenu(env, "TEST_TOKEN");
+  assert.equal(first.synced, true);
+
+  const calls = callsOf("setMyCommands");
+  const scopeLabel = (c) => (c.body.scope
+    ? (c.body.scope.chat_id ? `${c.body.scope.type}:${c.body.scope.chat_id}` : c.body.scope.type)
+    : "default");
+  assert.deepEqual(calls.map(scopeLabel), [
+    "default", "all_group_chats", "chat:999", "chat:777", "chat_administrators:-100"
+  ]);
+
+  const menuOf = (label) =>
+    new Set(calls.find((c) => scopeLabel(c) === label).body.commands.map((c) => c.command));
+  assert.ok(menuOf("chat:999").has("admins"), "拥有者菜单含权限管理");
+  assert.ok(menuOf("chat:777").has("mute"), "执法员菜单含执法指令");
+  assert.ok(!menuOf("chat:777").has("users"), "执法员菜单不含用户管理");
+  assert.ok(!menuOf("chat:777").has("code_new"), "执法员菜单不含兑换码");
+  assert.ok(menuOf("chat_administrators:-100").has("ban"), "群管理员菜单含 /ban");
+  assert.ok(!menuOf("chat_administrators:-100").has("guard"), "群管理员菜单不含 /guard");
+  assert.ok(!menuOf("all_group_chats").has("ban"), "群里普通成员看不到执法指令");
+
+  await removeAdmin(env, "777");
+  resetCalls();
+  const second = await syncCommandMenu(env, "TEST_TOKEN");
+  assert.equal(second.synced, true);
+  assert.equal(second.cleared, 1, "被移除的管理员那一份要清掉");
+  const cleared = callsOf("setMyCommands").filter((c) => (c.body.commands || []).length === 0);
+  assert.equal(cleared.length, 1);
+  assert.deepEqual(cleared[0].body.scope, { type: "chat", chat_id: "777" });
+  db.close();
 });
 
 test("syncCommandMenu：首次同步三套菜单并记录版本，重复调用不再调接口", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {

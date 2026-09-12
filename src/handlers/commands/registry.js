@@ -337,13 +337,20 @@ export async function dispatchCommand(text, ctx) {
 // ---------- 自动生成 /help ----------
 /**
  * 由命令表生成 /help 文案。
- * 普通用户看不到管理指令，群聊里看不到「仅私聊」指令。
+ * 可见性 = 能用性：普通用户看不到管理指令，群聊里看不到「仅私聊」指令，
+ * 机器人角色按 capability 裁（执法员只看到执法那几条），
+ * 本群管理员（没有机器人角色）只看得到带 `groupAdmin` 标记的执法指令。
  */
-export function buildHelpText({ isMaster, isGroupCtx, role: roleArg }) {
+export function buildHelpText({ isMaster, isGroupCtx, role: roleArg, groupAdmin = false }) {
   // 兼容旧调用：没有 role 时按 owner / 普通用户推断
   const role = roleArg ?? (isMaster ? "owner" : null);
   const visible = COMMANDS.filter((c) => {
-    if (c.scope === "admin") return Boolean(role) && (c.capability ? can(role, c.capability) : true);
+    if (c.scope === "admin") {
+      const usable = role
+        ? (c.capability ? can(role, c.capability) : true)
+        : Boolean(groupAdmin) && c.groupAdmin === true;
+      if (!usable) return false;
+    }
     if (c.privateOnly) return !isGroupCtx;
     if (c.groupOnly) return isGroupCtx;
     return true;
@@ -365,8 +372,11 @@ export function buildHelpText({ isMaster, isGroupCtx, role: roleArg }) {
   text += `👤 <b>普通指令</b>\n`;
   text += userCmds.map(line).join("\n") + "\n";
 
-  if (role && adminCmds.length > 0) {
-    text += `\n👑 <b>管理员指令（仅你可见，大多数需先 /admin 解锁）</b>\n`;
+  if (adminCmds.length > 0) {
+    const how = role
+      ? `仅你可见${isBackstageRole(role) ? "，大多数需先 /admin 解锁" : "，可直接使用"}`
+      : "你是本群管理员，可直接使用";
+    text += `\n👑 <b>管理员指令（${how}）</b>\n`;
     text += adminCmds.map(line).join("\n") + "\n";
   } else {
     text += `\n👑 <b>管理员指令</b>\n• <i>仅管理员可用，如需使用请联系管理员</i>\n`;
