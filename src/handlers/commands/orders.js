@@ -4,6 +4,7 @@
 
 import { renderMyOrders } from "../../shop/index.js";
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
+import { escapeHtml } from "../../utils/html.js";
 
 export async function cmdOrders({ env, token, chatId, userKey, isGroupCtx, ctx }) {
   if (isGroupCtx) {
@@ -49,7 +50,7 @@ export async function cmdOrders({ env, token, chatId, userKey, isGroupCtx, ctx }
     text += `<i>还没有兑换记录，输入 /shop 去商城看看～</i>\n`;
   } else {
     results.forEach((o) => {
-      text += `${o.item_icon} <b>${o.item_name}</b>\n`;
+      text += `${o.item_icon} <b>${escapeHtml(o.item_name)}</b>\n`;
       text += `🧾 <code>${o.order_no}</code> · 🪙 ${o.price}\n`;
       text += `📌 状态：${statusMap[o.status] || o.status}\n`;
       text += `🕒 ${o.created_at}\n\n`;

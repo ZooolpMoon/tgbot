@@ -9,29 +9,41 @@ import { answerCallback } from "../telegram/api.js";
 import { tryDeductPoints, refundPoint, logPointChange } from "../services/points.js";
 import { randomInt } from "../utils/random.js";
 import { logError } from "../core/logger.js";
+import { SHOP } from "../config/constants.js";
 
-export async function renderShopHome(token, env, chatId, userKey, messageId = null) {
+export async function renderShopHome(token, env, chatId, userKey, messageId = null, page = 1) {
   if (!env.DB) {
     return sendMessage(token, chatId, "❌ 商城未启用（未绑定数据库）。");
   }
 
+  const pageSize = SHOP.ITEMS_PER_PAGE;
+  const countRes = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM shop_items WHERE enabled = 1"
+  ).first();
+  const total = Number(countRes?.n) || 0;
+  const totalPages = Math.ceil(total / pageSize) || 1;
+
+  let safePage = Math.max(1, Math.floor(Number(page) || 1));
+  if (safePage > totalPages) safePage = totalPages;
+  const offset = (safePage - 1) * pageSize;
+
   const pts = await getUserPoints(env, userKey);
   const { results } = await env.DB.prepare(
-    "SELECT id, name, icon, price, stock FROM shop_items WHERE enabled = 1 ORDER BY id ASC"
-  ).all();
+    "SELECT id, name, icon, price, stock FROM shop_items WHERE enabled = 1 ORDER BY id ASC LIMIT ? OFFSET ?"
+  ).bind(pageSize, offset).all();
 
   const items = results || [];
 
   let text = `🛒 <b>积分商城</b>\n`;
   text += `-------------------------\n`;
   text += `💰 <b>我的积分：</b> <code>${pts}</code>\n\n`;
+  text += `📦 <b>在售商品：</b> ${safePage} / ${totalPages} 页（共 ${total} 件）\n\n`;
 
   const inline_keyboard = [];
 
   if (items.length === 0) {
     text += `<i>(暂无在售商品，请稍后再来)</i>\n`;
   } else {
-    text += `📦 <b>在售商品：</b>\n\n`;
     items.forEach((it) => {
       const stockText = it.stock === -1 ? "∞" : (it.stock > 0 ? `${it.stock}` : "已售罄");
       text += `${it.icon} <b>${escapeHtml(it.name)}</b> — 🪙 ${it.price}（库存：${stockText}）\n`;
@@ -40,6 +52,11 @@ export async function renderShopHome(token, env, chatId, userKey, messageId = nu
       ]);
     });
   }
+
+  const navRow = [];
+  if (safePage > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `shop_home_page_${safePage - 1}` });
+  if (safePage < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `shop_home_page_${safePage + 1}` });
+  if (navRow.length > 0) inline_keyboard.push(navRow);
 
   inline_keyboard.push([{ text: "📜 我的订单", callback_data: "shop_orders_1" }]);
   inline_keyboard.push([{ text: "🔙 关闭", callback_data: "shop_close" }]);

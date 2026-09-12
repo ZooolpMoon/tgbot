@@ -88,6 +88,7 @@ export async function cmdAddPoints({ env, ctx, token, chatId, isMaster, isGroupC
   const newPts = Math.max(0, Math.floor(cur + delta));
   await env.DB.prepare("UPDATE users SET points = ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ?")
     .bind(newPts, scene.user_key).run();
-  await logPointChange(env, scene.user_key, delta, newPts, "管理员命令调整");
+  const actualDelta = newPts - cur;
+  await logPointChange(env, scene.user_key, actualDelta, newPts, "管理员命令调整");
   await sendAutoDelete(token, chatId, `✅ 已更新用户全局积分: ${newPts}`, null, isGroupCtx, ctx);
 }

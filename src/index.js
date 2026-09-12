@@ -12,6 +12,16 @@ export default {
     if (request.method !== "POST") {
       return new Response("已成功部署！", { status: 200 });
     }
+
+    // 可选安全校验：如果配置了 WEBHOOK_SECRET，则必须匹配 Telegram 回传的 secret token。
+    const webhookSecret = env.WEBHOOK_SECRET ? String(env.WEBHOOK_SECRET).trim() : "";
+    if (webhookSecret) {
+      const header = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
+      if (header !== webhookSecret) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+    }
+
     const token = env.BOT_TOKEN;
     const myId = env.MY_TELEGRAM_ID ? String(env.MY_TELEGRAM_ID).trim() : null;
     if (!token) return new Response("Bot Token Missing", { status: 500 });

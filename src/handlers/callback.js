@@ -88,6 +88,12 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     await answerCallback(token, callback.id, "商城");
     return;
   }
+  if (data.startsWith("shop_home_page_")) {
+    const page = parseInt(data.replace("shop_home_page_", ""), 10) || 1;
+    await renderShopHome(token, env, chatId, userKey, msgId, page);
+    await answerCallback(token, callback.id, "商城");
+    return;
+  }
   if (data === "shop_close") {
     await deleteMessage(token, chatId, msgId);
     await answerCallback(token, callback.id, "已关闭");

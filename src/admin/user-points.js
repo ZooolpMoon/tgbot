@@ -64,7 +64,8 @@ export async function handleModPoints({ env, token, callback, chatId, msgId, dat
   const newPts = Math.min(1000000, Math.max(0, cur + delta));
   await env.DB.prepare("UPDATE users SET points = ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ?")
     .bind(newPts, scene.user_key).run();
-  await logPointChange(env, scene.user_key, delta, newPts, "管理员调整");
+  const actualDelta = newPts - cur;
+  await logPointChange(env, scene.user_key, actualDelta, newPts, "管理员调整");
   await answerCallback(token, callback.id, `✅ 全局积分已更新为 ${newPts}`);
   await renderUserPtsMenu(token, env, chatId, msgId, rowId);
 }
