@@ -9,13 +9,15 @@ export async function renderAdminStats(token, env, chatId, messageId) {
   if (!env.DB) return editMessageText(token, chatId, messageId, "❌ 未绑定 D1 数据库。", null, null);
   const todayStr = getDateKey(env);
 
-  const [totalRes, activeRes, dailyRes, pointsRes, groupRes, checkinRes] = await Promise.all([
+  const [totalRes, activeRes, dailyRes, pointsRes, groupRes, checkinRes, blockedRes, logRes] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS total FROM users").first(),
     env.DB.prepare("SELECT COUNT(DISTINCT scene_key) AS total FROM daily_stats WHERE date_str = ? AND count > 0").bind(todayStr).first(),
     env.DB.prepare("SELECT COALESCE(SUM(count), 0) AS total FROM daily_stats WHERE date_str = ?").bind(todayStr).first(),
     env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN points > 0 THEN points ELSE 0 END), 0) AS total FROM users").first(),
     env.DB.prepare("SELECT COUNT(*) AS total FROM user_scenes WHERE chat_type IN ('group','supergroup')").first(),
-    env.DB.prepare("SELECT COUNT(*) AS total FROM daily_checkin WHERE date_str = ?").bind(todayStr).first()
+    env.DB.prepare("SELECT COUNT(*) AS total FROM daily_checkin WHERE date_str = ?").bind(todayStr).first(),
+    env.DB.prepare("SELECT COUNT(*) AS total FROM users WHERE COALESCE(blocked, 0) = 1").first(),
+    env.DB.prepare("SELECT COUNT(*) AS total FROM admin_logs").first()
   ]);
 
   const totalUsers = Number(totalRes?.total) || 0;
@@ -28,15 +30,18 @@ export async function renderAdminStats(token, env, chatId, messageId) {
     `📅 <b>统计日期:</b> ${todayStr}\n` +
     `👥 <b>全局用户总数:</b> ${totalUsers}\n` +
     `👥 <b>群聊场景数:</b> ${groupScenes}\n` +
+    `🚫 <b>已封禁用户:</b> ${Number(blockedRes?.total) || 0}\n` +
     `📅 <b>今日签到人数:</b> ${checkins}\n` +
     `🟢 <b>今日活跃场景:</b> ${Number(activeRes?.total) || 0}\n` +
     `💬 <b>今日成功请求:</b> ${Number(dailyRes?.total) || 0}\n` +
-    `🪙 <b>用户积分总量:</b> ${Number(pointsRes?.total) || 0}\n\n` +
+    `🪙 <b>用户积分总量:</b> ${Number(pointsRes?.total) || 0}\n` +
+    `📋 <b>管理员操作记录:</b> ${Number(logRes?.total) || 0} 条\n\n` +
     `🌐 <b>额度时区:</b> ${getAppTimeZone(env)}`;
 
   const keyboard = {
     inline_keyboard: [
       [{ text: "🔄 刷新统计", callback_data: "admin_stats" }],
+      [{ text: "📋 查看操作日志", callback_data: "admin_logs_1" }],
       [{ text: "🔙 返回主菜单", callback_data: "admin_main_menu" }]
     ]
   };

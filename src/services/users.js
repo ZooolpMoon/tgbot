@@ -78,6 +78,7 @@ export async function loadUserConfig(env, userKey, sceneKey) {
   const config = {
     lang: DEFAULTS.LANG,
     points: DEFAULTS.POINTS,
+    blocked: false,
     customPrompt: "",
     maxDaily: DEFAULTS.MAX_DAILY,
     rateLimitSec: DEFAULTS.RATE_LIMIT_SEC,
@@ -87,7 +88,7 @@ export async function loadUserConfig(env, userKey, sceneKey) {
   if (!env.DB) return config;
 
   const [u, s] = await Promise.all([
-    env.DB.prepare("SELECT points FROM users WHERE user_key = ?").bind(userKey).first(),
+    env.DB.prepare("SELECT points, blocked FROM users WHERE user_key = ?").bind(userKey).first(),
     env.DB.prepare(
       "SELECT lang, custom_prompt, max_daily, rate_limit_sec, last_msg_time FROM user_scenes WHERE scene_key = ?"
     ).bind(sceneKey).first()
@@ -96,6 +97,7 @@ export async function loadUserConfig(env, userKey, sceneKey) {
   if (u) {
     const p = Number(u.points);
     config.points = Number.isFinite(p) ? Math.max(0, Math.floor(p)) : DEFAULTS.POINTS;
+    config.blocked = Number(u.blocked) === 1;
   }
 
   if (s) {
@@ -123,4 +125,30 @@ export async function loadUserConfig(env, userKey, sceneKey) {
   }
 
   return config;
+}
+
+// ==========================================
+// 🚫 封禁状态
+// ==========================================
+
+export async function isUserBlocked(env, userKey) {
+  if (!env.DB || !userKey) return false;
+  try {
+    const row = await env.DB.prepare(
+      "SELECT blocked FROM users WHERE user_key = ?"
+    ).bind(userKey).first();
+    return Number(row?.blocked) === 1;
+  } catch (e) {
+    // 老库还没迁移出 blocked 字段时，按未封禁处理
+    return false;
+  }
+}
+
+export async function setUserBlocked(env, userKey, blocked) {
+  if (!env.DB || !userKey) return false;
+  const value = blocked ? 1 : 0;
+  await env.DB.prepare(
+    "UPDATE users SET blocked = ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ?"
+  ).bind(value, userKey).run();
+  return value === 1;
 }

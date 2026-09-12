@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   username      TEXT,
   first_name    TEXT,
   points        INTEGER DEFAULT 100,
+  blocked       INTEGER DEFAULT 0,
   updated_at    TEXT    DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_users_updated_at ON users(updated_at DESC);
@@ -142,10 +143,53 @@ CREATE TABLE IF NOT EXISTS shop_add_sessions (
   description TEXT DEFAULT '',
   updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 管理员的引导式编辑会话（记录正在编辑的商品与字段）
+CREATE TABLE IF NOT EXISTS shop_edit_sessions (
+  chat_id    TEXT PRIMARY KEY,
+  item_id    INTEGER NOT NULL,
+  field      TEXT    NOT NULL,
+  updated_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================================
+-- 📋 审计与运营
+-- ==========================================
+
+-- 管理员操作日志
+CREATE TABLE IF NOT EXISTS admin_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  admin_id   TEXT NOT NULL,
+  chat_id    TEXT,
+  action     TEXT NOT NULL,
+  detail     TEXT DEFAULT '',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_admin_logs_id ON admin_logs(id DESC);
+
+-- 群发草稿（等待管理员二次确认）
+CREATE TABLE IF NOT EXISTS broadcast_drafts (
+  chat_id    TEXT PRIMARY KEY,
+  content    TEXT NOT NULL,
+  cursor_id  INTEGER NOT NULL DEFAULT 0,
+  sent       INTEGER NOT NULL DEFAULT 0,
+  failed     INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 let schemaReady = false;
 let schemaPromise = null;
+
+/**
+ * 增量迁移语句。
+ * 老库升级时补字段，重复执行会报 "duplicate column name"，
+ * 这里逐条执行并忽略错误，保证幂等。
+ */
+const MIGRATIONS = [
+  "ALTER TABLE users ADD COLUMN blocked INTEGER DEFAULT 0"
+];
 
 function splitSchemaStatements(sql) {
   return sql
@@ -169,13 +213,30 @@ export async function ensureSchema(env) {
   if (!schemaPromise) {
     schemaPromise = env.DB.batch(
       splitSchemaStatements(SCHEMA_SQL).map((stmt) => env.DB.prepare(stmt))
-    ).then(() => {
-      schemaReady = true;
-    }).catch((err) => {
-      schemaPromise = null;
-      throw err;
-    });
+    )
+      .then(() => runMigrations(env))
+      .then(() => {
+        schemaReady = true;
+      })
+      .catch((err) => {
+        schemaPromise = null;
+        throw err;
+      });
   }
 
   return schemaPromise;
+}
+
+async function runMigrations(env) {
+  for (const stmt of MIGRATIONS) {
+    try {
+      await env.DB.prepare(stmt).run();
+    } catch (e) {
+      // 字段已存在（duplicate column name）等情况直接跳过
+      const msg = String(e?.message || e || "");
+      if (!/duplicate column|already exists/i.test(msg)) {
+        console.warn("[DB] 迁移语句执行失败（已忽略）:", stmt, msg);
+      }
+    }
+  }
 }

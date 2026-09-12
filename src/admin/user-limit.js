@@ -5,6 +5,7 @@
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
 import { getDateKey } from "../services/time.js";
+import { logAdminAction } from "../services/admin-log.js";
 
 export async function renderUserLimitMenu(token, env, chatId, messageId, rowId) {
   if (!env.DB) return;
@@ -47,7 +48,7 @@ export async function renderUserLimitMenu(token, env, chatId, messageId, rowId) 
   return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
 }
 
-export async function handleModLimit({ env, token, callback, chatId, msgId, data }) {
+export async function handleModLimit({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const raw = data.replace("admin_modlimit_", "");
   const sepIndex = raw.indexOf("_");
   const rowId = parseInt(sepIndex === -1 ? raw : raw.substring(0, sepIndex), 10);
@@ -97,6 +98,10 @@ export async function handleModLimit({ env, token, callback, chatId, msgId, data
       token, callback.id,
       action === "unlimited" ? "✅ 已设置为无限制" : `✅ 最大限额调整为: ${newLimit}`
     );
+    await logAdminAction(env, {
+      adminId, chatId, action: "scene_limit_mod",
+      detail: `${scene.scene_key} 限额 → ${newLimit === -1 ? "不限" : newLimit}`
+    });
   }
   await renderUserLimitMenu(token, env, chatId, msgId, rowId);
 }

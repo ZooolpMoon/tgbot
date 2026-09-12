@@ -10,9 +10,15 @@ import { handleGameCallbacks } from "../games/index.js";
 
 // ---- 用户管理 ----
 import { renderUserListMenu } from "../admin/user-list.js";
-import { renderUserEditMenu, handleDeleteScene } from "../admin/user-edit.js";
+import {
+  renderUserEditMenu,
+  handleDeleteScene,
+  handleToggleBlock,
+  handleClearSceneMemory
+} from "../admin/user-edit.js";
 import { renderAdminMainMenu } from "../admin/menus.js";
 import { renderAdminStats } from "../admin/stats.js";
+import { renderAdminLogs } from "../admin/logs.js";
 import { renderUserPtsMenu, handleModPoints } from "../admin/user-points.js";
 import { renderUserPointsLogMenu } from "../admin/user-points-log.js";
 import { renderUserLimitMenu, handleModLimit } from "../admin/user-limit.js";
@@ -37,12 +43,17 @@ import {
   actionDeleteItem,
   actionShip,
   actionDone,
-  actionCancel
+  actionCancel,
+  handleUserCancelOrder
 } from "../shop/actions.js";
 import { startAddItem } from "../shop/add.js";
+import { renderItemEditMenu, startEditField } from "../shop/edit.js";
+import { renderPointsLog } from "./commands/points.js";
+import { renderRank, closeRank } from "./commands/rank.js";
+import { startBroadcast, cancelBroadcast } from "./commands/broadcast.js";
 
 // ---- 服务 ----
-import { upsertUserInfo } from "../services/users.js";
+import { upsertUserInfo, isUserBlocked } from "../services/users.js";
 import { logError } from "../core/logger.js";
 
 export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
@@ -71,6 +82,20 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   if (isGroupCtx && (data.startsWith("shop_") || data.startsWith("shop_admin_"))) {
     await answerCallback(token, callback.id, "🛒 商城功能仅支持私聊使用", true);
     return;
+  }
+
+  // ==========================================
+  // 0.5 封禁校验（管理员不受限）
+  // ==========================================
+  if (myId && fromId !== myId && env.DB) {
+    try {
+      if (await isUserBlocked(env, userKey)) {
+        await answerCallback(token, callback.id, "🚫 你已被管理员限制使用本机器人", true);
+        return;
+      }
+    } catch (e) {
+      logError("封禁状态校验失败:", e);
+    }
   }
 
   // ==========================================
@@ -125,6 +150,39 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     await answerCallback(token, callback.id, "我的订单");
     return;
   }
+  // 用户自助取消待处理订单并退款
+  if (data.startsWith("shop_ucancel_")) {
+    const parts = data.replace("shop_ucancel_", "").split("_");
+    const orderId = parseInt(parts[0], 10);
+    const page = parseInt(parts[1], 10) || 1;
+    if (!Number.isInteger(orderId)) {
+      await answerCallback(token, callback.id, "⚠️ 订单参数无效", true);
+      return;
+    }
+    await handleUserCancelOrder(token, env, callback, userKey, orderId);
+    await renderMyOrders(token, env, chatId, userKey, msgId, page);
+    return;
+  }
+
+  // ==========================================
+  // 2.5 积分流水翻页 / 积分排行榜（任何用户）
+  // ==========================================
+  if (data.startsWith("points_page_")) {
+    const page = parseInt(data.replace("points_page_", ""), 10) || 1;
+    await renderPointsLog(token, env, chatId, userKey, page, msgId);
+    await answerCallback(token, callback.id, `第 ${page} 页`);
+    return;
+  }
+  if (data === "rank_top") {
+    await renderRank(token, env, chatId, msgId, userKey);
+    await answerCallback(token, callback.id, "排行榜已刷新");
+    return;
+  }
+  if (data === "rank_close") {
+    await closeRank(token, chatId, msgId);
+    await answerCallback(token, callback.id, "已关闭");
+    return;
+  }
 
   // ==========================================
   // 3. 管理员权限校验
@@ -171,15 +229,35 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     await answerCallback(token, callback.id, "商品详情");
     return;
   }
+  // 编辑商品：点某个字段后进入文本输入流程
+  if (data.startsWith("shop_admin_editf_")) {
+    const raw = data.replace("shop_admin_editf_", "");
+    const sep = raw.lastIndexOf("_");
+    const itemId = parseInt(sep === -1 ? raw : raw.slice(0, sep), 10);
+    const field = sep === -1 ? "" : raw.slice(sep + 1);
+    if (!Number.isInteger(itemId)) {
+      await answerCallback(token, callback.id, "⚠️ 商品参数无效", true);
+      return;
+    }
+    await startEditField({ env, token, chatId, itemId, field });
+    await answerCallback(token, callback.id, "请按提示回复新内容");
+    return;
+  }
+  if (data.startsWith("shop_admin_edit_")) {
+    const itemId = parseInt(data.replace("shop_admin_edit_", ""), 10);
+    await renderItemEditMenu(token, env, chatId, msgId, itemId);
+    await answerCallback(token, callback.id, "编辑商品");
+    return;
+  }
   if (data.startsWith("shop_admin_toggle_")) {
     const itemId = parseInt(data.replace("shop_admin_toggle_", ""), 10);
-    await actionToggleItem(token, env, callback, itemId);
+    await actionToggleItem(token, env, callback, itemId, fromId);
     await renderShopAdminItem(token, env, chatId, msgId, itemId);
     return;
   }
   if (data.startsWith("shop_admin_del_")) {
     const itemId = parseInt(data.replace("shop_admin_del_", ""), 10);
-    await actionDeleteItem(token, env, callback, itemId);
+    await actionDeleteItem(token, env, callback, itemId, fromId);
     await renderShopAdminItems(token, env, chatId, msgId, 1);
     return;
   }
@@ -203,20 +281,34 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   }
   if (data.startsWith("shop_admin_ship_")) {
     const orderId = parseInt(data.replace("shop_admin_ship_", ""), 10);
-    await actionShip(token, env, callback, orderId);
+    await actionShip(token, env, callback, orderId, fromId);
     await renderShopAdminOrder(token, env, chatId, msgId, orderId);
     return;
   }
   if (data.startsWith("shop_admin_done_")) {
     const orderId = parseInt(data.replace("shop_admin_done_", ""), 10);
-    await actionDone(token, env, callback, orderId);
+    await actionDone(token, env, callback, orderId, fromId);
     await renderShopAdminOrder(token, env, chatId, msgId, orderId);
     return;
   }
   if (data.startsWith("shop_admin_cancel_")) {
     const orderId = parseInt(data.replace("shop_admin_cancel_", ""), 10);
-    await actionCancel(token, env, callback, orderId);
+    await actionCancel(token, env, callback, orderId, fromId);
     await renderShopAdminOrder(token, env, chatId, msgId, orderId);
+    return;
+  }
+
+  // ==========================================
+  // 4.5 群发消息（二次确认 / 继续发送）
+  // ==========================================
+  if (data === ADMIN_CALLBACK.BROADCAST_CONFIRM || data === "admin_broadcast_continue") {
+    await answerCallback(token, callback.id, "🚀 开始群发…");
+    await startBroadcast({ env, ctx, token, chatId, messageId: msgId, adminId: fromId });
+    return;
+  }
+  if (data === ADMIN_CALLBACK.BROADCAST_CANCEL) {
+    await cancelBroadcast({ env, token, chatId, messageId: msgId, adminId: fromId });
+    await answerCallback(token, callback.id, "已取消");
     return;
   }
 
@@ -254,7 +346,7 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       await answerCallback(token, callback.id, "加载积分设置");
     }
     else if (data.startsWith(ADMIN_CALLBACK.MODPTS_PREFIX)) {
-      await handleModPoints({ env, token, callback, chatId, msgId, data });
+      await handleModPoints({ env, token, callback, chatId, msgId, data, adminId: fromId });
     }
     else if (data.startsWith(ADMIN_CALLBACK.LOG_PTS_PREFIX)) {
       const raw = data.replace(ADMIN_CALLBACK.LOG_PTS_PREFIX, "");
@@ -272,7 +364,7 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       await answerCallback(token, callback.id, "加载限额设置");
     }
     else if (data.startsWith(ADMIN_CALLBACK.MODLIMIT_PREFIX)) {
-      await handleModLimit({ env, token, callback, chatId, msgId, data });
+      await handleModLimit({ env, token, callback, chatId, msgId, data, adminId: fromId });
     }
 
     // ---------- 频率 ----------
@@ -282,14 +374,32 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       await answerCallback(token, callback.id, "加载频率设置");
     }
     else if (data.startsWith(ADMIN_CALLBACK.SETRATE_PREFIX)) {
-      await handleSetRate({ env, token, callback, chatId, msgId, data });
+      await handleSetRate({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+
+    // ---------- 封禁 / 解封 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.BLOCK_PREFIX)) {
+      await handleToggleBlock({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+
+    // ---------- 清空某群某用户记忆 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.CLEARMEM_PREFIX)) {
+      await handleClearSceneMemory({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+
+    // ---------- 操作日志 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.LOGS_PREFIX)) {
+      const page = parseInt(data.replace(ADMIN_CALLBACK.LOGS_PREFIX, ""), 10) || 1;
+      await renderAdminLogs(token, env, chatId, msgId, page);
+      await answerCallback(token, callback.id, `操作日志第 ${page} 页`);
     }
 
     // ---------- 删除场景 ----------
     else if (data.startsWith(ADMIN_CALLBACK.DELUSER_PREFIX)) {
       await handleDeleteScene({
         env, token, callback, chatId, msgId, data,
-        renderUserListMenu
+        renderUserListMenu,
+        adminId: fromId
       });
     }
 

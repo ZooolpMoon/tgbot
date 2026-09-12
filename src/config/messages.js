@@ -15,7 +15,8 @@ export const ERR = {
   QUOTA_EMPTY: (n) => `⚠️ 您本场景今日额度（${n}条/天）已用完。`,
   QUOTA_ZERO: "⚠️ 本场景每日发送额度已被设置为 0 条。",
   RATE_LIMIT: (s) => `⏳ 发送频率过快，请等待 ${s} 秒后再试。`,
-  UNKNOWN_CMD: "⚠️ 未知指令。输入 /help 查看帮助。"
+  UNKNOWN_CMD: "⚠️ 未知指令。输入 /help 查看帮助。",
+  BLOCKED: "🚫 你已被管理员限制使用本机器人。\n如有疑问请联系管理员。"
 };
 
 export const TIPS = {
@@ -27,8 +28,9 @@ export const TIPS = {
     `🪙 全局积分：<b>${pts}</b>\n` +
     `📅 本场景今日额度：<b>${quota}</b>\n` +
     `🌐 语言偏好：<b>${escapeHtml(lang)}</b>\n\n` +
-    `📅 <code>/checkin</code> 每日签到 +${POINTS.CHECKIN_REWARD}\n` +
+    `📅 <code>/checkin</code> 每日签到（连续签到奖励递增，首日 +${POINTS.CHECKIN_BASE}）\n` +
     `📖 <code>/help</code> 查看指令列表\n` +
+    `🏆 <code>/rank</code> 查看积分排行榜\n` +
     `🎮 <code>/game</code> 打开游戏大厅` +
     (isMaster ? `\n\n👑 <code>/admin</code> 进入管理控制台` : ``)
 };

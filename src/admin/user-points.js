@@ -5,6 +5,7 @@
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
 import { logPointChange } from "../services/points.js";
+import { logAdminAction } from "../services/admin-log.js";
 
 export async function renderUserPtsMenu(token, env, chatId, messageId, rowId) {
   if (!env.DB) return;
@@ -39,7 +40,7 @@ export async function renderUserPtsMenu(token, env, chatId, messageId, rowId) {
   return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
 }
 
-export async function handleModPoints({ env, token, callback, chatId, msgId, data }) {
+export async function handleModPoints({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const raw = data.replace("admin_modpts_", "");
   const sepIndex = raw.indexOf(":");
   if (sepIndex === -1 || !env.DB) return;
@@ -66,6 +67,10 @@ export async function handleModPoints({ env, token, callback, chatId, msgId, dat
     .bind(newPts, scene.user_key).run();
   const actualDelta = newPts - cur;
   await logPointChange(env, scene.user_key, actualDelta, newPts, "管理员调整");
+  await logAdminAction(env, {
+    adminId, chatId, action: "user_points_mod",
+    detail: `${scene.user_key} ${actualDelta >= 0 ? "+" : ""}${actualDelta} → ${newPts}`
+  });
   await answerCallback(token, callback.id, `✅ 全局积分已更新为 ${newPts}`);
   await renderUserPtsMenu(token, env, chatId, msgId, rowId);
 }

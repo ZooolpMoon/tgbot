@@ -20,15 +20,16 @@ function buildHelpText(isMaster, isGroupCtx) {
   userCmds.push(
     `/start - 开始使用 / 查看欢迎信息`,
     `/help - 📖 查看本指令列表`,
-    `/checkin - 📅 每日签到（+5 积分，北京时间）`,
-    `/points - 📜 查看我的积分流水`
+    `/checkin - 📅 每日签到（连续签到奖励递增）`,
+    `/points - 📜 查看我的积分流水（可翻页）`,
+    `/rank - 🏆 查看积分排行榜 Top 10`
   );
 
   // 商城：仅私聊
   if (isPrivate) {
     userCmds.push(
       `/shop - 🛒 打开积分商城`,
-      `/orders - 📜 查看我的订单`
+      `/orders - 📜 查看我的订单（待处理可自助取消退款）`
     );
   }
 
@@ -47,12 +48,16 @@ function buildHelpText(isMaster, isGroupCtx) {
     `/users - 💬 私聊用户管理（需先 /admin）`,
     `/users_group - 👥 群聊用户管理（需先 /admin）`,
     `/stats - 📈 系统使用统计（需先 /admin）`,
-    `/addpoints &lt;场景ID&gt; &lt;数量&gt; - 🪙 增减用户全局积分（需先 /admin）`
+    `/addpoints &lt;场景ID&gt; &lt;数量&gt; - 🪙 增减用户全局积分（需先 /admin）`,
+    `/clearmem &lt;群ID&gt; [用户ID] - 🧹 清除指定场景/群组 AI 记忆（需先 /admin）`
   ];
 
   if (isPrivate) {
     adminCmds.push(`/shop_admin - 🛒 商城管理（仅私聊，需先 /admin）`);
     adminCmds.push(`/shop_add - ➕ 添加商品（仅私聊，需先 /admin）`);
+    adminCmds.push(`/shop_edit &lt;商品ID&gt; - ✏️ 编辑商品（仅私聊，需先 /admin）`);
+    adminCmds.push(`/broadcast &lt;内容&gt; - 📢 群发给所有私聊用户（仅私聊，需先 /admin）`);
+    adminCmds.push(`📋 操作日志 / 🚫 封禁用户 - 见 /admin 控制台`);
   }
 
   // ---------- 拼接 ----------
@@ -73,7 +78,8 @@ function buildHelpText(isMaster, isGroupCtx) {
   text += `\n💡 <b>${isGroupCtx ? "群聊" : "私聊"}规则</b>\n`;
   if (isGroupCtx) {
     text += `• 只有 <b>@我</b> 或使用 <b>/指令</b> 时才会回复\n`;
-    text += `• 群聊里 /指令类消息 <b>5 秒后自动删除</b>\n`;
+    text += `• 群聊里大部分 /指令消息 <b>5 秒后自动删除</b>\n`;
+    text += `• <code>/points</code>、<code>/rank</code> 等带按钮的卡片会保留，方便翻页\n`;
     text += `• 用户 @我 触发的 AI 回复、游戏消息 <b>保留</b>\n`;
     text += `• 🛒 商城功能 <b>仅支持私聊使用</b>\n`;
   } else {

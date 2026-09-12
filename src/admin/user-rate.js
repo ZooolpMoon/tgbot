@@ -4,6 +4,7 @@
 
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
+import { logAdminAction } from "../services/admin-log.js";
 
 export async function renderUserRateMenu(token, env, chatId, messageId, rowId) {
   if (!env.DB) return;
@@ -37,7 +38,7 @@ export async function renderUserRateMenu(token, env, chatId, messageId, rowId) {
   return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
 }
 
-export async function handleSetRate({ env, token, callback, chatId, msgId, data }) {
+export async function handleSetRate({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const raw = data.replace("admin_setrate_", "");
   const sepIndex = raw.indexOf("_");
   const rowId = parseInt(sepIndex === -1 ? raw : raw.substring(0, sepIndex), 10);
@@ -53,6 +54,10 @@ export async function handleSetRate({ env, token, callback, chatId, msgId, data 
 
   await env.DB.prepare("UPDATE user_scenes SET rate_limit_sec = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
     .bind(sec, rowId).run();
+  await logAdminAction(env, {
+    adminId, chatId, action: "scene_rate_mod",
+    detail: `场景 #${rowId} 冷却 → ${sec} 秒`
+  });
   await answerCallback(token, callback.id, `✅ 冷却时间设置为: ${sec} 秒`);
   await renderUserRateMenu(token, env, chatId, msgId, rowId);
 }

@@ -20,6 +20,10 @@ import { upsertUserInfo, loadUserConfig } from "../services/users.js";
 import { ERR } from "../config/messages.js";
 import { cmdShop } from "./commands/shop.js";
 import { startAddItem, cancelAddItem, handleAddItemInput } from "../shop/add.js";
+import { cmdShopEdit, handleEditItemInput } from "../shop/edit.js";
+import { cmdRank } from "./commands/rank.js";
+import { cmdBroadcast } from "./commands/broadcast.js";
+import { cmdClearMem } from "./commands/clearmem.js";
 
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
   const message = payload.message || payload.edited_message;
@@ -94,6 +98,14 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   // 读取配置
   const userConfig = await loadUserConfig(env, userKey, sceneKey);
 
+  // ==========================================
+  // 🚫 封禁校验（管理员不受限）
+  // ==========================================
+  if (userConfig.blocked && !isMaster) {
+    await sendAutoDelete(token, chatId, ERR.BLOCKED, null, isGroupCtx, ctx);
+    return;
+  }
+
   // 解析指令
   const command = userText.split(/\s+/)[0].split("@")[0].toLowerCase();
 
@@ -121,6 +133,39 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   }
   if (command === "/admin") {
     return cmdAdminRoot(baseCtx);
+  }
+
+  // ==========================================
+  // 📢 管理员群发（私聊 + 需先 /admin 解锁）
+  // ==========================================
+  if (command === "/broadcast" || command === "/announce") {
+    if (isGroupCtx) {
+      await sendAutoDelete(token, chatId, "📢 群发消息仅支持<b>私聊</b>使用。", "HTML", isGroupCtx, ctx);
+      return;
+    }
+    if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+      await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
+      return;
+    }
+    return cmdBroadcast(baseCtx);
+  }
+
+  // ==========================================
+  // 🧹 清除指定场景/群组 AI 记忆（管理员）
+  // ==========================================
+  if (command === "/clearmem" || command === "/clearmemory") {
+    if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+      await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
+      return;
+    }
+    return cmdClearMem(baseCtx);
+  }
+
+  // ==========================================
+  // 🏆 积分排行榜（所有用户）
+  // ==========================================
+  if (command === "/rank" || command === "/top" || command === "/leaderboard") {
+    return cmdRank(baseCtx);
   }
 
   // ==========================================
@@ -198,10 +243,32 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     return;
   }
 
-  // 管理员添加商品引导流程的文本输入
+  // ==========================================
+  // 商城：管理员编辑商品
+  // ==========================================
+  if (command === "/shop_edit" || command === "/edititem") {
+    if (!isMaster) {
+      await sendAutoDelete(token, chatId, ERR.PERMISSION_DENIED, null, isGroupCtx, ctx);
+      return;
+    }
+    if (isGroupCtx) {
+      await sendAutoDelete(token, chatId, "🛒 商品编辑仅支持<b>私聊</b>使用。", "HTML", isGroupCtx, ctx);
+      return;
+    }
+    if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+      await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
+      return;
+    }
+    return cmdShopEdit(baseCtx);
+  }
+
+  // 管理员引导流程的文本输入（添加商品 / 编辑商品字段）
   if (!isGroupCtx && isMaster && !isCommandLike) {
-    const addHandled = await handleAddItemInput({ env, token, chatId, userText });
+    const addHandled = await handleAddItemInput({ env, token, chatId, userText, adminId: userId });
     if (addHandled) return;
+
+    const editHandled = await handleEditItemInput({ env, token, chatId, userText, adminId: userId });
+    if (editHandled) return;
   }
 
   // ==========================================
