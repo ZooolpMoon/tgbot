@@ -18,6 +18,7 @@ import { handleAIRequest } from "./ai.js";
 import { upsertUserInfo, loadUserConfig } from "../services/users.js";
 import { ERR } from "../config/messages.js";
 import { cmdShop } from "./commands/shop.js";
+import { startAddItem, cancelAddItem, handleAddItemInput } from "../shop/add.js";
 
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
   const message = payload.message || payload.edited_message;
@@ -147,6 +148,33 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     const { renderShopAdmin } = await import("../shop/admin.js");
     await renderShopAdmin(token, env, chatId, null);
     return;
+  }
+
+  // ==========================================
+  // 商城：管理员添加商品
+  // ==========================================
+  if (command === "/shop_add") {
+    if (!isMaster) {
+      await sendAutoDelete(token, chatId, ERR.PERMISSION_DENIED, null, isGroupCtx, ctx);
+      return;
+    }
+    if (isGroupCtx) {
+      await sendAutoDelete(token, chatId, "🛒 添加商品仅支持<b>私聊</b>使用。", "HTML", isGroupCtx, ctx);
+      return;
+    }
+    const addArg = userText.split(/\s+/).slice(1).join(" ").trim().toLowerCase();
+    if (addArg === "cancel" || addArg === "取消") {
+      await cancelAddItem(token, env, chatId);
+    } else {
+      await startAddItem(token, env, chatId);
+    }
+    return;
+  }
+
+  // 管理员添加商品引导流程的文本输入
+  if (!isGroupCtx && isMaster && !isCommandLike) {
+    const addHandled = await handleAddItemInput({ env, token, chatId, userText });
+    if (addHandled) return;
   }
 
   // ==========================================

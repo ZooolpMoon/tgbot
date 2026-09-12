@@ -130,6 +130,18 @@ CREATE TABLE IF NOT EXISTS shop_order_log (
   note       TEXT    DEFAULT '',
   created_at TEXT    DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS shop_add_sessions (
+  chat_id     TEXT PRIMARY KEY,
+  step        INTEGER NOT NULL DEFAULT 1,
+  name        TEXT DEFAULT '',
+  price       INTEGER DEFAULT 0,
+  stock       INTEGER DEFAULT -1,
+  category    TEXT DEFAULT 'virtual',
+  icon        TEXT DEFAULT '',
+  description TEXT DEFAULT '',
+  updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 let schemaReady = false;

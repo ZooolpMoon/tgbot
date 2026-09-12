@@ -23,6 +23,7 @@ export async function renderShopAdmin(token, env, chatId, messageId = null) {
 
   const keyboard = {
     inline_keyboard: [
+      [{ text: "➕ 添加商品", callback_data: "shop_admin_add" }],
       [{ text: "📦 商品列表", callback_data: "shop_admin_items_1" }],
       [{ text: "⏳ 待处理订单", callback_data: "shop_admin_orders_pending_1" }],
       [{ text: "📜 全部订单", callback_data: "shop_admin_orders_all_1" }],

@@ -39,6 +39,7 @@ import {
   actionDone,
   actionCancel
 } from "../shop/actions.js";
+import { startAddItem } from "../shop/add.js";
 
 // ---- 服务 ----
 import { upsertUserInfo } from "../services/users.js";
@@ -148,6 +149,11 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // ==========================================
   // 4. 商城（管理员侧）
   // ==========================================
+  if (data === "shop_admin_add") {
+    await startAddItem(token, env, chatId);
+    await answerCallback(token, callback.id, "开始添加商品");
+    return;
+  }
   if (data === "shop_admin_home") {
     await renderShopAdmin(token, env, chatId, msgId);
     await answerCallback(token, callback.id, "商城管理");
