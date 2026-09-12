@@ -14,6 +14,7 @@ import { sendMessage, sendMessageWithKeyboard, editMessageText, answerCallback }
 import { escapeHtml } from "../utils/html.js";
 import { grid, LAYOUT } from "../utils/layout.js";
 import { isFeatureEnabled } from "../services/features.js";
+import { resolveAdminChatId } from "../shop/notify.js";
 import {
   ACTIONS, formatDuration, getGroupGuard, getBotGroupRights, isGroupAdmin,
   parsePunishmentRequest, validateReason, reasonRejectHint,
@@ -122,6 +123,90 @@ export async function handleGuardRequest({
   }
 
   return sendOrReject({ env, token, chatId, settings, parsed, operatorId });
+}
+
+// ==========================================
+// 成员举报 → 管理员一键处置（功能联动）
+// ==========================================
+
+/** 举报类关键词 */
+const REPORT_WORDS = ["举报", "投诉", "违规", "发广告", "打广告", "刷屏", "骂人", "骚扰", "诈骗"];
+
+/** 是不是一条「举报」（回复某人 + 带举报词） */
+export function looksLikeReport(text) {
+  const src = String(text || "");
+  return REPORT_WORDS.some((w) => src.includes(w));
+}
+
+/**
+ * 普通成员在群里 @机器人 举报（通常配合「回复对方消息」）。
+ * 流程：校验理由 → 生成待确认处置 → 把确认卡片发到**管理员私聊**，管理员一键处置。
+ * @returns {Promise<boolean>} 是否已处理
+ */
+export async function handleReportRequest({ env, token, chatId, uctx, message, rawText, isMaster, myId }) {
+  if (!env.DB) return false;
+  if (isMaster) return false;                       // 管理员走执法流程，不走举报
+  if (!(await isFeatureEnabled(env, uctx.sceneKey, "guard"))) return false;
+
+  const settings = await getGroupGuard(env, chatId);
+  if (Number(settings.enabled) !== 1) return false;
+
+  // 举报必须回复对方消息（否则不知道该处置谁）
+  const replied = message?.reply_to_message?.from;
+  if (!replied?.id || replied.is_bot) {
+    await sendMessage(
+      token, chatId,
+      "📣 <b>举报</b>\n" +
+      "请<b>回复违规的那条消息</b>，再 @我 说明情况，例如：\n" +
+      "<code>@Bot 举报 发广告</code>",
+      "HTML"
+    );
+    return true;
+  }
+
+  const reason = String(rawText || "")
+    .replace(new RegExp(`@${env.BOT_USERNAME || ""}`, "gi"), " ")
+    .replace(/举报|投诉/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const checked = await validateReason({ env, reason, rules: settings.rules, chatId });
+  if (!checked.ok) {
+    await sendMessage(
+      token, chatId,
+      `⚠️ 举报理由需要说清违规现象（例如：发广告、刷屏、辱骂）。\n\n${reasonRejectHint(settings.rules)}`,
+      "HTML"
+    );
+    return true;
+  }
+
+  const userLabel = replied.username ? `@${replied.username}` : (replied.first_name || String(replied.id));
+  const record = await requestPunishment({
+    env, token,
+    // 卡片发到管理员私聊；执行时用的是 record.chat_id（本群）
+    chatId: resolveAdminChatId(env) || chatId,
+    userId: String(replied.id),
+    userLabel,
+    action: settings.default_action === "bot" ? "bot_ban" : settings.default_action,
+    reason: reason || "成员举报",
+    matchedRule: `${checked.matchedRule}（${checked.how}）`,
+    durationMin: Number(settings.default_mute_minutes) || 60,
+    operatorId: uctx.userId
+  });
+
+  if (record) {
+    // 记录真实的群，便于执行与审计
+    await env.DB.prepare(
+      "UPDATE group_punishments SET chat_id = ?, detail = ? WHERE id = ?"
+    ).bind(String(chatId), `由成员 ${uctx.userId} 举报`, record.id).run();
+  }
+
+  await sendMessage(
+    token, chatId,
+    `📣 已把举报转给管理员处理：${escapeHtml(userLabel)} · ${escapeHtml(reason || "违规")}`,
+    "HTML"
+  );
+  return true;
 }
 
 /**
@@ -236,6 +321,10 @@ export async function handleGuardCallback({ env, ctx, token, chatId, callback, d
     return;
   }
 
+  // 确认卡片可能发在管理员私聊（成员举报的联动流程），
+  // 但真正要处置的群永远是 record.chat_id —— 权限检查与公告都必须用它。
+  const groupChatId = String(record.chat_id);
+
   // 只有发起人本人或机器人管理员能确认
   const operatorId = String(callback.from?.id || "");
   const allowed = operatorId === String(record.operator_id) || (myId && operatorId === String(myId));
@@ -284,7 +373,7 @@ export async function handleGuardCallback({ env, ctx, token, chatId, callback, d
   // ---------- 真正执行 ----------
   const needsTelegram = record.action !== "bot_ban";
   if (needsTelegram) {
-    const rights = await getBotGroupRights(token, chatId);
+    const rights = await getBotGroupRights(token, groupChatId);
     if (!rights.canRestrict) {
       await answerCallback(token, callback.id, "❌ 机器人没有群管理权限", true);
       await editMessageText(
@@ -333,7 +422,7 @@ export async function handleGuardCallback({ env, ctx, token, chatId, callback, d
 
   // 群内公告 + 私聊通知当事人（通知失败不影响结果）
   try {
-    await sendMessage(token, chatId, buildPunishmentNotice({
+    await sendMessage(token, groupChatId, buildPunishmentNotice({
       record: done, action: done.action, durationMin: done.duration_min,
       untilAt: Number(done.until_at) || 0, byWhom: "管理员"
     }), "HTML");
@@ -344,7 +433,7 @@ export async function handleGuardCallback({ env, ctx, token, chatId, callback, d
   try {
     await sendMessage(
       token, done.user_id,
-      `🛡️ 你在群 <code>${escapeHtml(chatId)}</code> 被管理员处置：${ACTIONS[done.action]?.short || done.action}\n` +
+      `🛡️ 你在群 <code>${escapeHtml(groupChatId)}</code> 被管理员处置：${ACTIONS[done.action]?.short || done.action}\n` +
       `📌 理由：${escapeHtml(done.reason || "")}`,
       "HTML"
     );

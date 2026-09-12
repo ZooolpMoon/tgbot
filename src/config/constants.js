@@ -137,6 +137,16 @@ export const ADMIN_CALLBACK = {
   // ---------- 🛡️ 群规执法确认卡片 ----------
   // 形如 guard_go_12 / guard_no_12 / guard_set_12_mute
   GUARD_PREFIX: "guard_",
+
+  // ---------- 📜 群规执法面板（引导式编辑）----------
+  GUARD_HOME: "admin_guard",
+  GUARD_EDIT_RULES: "admin_guard_rules",
+  GUARD_APPEND_RULES: "admin_guard_append",
+  GUARD_CLEAR_RULES: "admin_guard_clearrules",
+  GUARD_ACTION_PREFIX: "admin_guard_act_",
+  GUARD_MUTE_PREFIX: "admin_guard_mute_",
+  GUARD_TOGGLE: "admin_guard_toggle",
+  GUARD_HISTORY_PREFIX: "admin_guard_hist_",
   MANAGE_USER_PREFIX: "admin_manage_user_",
   MENU_PTS_PREFIX: "admin_menu_pts_",
   MODPTS_PREFIX: "admin_modpts_",

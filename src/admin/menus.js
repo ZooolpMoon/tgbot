@@ -15,7 +15,8 @@ export function getAdminMainKeyboard(showShop = true) {
   const buttons = [
     // 用户管理是一级入口，点进去再选「私聊用户 / 群组用户」
     { text: "👥 用户管理", callback_data: ADMIN_CALLBACK.USERS_HOME },
-    { text: "📚 知识库", callback_data: ADMIN_CALLBACK.KB_HOME }
+    { text: "📚 知识库", callback_data: ADMIN_CALLBACK.KB_HOME },
+    { text: "📜 群规执法", callback_data: ADMIN_CALLBACK.GUARD_HOME }
   ];
 
   if (showShop) {

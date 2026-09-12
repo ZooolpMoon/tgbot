@@ -240,3 +240,35 @@ export function restrictChatMember(token, chatId, userId, { mute = true, untilDa
   if (useIndependent) body.use_independent_chat_permissions = true;
   return postJSON(`${BASE(token)}/restrictChatMember`, body);
 }
+
+// ==========================================
+// ⌨️ 输入框命令菜单（BotCommand）
+// 设置后用户在聊天框输入「/」就能看到指令列表，不用记名字。
+// ==========================================
+
+/**
+ * 设置命令菜单。
+ * @param {Array<{command:string, description:string}>} commands 名称不要带 "/"
+ * @param {object} [scope] BotCommandScope，例如 { type: "all_group_chats" }
+ * @param {string} [languageCode] 留空表示默认语言
+ */
+export function setMyCommands(token, commands, scope = null, languageCode = "") {
+  const body = { commands };
+  if (scope) body.scope = scope;
+  if (languageCode) body.language_code = languageCode;
+  return postJSON(`${BASE(token)}/setMyCommands`, body);
+}
+
+/** 查询当前命令菜单（排查用） */
+export function getMyCommands(token, scope = null) {
+  const body = {};
+  if (scope) body.scope = scope;
+  return postJSON(`${BASE(token)}/getMyCommands`, body);
+}
+
+/** 删除某个作用域的命令菜单 */
+export function deleteMyCommands(token, scope = null) {
+  const body = {};
+  if (scope) body.scope = scope;
+  return postJSON(`${BASE(token)}/deleteMyCommands`, body);
+}

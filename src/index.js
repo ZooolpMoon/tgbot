@@ -10,6 +10,7 @@ import { handleMessage } from "./handlers/message.js";
 import { logError } from "./core/logger.js";
 import { ensureSchema } from "./core/db.js";
 import { runScheduledTasks } from "./services/daily.js";
+import { syncCommandMenuOnce } from "./services/command-menu.js";
 
 export default {
   /**
@@ -38,6 +39,11 @@ export default {
     try {
       // 首次请求时自动建表（IF NOT EXISTS，幂等，不破坏已有数据）
       await ensureSchema(env);
+
+      // 命令菜单自检：内容变了才调用 Telegram（放进 waitUntil，不拖慢本次更新）
+      const menuTask = syncCommandMenuOnce(env, token);
+      if (ctx?.waitUntil) ctx.waitUntil(menuTask);
+
       const payload = await request.json();
       const uctx = resolveUserContext(payload);
       if (!uctx) return new Response("OK", { status: 200 });

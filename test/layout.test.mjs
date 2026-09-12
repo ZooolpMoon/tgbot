@@ -23,6 +23,7 @@ import { getBannedListKeyboard } from "../src/admin/user-banned.js";
 import { getTaskListKeyboard } from "../src/admin/tasks.js";
 import { getKnowledgeHomeKeyboard, getDocumentListKeyboard } from "../src/admin/knowledge.js";
 import { getGuardCardKeyboard } from "../src/admin/guard.js";
+import { getGuardPanelKeyboard, getGuardHistoryKeyboard } from "../src/admin/guard-panel.js";
 
 import { getShopAdminHomeKeyboard, getShopAdminItemsKeyboard, getShopAdminOrdersKeyboard } from "../src/shop/admin.js";
 import { getShopHomeKeyboard, getMyOrdersKeyboard } from "../src/shop/index.js";
@@ -170,6 +171,25 @@ test("群规执法确认卡片：确认/取消与切换处置都在两列网格�
   assert.ok(flat.includes("guard_no_12"));
   assert.ok(flat.includes("guard_set_12_mute"));
   assert.ok(!flat.includes("guard_set_12_bot_ban"), "当前处置方式不应再出现在切换按钮里");
+});
+
+test("群规面板与处置记录排版紧凑", () => {
+  const panel = getGuardPanelKeyboard({ enabled: 1, default_action: "bot_ban", default_mute_minutes: 60 });
+  assertCompact(panel, { maxRows: 6, label: "群规面板" });
+  const keys = panel.inline_keyboard.flat().map((b) => b.callback_data);
+  for (const expect of [
+    "admin_guard_rules", "admin_guard_append", "admin_guard_act_menu",
+    "admin_guard_mute_menu", "admin_guard_toggle", "admin_guard_clearrules",
+    "admin_guard_hist_1", "admin_main_menu"
+  ]) {
+    assert.ok(keys.includes(expect), `群规面板缺少 ${expect}`);
+  }
+
+  // 关闭执法时按钮文案要变，但仍是一行
+  const off = getGuardPanelKeyboard({ enabled: 0 });
+  assert.ok(off.inline_keyboard.flat().some((b) => b.text.includes("开启执法")));
+
+  assertCompact(getGuardHistoryKeyboard([], 1, 1), { maxRows: 2, label: "处置记录" });
 });
 
 test("功能开关首页：三级入口都是两列网格", () => {

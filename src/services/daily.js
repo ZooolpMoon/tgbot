@@ -53,6 +53,10 @@ export async function cleanupStaleData(env) {
     "DELETE FROM kb_sessions WHERE updated_at <= datetime('now', '-1 day')"
   ).run();
 
+  const guardSessions = await env.DB.prepare(
+    "DELETE FROM guard_sessions WHERE updated_at <= datetime('now', '-1 day')"
+  ).run();
+
   // 群规处置：把已到期的临时禁言标记为 expired，并清理一周前的待确认记录
   const expiredPunishments = await expirePunishments(env);
   const stalePunishments = await env.DB.prepare(
@@ -71,6 +75,7 @@ export async function cleanupStaleData(env) {
     editSessions: editSessions.meta.changes,
     taskSessions: taskSessions.meta.changes,
     kbSessions: kbSessions.meta.changes,
+    guardSessions: guardSessions.meta.changes,
     expiredPunishments,
     stalePunishments: stalePunishments.meta.changes,
     expiredCodes: expiredCodes.meta.changes

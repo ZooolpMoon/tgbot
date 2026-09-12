@@ -482,3 +482,193 @@ test("功能开关：关掉「群规执法」后 @机器人 下指令不会触�
   await Promise.all(ctx.pending);
   db.close();
 });
+
+// ==========================================
+// 群规引导式编辑面板
+// ==========================================
+
+/** 以机器人管理员身份点击一个面板按钮 */
+const clickAdmin = ({ env, ctx, data, chatType = "supergroup" }) => handleCallback({
+  env, ctx, token: "TEST_TOKEN", myId: "999", uctx: adminUctx,
+  payload: {
+    callback_query: {
+      id: `cb_${data}`, from: { id: 999 }, data,
+      message: { message_id: 20, chat: { id: -100, type: chatType } }
+    }
+  }
+});
+
+test("群规面板：默认处置 / 默认禁言时长 / 开关都能改", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  // 打开面板
+  await clickAdmin({ env, ctx, data: "admin_guard" });
+  const panel = apiCalls.filter((c) => c.method === "editMessageText").at(-1);
+  assert.ok(String(panel.body.text).includes("群规执法"));
+  assert.ok(String(panel.body.text).includes("还没有群规"));
+  const keys = panel.body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(keys.includes("admin_guard_rules"));
+  assert.ok(keys.includes("admin_guard_hist_1"));
+
+  // 默认处置 → 选「群内禁言」
+  await clickAdmin({ env, ctx, data: "admin_guard_act_menu" });
+  resetCalls();
+  await clickAdmin({ env, ctx, data: "admin_guard_act_mute" });
+  assert.equal(db.get("SELECT default_action FROM group_guard WHERE chat_id = '-100'").default_action, "mute");
+
+  // 默认禁言时长 → 30 分钟
+  await clickAdmin({ env, ctx, data: "admin_guard_mute_menu" });
+  resetCalls();
+  await clickAdmin({ env, ctx, data: "admin_guard_mute_30" });
+  assert.equal(db.get("SELECT default_mute_minutes FROM group_guard WHERE chat_id = '-100'").default_mute_minutes, 30);
+
+  // 关闭执法
+  resetCalls();
+  await clickAdmin({ env, ctx, data: "admin_guard_toggle" });
+  assert.equal(db.get("SELECT enabled FROM group_guard WHERE chat_id = '-100'").enabled, 0);
+
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("群规引导式编辑：覆盖 / 追加 / 清空", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+  chatMembers["-100:999"] = { status: "creator", user: { id: 999 } };
+  chatMembers["-100:42"] = { status: "administrator", can_restrict_members: true, user: { id: 42 } };
+
+  // 点「编辑群规」→ 进入引导
+  await clickAdmin({ env, ctx, data: "admin_guard_rules" });
+  assert.equal(db.get("SELECT step FROM guard_sessions WHERE chat_id = '-100'").step, "rules:replace");
+  resetCalls();
+
+  // 群里直接发正文（不 @ 机器人也应被引导流程接收）
+  await sendGroup({ env, ctx, message: { text: "本群禁止广告与刷屏", entities: [] } });
+  assert.equal(db.get("SELECT rules FROM group_guard WHERE chat_id = '-100'").rules, "本群禁止广告与刷屏");
+  assert.equal(db.count("guard_sessions"), 0, "完成后应清掉会话");
+
+  // 追加一条
+  resetCalls();
+  await clickAdmin({ env, ctx, data: "admin_guard_append" });
+  await sendGroup({ env, ctx, message: { text: "禁止私下交易账号", entities: [] } });
+  const rules = db.get("SELECT rules FROM group_guard WHERE chat_id = '-100'").rules;
+  assert.equal(rules, "本群禁止广告与刷屏\n禁止私下交易账号");
+
+  // 清空
+  resetCalls();
+  await clickAdmin({ env, ctx, data: "admin_guard_clearrules" });
+  assert.equal(db.get("SELECT rules FROM group_guard WHERE chat_id = '-100'").rules, "");
+
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("群规面板：处置记录能看到待确认与已执行", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  seedUser(db, "user:555", 10);
+  db.exec(`INSERT INTO group_punishments (chat_id, user_id, user_label, action, reason, matched_rule, status, operator_id)
+           VALUES ('-100', '555', '坏孩子', 'mute', '刷屏', '刷屏 / 灌水', 'done', '999')`);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  await clickAdmin({ env, ctx, data: "admin_guard_hist_1" });
+  const text = apiCalls.filter((c) => c.method === "editMessageText").at(-1).body.text;
+  assert.ok(text.includes("坏孩子"));
+  assert.ok(text.includes("已执行"));
+  assert.ok(text.includes("群内禁言"));
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+// ==========================================
+// 成员举报 → 管理员一键处置（功能联动）
+// ==========================================
+
+test("成员举报：卡片发到管理员私聊，确认后在群里执行", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:111", 0);
+  seedUser(db, "user:555", 10);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+  chatMembers["-100:111"] = { status: "member", user: { id: 111 } };
+  chatMembers["-100:42"] = { status: "administrator", can_restrict_members: true, user: { id: 42 } };
+  // 默认处置设为「群内禁言 30 分钟」，便于断言 Telegram 调用
+  const { setGroupGuard } = await import("../src/services/guard.js");
+  await setGroupGuard(env, "-100", { defaultAction: "mute", defaultMuteMinutes: 30 });
+
+  const memberUctx = { ...adminUctx, userId: "111", userKey: "user:111", sceneKey: "group:-100:user:111" };
+  await sendGroup({
+    env, ctx, myId: "999", uctx: memberUctx,
+    message: guardMessage("@TestBot 举报 发广告刷屏", {
+      reply_to_message: { from: { id: 555, first_name: "坏孩子" } },
+      entities: [{ type: "mention", offset: 0, length: 9 }]
+    })
+  });
+
+  const row = db.get("SELECT * FROM group_punishments ORDER BY id DESC LIMIT 1");
+  assert.ok(row, "应产生待确认记录");
+  assert.equal(row.chat_id, "-100", "记录必须归属到群，便于执行");
+  assert.equal(row.action, "mute");
+  assert.equal(row.status, "pending");
+
+  // 卡片应该发到管理员私聊（MY_TELEGRAM_ID = 999）
+  const cardCall = apiCalls.filter((c) => c.body?.reply_markup).at(-1);
+  assert.equal(String(cardCall.body.chat_id), "999", "确认卡片应发到管理员私聊");
+  assert.ok(String(cardCall.body.text).includes("坏孩子"));
+
+  // 群里给举报人回执
+  assert.ok(sentTexts().some((t) => t.includes("已把举报转给管理员")));
+
+  // 管理员在私聊里一键确认
+  resetCalls();
+  await handleCallback({
+    env, ctx, token: "TEST_TOKEN", myId: "999", uctx: adminUctx,
+    payload: {
+      callback_query: {
+        id: "cb_report", from: { id: 999 }, data: `guard_go_${row.id}`,
+        message: { message_id: 30, chat: { id: 999, type: "private" } }
+      }
+    }
+  });
+
+  const restrict = callsOf("restrictChatMember").at(-1);
+  assert.ok(restrict, "应在群里执行禁言");
+  assert.equal(String(restrict.body.chat_id), "-100");
+  assert.equal(String(restrict.body.user_id), "555");
+  assert.equal(db.get("SELECT status FROM group_punishments WHERE id = ?", row.id).status, "done");
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("成员举报但没有说明违规现象 → 只提示补充理由", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:111", 0);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+  chatMembers["-100:111"] = { status: "member", user: { id: 111 } };
+  chatMembers["-100:42"] = { status: "administrator", can_restrict_members: true, user: { id: 42 } };
+
+  const memberUctx = { ...adminUctx, userId: "111", userKey: "user:111", sceneKey: "group:-100:user:111" };
+  await sendGroup({
+    env, ctx, myId: "999", uctx: memberUctx,
+    message: guardMessage("@TestBot 举报 我看他不爽", {
+      reply_to_message: { from: { id: 555, first_name: "坏孩子" } },
+      entities: [{ type: "mention", offset: 0, length: 9 }]
+    })
+  });
+
+  assert.equal(db.count("group_punishments"), 0);
+  assert.ok(sentTexts().some((t) => t.includes("举报理由需要说清")));
+  await Promise.all(ctx.pending);
+  db.close();
+});

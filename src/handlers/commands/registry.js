@@ -33,6 +33,8 @@ import { cmdKb } from "./kb.js";
 import {
   cmdBan, cmdUnban, cmdKick, cmdMute, cmdUnmute, cmdGroupBan, cmdRules, cmdSetRules
 } from "./ban.js";
+import { cmdGuard } from "./guard.js";
+import { cmdSyncMenu } from "./system.js";
 import { cmdShopEdit } from "../../shop/edit.js";
 import { startAddItem, cancelAddItem } from "../../shop/add.js";
 import {
@@ -176,8 +178,16 @@ export const COMMANDS = [
     desc: "查看本群群规与可识别的违规类型", handle: cmdRules
   },
   {
+    name: "/guard", scope: "admin",
+    desc: "群规执法面板（群里：编辑群规 / 默认处置 / 处置记录）", handle: cmdGuard
+  },
+  {
     name: "/setrules", scope: "admin",
     desc: "设置本群群规（执法时用它校验理由）", usage: "/setrules <群规正文>", handle: cmdSetRules
+  },
+  {
+    name: "/syncmenu", scope: "admin",
+    desc: "把指令同步到输入框菜单（/ 弹出列表）", handle: cmdSyncMenu
   },
   {
     name: "/code_new", scope: "admin",

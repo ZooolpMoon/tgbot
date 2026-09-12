@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 140 个用例）
+2. `npm test` 通过（当前 151 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -83,6 +83,9 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 群组处置要求机器人是本群管理员且有 `can_restrict_members`；执行前用 `getBotGroupRights` 检查
   - 确认回调 `guard_*` 要放在 callback.js 的**管理员校验之前**（本群管理员也要能点）
   - 权限：机器人管理员 或 本群管理员（creator/administrator）
+  - 面板与引导式编辑在 `admin/guard-panel.js`（群规正文 / 默认处置 / 默认时长 / 开关 / 处置记录），会话存 `guard_sessions`，同样是 30 分钟过期 + 定时任务兜底
+- **输入框命令菜单**（`services/command-menu.js`）：菜单由命令注册表自动生成，**加命令不用改这里**；用内容哈希（`commands.version`）判断是否需要调用 Telegram，且每个 isolate 只检查一次。改完注册表想立刻看到菜单，用 `/syncmenu`
+- **引导式输入会话**（`shop_add_sessions` / `shop_edit_sessions` / `task_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts`）读取时都要带 `updated_at >= datetime('now','-30 minutes')`，并保证 `services/daily.js` 里有对应清理
 - **加命令**：在 `src/handlers/commands/registry.js` 的 `COMMANDS` 加一条即可（权限、别名、仅私聊、功能开关、`/help` 文案都由注册表处理），不要再去 `message.js` 里加 `if`。
 - **加功能开关**：在 `src/services/features.js` 的 `FEATURES` 里加一项即可。开关是**三级**的（全局 → 群聊场景 / 私聊场景覆盖），入口在 `src/admin/features.js`；新增开关不用改管理端代码。
 - **菜单排版**：统一用 `src/utils/layout.js`（`grid` / `compactLabel` / `clampPage` / `pagerRow` / `validateKeyboard`），不要再各写一份 `grid()`。约定：单行 ≤ 2 个按钮、整个菜单 ≤ 8 行、按钮文案 ≤ 32 字、`callback_data` ≤ 64 字节。

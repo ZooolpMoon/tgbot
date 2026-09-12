@@ -345,6 +345,14 @@ CREATE TABLE IF NOT EXISTS group_punishments (
 );
 CREATE INDEX IF NOT EXISTS idx_guard_pending ON group_punishments(chat_id, status, id DESC);
 CREATE INDEX IF NOT EXISTS idx_guard_user ON group_punishments(user_id, status, id DESC);
+
+-- 群规引导式编辑的中间状态（正在改群规正文 / 等管理员输入），30 分钟过期
+CREATE TABLE IF NOT EXISTS guard_sessions (
+  chat_id    TEXT PRIMARY KEY,
+  step       TEXT NOT NULL,
+  draft      TEXT DEFAULT '',
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 let schemaReady = false;
@@ -355,7 +363,7 @@ let schemaPromise = null;
  * Worker 冷启动时先读这个标记，已是最新就跳过建表与迁移，
  * 避免每次冷启动都跑几十条语句（D1 对单次调用的查询数有限制）。
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 

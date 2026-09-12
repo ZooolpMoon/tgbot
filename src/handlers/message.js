@@ -25,7 +25,8 @@ import {
   ingestUploadedDocument, isKnowledgeGuideActive, handleKnowledgeInput, cancelKnowledgeGuide
 } from "../admin/knowledge.js";
 import { looksLikeGuardCommand } from "../services/guard.js";
-import { handleGuardRequest } from "../admin/guard.js";
+import { handleGuardRequest, handleReportRequest, looksLikeReport } from "../admin/guard.js";
+import { isGuardGuideActive, handleGuardGuideInput, cancelGuardGuide } from "../admin/guard-panel.js";
 
 /** 处理 message / edited_message 更新 */
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
@@ -84,10 +85,11 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
       }
     }
 
-    // 管理员正在填知识库引导表单时，群里不 @ 也要放行（否则粘贴正文会被静默丢掉）
+    // 管理员正在填「知识库 / 群规」引导表单时，群里不 @ 也要放行（否则粘贴正文会被静默丢掉）
     if (!isMentioned && !isCommandLike) {
-      const adminGuideActive = Boolean(myId && userId === myId)
-        && await isKnowledgeGuideActive(env, chatId);
+      const isBotAdmin = Boolean(myId && userId === myId);
+      const adminGuideActive = isBotAdmin
+        && ((await isKnowledgeGuideActive(env, chatId)) || (await isGuardGuideActive(env, chatId)));
       if (!adminGuideActive) return;
     }
 
@@ -139,6 +141,14 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     if (handled) return;
   }
 
+  // ---------- 成员举报：回复违规消息 + @机器人 说「举报 …」----------
+  if (isGroupCtx && isMentioned && !isMaster && looksLikeReport(originalText)) {
+    const handled = await handleReportRequest({
+      env, token, chatId, uctx, message, rawText: originalText, isMaster, myId
+    });
+    if (handled) return;
+  }
+
   const command = userText.split(/\s+/)[0].split("@")[0].toLowerCase();
   const botMention = botUsername ? `@${botUsername}` : "Bot";
 
@@ -167,6 +177,18 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
         return;
       }
     } else if (await handleKnowledgeInput({ env, token, chatId, uctx, userText, adminId: userId })) {
+      return;
+    }
+  }
+
+  // ---------- 群规引导式输入（编辑 / 追加群规）----------
+  if (isMaster && (await isGuardGuideActive(env, chatId))) {
+    if (isCommandLike) {
+      if (/^\/(cancel|取消)$/i.test(command)) {
+        await cancelGuardGuide({ env, token, chatId });
+        return;
+      }
+    } else if (await handleGuardGuideInput({ env, token, chatId, userText, uctx, adminId: userId })) {
       return;
     }
   }

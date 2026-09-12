@@ -80,6 +80,7 @@ import { upsertUserInfo, isUserBlocked } from "../services/users.js";
 import { isFeatureEnabled } from "../services/features.js";
 import { logError } from "../core/logger.js";
 import { handleGuardCallback } from "../admin/guard.js";
+import { handleGuardPanelCallback } from "../admin/guard-panel.js";
 
 /**
  * 处理按钮回调（callback_query）。
@@ -445,6 +446,11 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       } else {
         await answerCallback(token, callback.id, "⚠️ 文档参数无效", true);
       }
+    }
+
+    // ---------- 群规执法面板 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.GUARD_HOME)) {
+      await handleGuardPanelCallback({ env, token, callback, chatId, msgId, data, uctx, adminId: fromId });
     }
 
     // ---------- 用户列表 ----------
