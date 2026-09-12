@@ -1,0 +1,122 @@
+# ❓ 常见问题与已知限制
+
+[返回首页](../README.md) · [文档索引](README.md)
+
+## 常见问题
+
+<details>
+<summary><b>群里 @ 机器人没反应</b></summary>
+
+1. **Privacy Mode 没关**：BotFather → `/mybots` → Bot Settings → Group Privacy → **Turn off**
+2. 没有 @ 机器人也没有用 `/命令`（群聊默认只响应这两种）
+3. 该场景的功能开关被关了（`/admin → ⚙️ 功能开关`）
+4. 今天额度用完或正在冷却（`/profile` 可看当前额度）
+5. 用户被封禁（管理员不受影响）
+
+</details>
+
+<details>
+<summary><b>提示「AI 服务暂时异常」/「AI 未绑定」</b></summary>
+
+- 检查 `wrangler.toml` 里的 `[ai] binding = "AI"` 是否保留，以及账号是否已开通 Workers AI
+- 模型名写错（`AI_MODELS`）会走回退链，全部失败才报异常
+- 这种情况积分与额度会自动退回，不会白扣
+
+</details>
+
+<details>
+<summary><b>知识库检索不到内容</b></summary>
+
+详见 [知识库 → 常见问题](knowledge-base.md#常见问题)：
+
+1. 文档是否处于「✅ 参与检索」
+2. 作用域是否对（本群资料只在那个群可见；想全局可用点「⬆️ 设为全局」）
+3. 用「🔍 检索测试」看相似度评分
+4. 上传时没绑定 AI → 点「🧠 重建索引」
+
+</details>
+
+<details>
+<summary><b>禁言 / 踢人 / 群封失败</b></summary>
+
+机器人必须是**该群管理员**，并勾选「删除消息」与「封禁用户」。没有权限时机器人会明确提示，不会留下半截状态。只做「机器人封禁」则不需要群管理权限。
+
+</details>
+
+<details>
+<summary><b>聊天框输入 / 看不到命令</b></summary>
+
+菜单在部署后自动同步（内容没变不会重复调用 Telegram）。想立刻刷新：管理员执行 `/syncmenu`。若刚改过命令名，Telegram 客户端可能需要重开聊天。
+
+</details>
+
+<details>
+<summary><b>Windows 上 <code>npm run ...</code> 报「禁止运行脚本」</b></summary>
+
+PowerShell 执行策略限制，用等价调用方式即可：
+
+```powershell
+npm.cmd run check
+npm.cmd test
+```
+
+</details>
+
+<details>
+<summary><b>想改初始积分 / 每日额度 / 签到奖励</b></summary>
+
+| 想改什么 | 改哪里 |
+|---------|--------|
+| 初始积分、默认额度、冷却 | `src/config/constants.js` → `DEFAULTS` |
+| 签到奖励、AI 消耗 | 同文件 → `POINTS` |
+| 知识库切块、阈值、容量 | 同文件 → `KB` |
+| 群发批量与上限 | 同文件 → `BROADCAST` |
+| 单个用户 / 某个群的额度、冷却、开关 | 管理后台对应面板（不用改代码） |
+
+</details>
+
+<details>
+<summary><b>机器人被别人拉进不相关的群</b></summary>
+
+- 「用户管理 → 群组用户」能看到所有有记录的群，逐个进场景关掉功能开关或调额度
+- 也可以直接在那些群发 `/guard` 关闭执法、`/admin` 调整功能开关
+- 必要时 `/clearmem` 清掉该场景记忆，或删除场景记录
+
+</details>
+
+<details>
+<summary><b>能不能不用数据库只跑 AI 对话？</b></summary>
+
+可以。不绑定 `DB` 时，依赖数据库的功能（积分、签到、任务、商城、知识库、执法）会提示「未绑定数据库」，AI 对话本身仍可用（不扣积分）。
+
+</details>
+
+<details>
+<summary><b>对话内容会被别人看到吗？</b></summary>
+
+对话历史按场景隔离：私聊只有你自己，群聊里每个成员各一份。只有 AI 处理时会经过 Cloudflare Workers AI，详见 [安全与隐私](security.md#数据与隐私部署前请知悉)。
+
+</details>
+
+<details>
+<summary><b>能不能改成「理由通过就直接执行」不点确认？</b></summary>
+
+可以，改 `src/admin/guard.js` 的 `sendOrReject`（把弹卡片改成直接执行）。但不建议：确认卡片是误伤的主要防线。若确实想省一步，可以只对「禁言」放开，保留封禁与踢出的确认。
+
+</details>
+
+## 已知限制
+
+| 限制 | 说明 / 缓解 |
+|------|------------|
+| 单管理员模型 | 只有 `MY_TELEGRAM_ID` 能进管理后台（群规执法额外允许本群管理员）。想要多管理员需要自行扩展权限表 |
+| 知识库规模 | 向量存 D1、在 Worker 内算余弦相似度，单作用域约 400 块 / 25 万字量级；更大规模建议迁移 Vectorize |
+| PDF 解析 | 只能尽力抽取文本层：扫描件、加密 PDF、特殊字体编码可能抽不出文字（会明确提示，不会静默失败），需要先 OCR |
+| 无 Web 后台 | 所有管理操作都在 Telegram 内完成 |
+| 平台限制 | Workers 有 CPU 时间与请求大小限制，因此群发、索引重建、处置通知都做了分批与上限 |
+| 多语言 | AI 回复支持中英切换（`/setlang`），界面文案目前是中文 |
+| 群发 | 只能发给「私聊过机器人且未被封禁」的用户；单次最多 10000 人，超出需分次 |
+| 定时任务时区 | Cron 按 UTC 解析，与 `APP_TIMEZONE` 无关，需要自行换算 |
+| 向量相似度阈值 | 默认 0.30 是通用值，不同资料风格可能需要微调（`KB.MIN_SCORE`）；调低了容易召回无关内容 |
+
+如果你在某个限制上遇到了实际需求，欢迎提 Issue 说明场景。
