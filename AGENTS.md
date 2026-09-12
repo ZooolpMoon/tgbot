@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 209 个用例）
+2. `npm test` 通过（当前 214 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -114,6 +114,8 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   4. 用一次性标记（如 `task.seeded`）避免「管理员删掉的数据又被灌回来」
 - **涉及积分的操作**：原子条件 UPDATE（`WHERE points >= ?` / `WHERE status = 'pending'`）+ `points_log` 流水，失败要补偿回滚。
 - **用户可控文本**：进 HTML 消息前一律 `escapeHtml()`（usage 占位符也要转义，否则 Telegram 会当标签）。
+  - **常量也未必安全**：`config/tasks.js` 的提示里就带着 `<兑换码>` 这种占位符，直接塞进 HTML 消息会让 Telegram 拒收整条消息（v2.8.2 踩过：「添加任务」因此完全点不动）。任何要进 HTML 消息的文案都要过一遍 `escapeHtml()`
+  - `test/bugfix.test.mjs` 里有一道**出站 HTML 体检**：模拟 Telegram 实体解析，所有出站消息只要残留未转义尖括号就测试失败——新增消息文案时它会兜底
 - **随机**：用 `src/utils/random.js`（`crypto.getRandomValues`），不要用 `Math.random`。
 - **Telegram API**：统一走 `src/telegram/api.js`（自带 429/5xx 退避重试）。
 

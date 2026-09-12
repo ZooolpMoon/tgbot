@@ -17,11 +17,26 @@ import { createTestDB, hasSqlite, seedUser } from "../test-helpers/d1.mjs";
 let apiCalls = [];
 let messageId = 0;
 let chatMembers = {};
+/** 设为 true 时，下一次「带按钮的 sendMessage」会被 Telegram 拒绝（模拟 400/429） */
+let failKeyboardOnce = false;
+/** 所有出站 HTML 消息里「Telegram 会当成标签」的片段（应为空） */
+const htmlErrors = [];
+
+/** Telegram 允许的 HTML 标签 */
+const ALLOWED_HTML = /<\/?(b|strong|i|em|u|ins|s|strike|del|code|pre|a)(\s+[^<>]*)?>/g;
+
+/** 模拟 Telegram 的实体解析：去掉合法标签后不该再剩下尖括号 */
+function checkHtmlText(text) {
+  const rest = String(text || "").replace(ALLOWED_HTML, "");
+  const bad = /<[^>]*>/.exec(rest);
+  if (bad) htmlErrors.push(bad[0]);
+}
 
 globalThis.fetch = async (url, opts = {}) => {
   const method = String(url).split("/").pop();
   const body = opts.body ? JSON.parse(opts.body) : {};
   apiCalls.push({ method, body });
+  if (body.parse_mode === "HTML") checkHtmlText(body.text);
   const ok = (result) => ({
     ok: true, status: 200, headers: { get: () => null },
     json: async () => ({ ok: true, result })
@@ -36,7 +51,13 @@ globalThis.fetch = async (url, opts = {}) => {
     const member = chatMembers[`${body.chat_id}:${body.user_id}`];
     return member ? ok(member) : fail("not found");
   }
-  if (method === "sendMessage") return ok({ message_id: ++messageId });
+  if (method === "sendMessage") {
+    if (failKeyboardOnce && body.reply_markup) {
+      failKeyboardOnce = false;
+      return fail("Bad Request: not enough rights to send text messages to the chat");
+    }
+    return ok({ message_id: ++messageId });
+  }
   return ok(true);
 };
 
@@ -383,4 +404,98 @@ test("未知的 admin_task_* 回调不会被当成任务详情", { skip: !hasSql
   );
   await Promise.all(ctx.pending);
   db.close();
+});
+
+// ==========================================
+// 9. 添加任务：按钮点不了 / 发不出去时也要能继续
+// ==========================================
+
+test("添加任务：在「选触发条件」那步直接打字也能继续（回复编号）", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  const { TASK_TRIGGERS } = await import("../src/config/tasks.js");
+  resetCalls();
+
+  await click(env, ctx, groupUctx, "admin_task_add", "supergroup");
+  assert.equal(db.get("SELECT step FROM task_edit_sessions WHERE chat_id = '-100'").step, "add:trigger");
+
+  // 乱写：应重新提示并保留会话（以前会被当成未知步骤清掉，然后掉进 AI 对话）
+  await say(env, ctx, groupUctx, "我先随便说点什么", true);
+  assert.equal(db.get("SELECT step FROM task_edit_sessions WHERE chat_id = '-100'").step, "add:trigger", "会话不该被清掉");
+  assert.ok(textsOf("sendMessage").some((t) => t.includes("没认出这个触发条件")));
+
+  // 回复编号：等价于点了第 2 个触发条件
+  await say(env, ctx, groupUctx, "2", true);
+  const session = db.get("SELECT step, draft FROM task_edit_sessions WHERE chat_id = '-100'");
+  assert.equal(session.step, "add:label");
+  assert.equal(JSON.parse(session.draft).trigger, TASK_TRIGGERS[1].key);
+
+  // 继续走完
+  await say(env, ctx, groupUctx, "文字建的任务", true);
+  await say(env, ctx, groupUctx, "随便发句话", true);
+  await say(env, ctx, groupUctx, "9", true);
+  const created = db.get("SELECT * FROM daily_task_defs ORDER BY id DESC LIMIT 1");
+  assert.equal(created.label, "文字建的任务");
+  assert.equal(created.points, 9);
+  assert.equal(db.count("task_edit_sessions"), 0);
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("添加任务：带按钮的消息发不出去时，写审计日志并退化成纯文本", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  failKeyboardOnce = true;
+  await click(env, ctx, groupUctx, "admin_task_add", "supergroup");
+
+  const failLog = db.get("SELECT action, detail FROM admin_logs ORDER BY id DESC LIMIT 1");
+  assert.equal(failLog.action, "task_step_send_failed", "应把发送失败写进审计日志");
+  assert.match(String(failLog.detail), /add:trigger/);
+  assert.match(String(failLog.detail), /not enough rights/);
+  assert.ok(
+    textsOf("sendMessage").some((t) => t.includes("按钮没有发送成功")),
+    "应退化成不带按钮的纯文本提示"
+  );
+  assert.equal(db.get("SELECT step FROM task_edit_sessions WHERE chat_id = '-100'").step, "add:trigger");
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("resolveTriggerInput：编号 / key / 名称都能解析", async () => {
+  const { resolveTriggerInput } = await import("../src/admin/tasks.js");
+  const { TASK_TRIGGERS } = await import("../src/config/tasks.js");
+
+  assert.equal(resolveTriggerInput("1").key, TASK_TRIGGERS[0].key);
+  assert.equal(resolveTriggerInput("5").key, TASK_TRIGGERS[4].key);
+  assert.equal(resolveTriggerInput("checkin").key, "checkin");
+  assert.equal(resolveTriggerInput(TASK_TRIGGERS[2].label).key, TASK_TRIGGERS[2].key);
+  assert.equal(resolveTriggerInput("99"), null);
+  assert.equal(resolveTriggerInput("随便写"), null);
+});
+
+test("添加任务第 1 步：触发条件里的 <占位符> 必须转义（否则 Telegram 直接拒收）", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  await click(env, ctx, groupUctx, "admin_task_add", "supergroup");
+
+  const picker = apiCalls.find((c) => c.method === "sendMessage" && c.body.reply_markup);
+  assert.ok(picker, "应发出触发条件选择消息");
+  assert.match(String(picker.body.text), /&lt;兑换码&gt;/, "占位符应转义成实体");
+  assert.ok(!/<兑换码>/.test(String(picker.body.text)), "不能残留会被当成标签的原文");
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("本轮所有出站 HTML 消息都能被 Telegram 解析（无未转义尖括号）", () => {
+  assert.deepEqual(htmlErrors, [], `发现会被 Telegram 当成标签的片段：${JSON.stringify(htmlErrors.slice(0, 5))}`);
 });

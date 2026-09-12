@@ -23,6 +23,65 @@ const MAX_POINTS = 1000;
 /** 任务列表每页显示多少个（2 列 × 3 行，给翻页和按钮留出空间） */
 const TASKS_PER_PAGE = 6;
 
+/**
+ * 发送一个引导步骤。
+ *
+ * Telegram 偶发 400 / 429 时 `sendMessage*` 只会返回 `ok:false`，
+ * 以前直接把返回值丢掉 → 管理员看到的现象是「点了按钮没有反应」。
+ * 现在：失败会写一条审计日志（`task_step_send_failed`，可在 D1 / 操作日志里查到原因），
+ * 并且退化成**不带按钮的纯文本**再发一次——按钮发不出去也要能继续操作。
+ */
+async function sendStep({ env, token, chatId, text, keyboard = null, tag = "" }) {
+  const res = keyboard
+    ? await sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML")
+    : await sendMessage(token, chatId, text, "HTML");
+
+  if (res && res.ok !== false) return res;
+
+  const detail = String(
+    res?.description || res?.error?.description || res?.error?.message || JSON.stringify(res?.error || {}) || "未知错误"
+  ).slice(0, 200);
+  await logAdminAction(env, {
+    adminId: null, chatId, action: "task_step_send_failed", detail: `${tag || "step"}｜${detail}`
+  });
+
+  if (keyboard) {
+    // 退化成纯文本：让管理员至少知道下一步做什么（配合下面的「回复编号」输入）
+    await sendMessage(
+      token, chatId,
+      `${text}\n\n⚠️ <i>按钮没有发送成功，请直接回复编号继续。</i>`,
+      "HTML"
+    );
+  }
+  return res;
+}
+
+/**
+ * 触发条件列表文案（带编号，方便按钮发不出去时直接回复数字）。
+ * 注意：hint 里可能带 `<兑换码>` 这类占位符，必须转义——
+ * 否则 Telegram 会报 `can't parse entities: Unsupported start tag`，
+ * 整条消息发不出去（v2.8.1 之前「添加任务」点不动就是这个原因）。
+ */
+function triggerListText() {
+  return TASK_TRIGGERS
+    .map((t, i) => `${i + 1}. <b>${escapeHtml(t.label)}</b> —— ${escapeHtml(t.hint)}`)
+    .join("\n");
+}
+
+/** 把管理员输入的文字解析成触发条件（编号 / key / 名称都能认） */
+export function resolveTriggerInput(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+
+  const byIndex = /^(\d{1,2})$/.exec(raw);
+  if (byIndex) return TASK_TRIGGERS[Number(byIndex[1]) - 1] || null;
+
+  const lower = raw.toLowerCase();
+  return TASK_TRIGGERS.find((t) =>
+    t.key.toLowerCase() === lower || t.label === raw || raw.includes(t.label)
+  ) || null;
+}
+
 // ---------- 引导会话 ----------
 // 会话超过 30 分钟自动失效：否则管理员点开「添加任务」后走开，
 // 之后所有私聊文本都会被当成任务输入吞掉（真实踩过的坑）。
@@ -206,15 +265,28 @@ export async function startTaskAdd({ env, token, chatId }) {
     `➕ <b>添加每日任务 · 第 1 步</b>\n` +
     `-------------------------\n` +
     `先选一个<b>触发条件</b>——也就是「机器人能观测到什么行为」：\n\n` +
-    TASK_TRIGGERS.map((t) => `• <b>${t.label}</b> —— ${t.hint}`).join("\n") +
-    `\n\n（随时回复 <code>/cancel</code> 放弃）`;
+    triggerListText() +
+    `\n\n（点下面的按钮，或直接回复编号；随时回复 <code>/cancel</code> 放弃）`;
 
   const inline_keyboard = TASK_TRIGGERS.map((t) => [
     { text: t.label, callback_data: `${ADMIN_CALLBACK.TASK_PICK_PREFIX}${t.key}` }
   ]);
   inline_keyboard.push([{ text: "❌ 取消", callback_data: ADMIN_CALLBACK.TASKS_PREFIX }]);
 
-  return sendMessageWithKeyboard(token, chatId, text, { inline_keyboard }, "HTML");
+  return sendStep({
+    env, token, chatId, text, keyboard: { inline_keyboard }, tag: "add:trigger"
+  });
+}
+
+/** 进入第 2 步：提示输入任务名称（按钮点击与文字输入共用） */
+async function promptTaskLabel({ env, token, chatId, trigger }) {
+  return sendStep({
+    env, token, chatId, tag: "add:label",
+    text:
+      `➕ <b>添加每日任务 · 第 2 步</b>\n-------------------------\n` +
+      `触发条件：<b>${escapeHtml(triggerLabel(trigger))}</b>\n\n` +
+      `请输入<b>任务名称</b>（展示给用户，例如「在群里发一次言」）：`
+  });
 }
 
 /** 处理「选择触发条件」，通过后进入第 2 步（输入任务名称） */
@@ -232,13 +304,7 @@ export async function handleTaskTriggerPick({ env, token, callback, chatId, msgI
 
   await setSession(env, chatId, "add:label", null, { trigger });
   await answerCallback(token, callback.id, `已选择：${triggerLabel(trigger)}`);
-  await sendMessage(
-    token, chatId,
-    `➕ <b>添加每日任务 · 第 2 步</b>\n-------------------------\n` +
-    `触发条件：<b>${escapeHtml(triggerLabel(trigger))}</b>\n\n` +
-    `请输入<b>任务名称</b>（展示给用户，例如「在群里发一次言」）：`,
-    "HTML"
-  );
+  await promptTaskLabel({ env, token, chatId, trigger });
 }
 
 // ---------- 引导式：修改字段 ----------
@@ -262,12 +328,12 @@ export async function startTaskFieldEdit({ env, token, chatId, taskId, field }) 
 
   await setSession(env, chatId, `edit:${field}`, def.id, null);
 
-  return sendMessage(
-    token, chatId,
-    `✏️ <b>修改任务 #${def.id}</b>\n-------------------------\n` + prompt(def) +
-    `\n\n（回复 <code>/cancel</code> 取消）`,
-    "HTML"
-  );
+  return sendStep({
+    env, token, chatId, tag: `edit:${field}`,
+    text:
+      `✏️ <b>修改任务 #${def.id}</b>\n-------------------------\n` + prompt(def) +
+      `\n\n（回复 <code>/cancel</code> 取消）`
+  });
 }
 
 /** 全勤奖：当天所有启用任务都完成后额外发放的积分 */
@@ -279,15 +345,15 @@ export async function startTaskBonusEdit({ env, token, chatId }) {
   const bonus = await getTaskBonus(env);
   await setSession(env, chatId, "bonus", null, null);
 
-  return sendMessage(
-    token, chatId,
-    `🏆 <b>修改全勤奖</b>\n-------------------------\n` +
-    `当前全勤奖：<b>${bonus}</b> 积分\n` +
-    `（当天所有启用的任务都完成后额外发放）\n\n` +
-    `请输入<b>新的全勤奖积分</b>（0 ~ ${MAX_POINTS}，0 表示不发）：\n\n` +
-    `（回复 <code>/cancel</code> 取消）`,
-    "HTML"
-  );
+  return sendStep({
+    env, token, chatId, tag: "bonus",
+    text:
+      `🏆 <b>修改全勤奖</b>\n-------------------------\n` +
+      `当前全勤奖：<b>${bonus}</b> 积分\n` +
+      `（当天所有启用的任务都完成后额外发放）\n\n` +
+      `请输入<b>新的全勤奖积分</b>（0 ~ ${MAX_POINTS}，0 表示不发）：\n\n` +
+      `（回复 <code>/cancel</code> 取消）`
+  });
 }
 
 // ---------- 引导式文本输入的总入口 ----------
@@ -319,23 +385,47 @@ export async function handleTaskGuideInput({ env, token, chatId, userText, admin
   const step = String(session.step || "");
   const draft = parseDraft(session.draft);
 
+  // ---- 添加：第 1 步的触发条件（按钮为主，也接受文字：编号 / key / 名称）----
+  // 以前这一步的文本会掉进「未知步骤 → 清会话 → 交给 AI」，等于点错一下就毁了整个流程
+  if (step === "add:trigger") {
+    const picked = resolveTriggerInput(text);
+    if (!picked) {
+      await sendStep({
+        env, token, chatId, tag: "add:trigger-retry",
+        text:
+          `⚠️ 没认出这个触发条件，请重新选择：\n\n${triggerListText()}\n\n` +
+          `回复编号即可（例如 <code>1</code>），或回复 <code>/cancel</code> 放弃。`
+      });
+      return true;
+    }
+    await setSession(env, chatId, "add:label", null, { trigger: picked.key });
+    await promptTaskLabel({ env, token, chatId, trigger: picked.key });
+    await logAdminAction(env, {
+      adminId, chatId, action: "task_add_trigger", detail: `${picked.key}（文字输入）`
+    });
+    return true;
+  }
+
   // ---- 添加：任务名称 → 提示 → 奖励 ----
   if (step === "add:label") {
     draft.label = text.slice(0, 40);
     await setSession(env, chatId, "add:hint", null, draft);
-    await sendMessage(
-      token, chatId,
-      `✅ 名称已记录：<b>${escapeHtml(draft.label)}</b>\n\n` +
-      `请输入<b>完成提示</b>（告诉用户怎么做，例如「发送 /checkin」；回复 - 表示不填）：`,
-      "HTML"
-    );
+    await sendStep({
+      env, token, chatId, tag: "add:hint",
+      text:
+        `✅ 名称已记录：<b>${escapeHtml(draft.label)}</b>\n\n` +
+        `请输入<b>完成提示</b>（告诉用户怎么做，例如「发送 /checkin」；回复 - 表示不填）：`
+    });
     return true;
   }
 
   if (step === "add:hint") {
     draft.hint = text === "-" ? "" : text.slice(0, 80);
     await setSession(env, chatId, "add:points", null, draft);
-    await sendMessage(token, chatId, `✅ 提示已记录。\n\n请输入<b>完成奖励积分</b>（1 ~ ${MAX_POINTS}）：`);
+    await sendStep({
+      env, token, chatId, tag: "add:points",
+      text: `✅ 提示已记录。\n\n请输入<b>完成奖励积分</b>（1 ~ ${MAX_POINTS}）：`
+    });
     return true;
   }
 
