@@ -903,7 +903,33 @@ lucky: {
 
 ## 📝 许可
 
-MIT License
+本项目采用 **GNU General Public License v3.0**（GPL-3.0，SPDX：`GPL-3.0-only`），完整全文见仓库根目录的 [LICENSE](LICENSE)。
+
+```
+Copyright (C) 2026 ZooolpMoon
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, version 3 of the License.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```
+
+**这对你意味着什么：**
+
+- ✅ 可以自由使用、修改、分发，包括商用
+- ✅ 分发（含修改版）时必须**保留版权声明**并**提供完整对应源代码**
+- ✅ 修改后的衍生作品必须同样以 GPL-3.0 授权（copyleft，不能用闭源方式发布）
+- ❌ 不能把本项目代码并入闭源 / 专有程序后再对外分发
+- ℹ️ 只是自己部署一个机器人给自己或社群使用，不构成 GPL 意义上的「分发」，没有额外义务；一旦把代码或改过的版本发出去，就要遵守上面的条款
+
+> 第三方依赖（wrangler、workerd 等）各自遵循其原有许可，不因本项目的许可而改变。
 
 ---
 
