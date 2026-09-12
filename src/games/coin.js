@@ -1,43 +1,37 @@
 // ==========================================
 // 🪙 游戏：抛硬币
+// 猜正反面，猜中 2 倍（含本金）返还，胜率 50%。
 // ==========================================
 
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
+import { LAYOUT } from "../utils/layout.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
 import { completeTask } from "../services/tasks.js";
 import { randomInt } from "../utils/random.js";
+import { getGameMainKeyboard, getBackToGameMainRow } from "./shared.js";
 
 export const CoinGame = {
+  /** 游戏主界面：选下注金额 */
   async renderMain(token, env, chatId, userKey, messageId) {
     const pts = await getUserPoints(env, userKey);
     const text =
       `🪙 <b>抛硬币</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `💰 <b>当前积分：</b> <code>${pts}</code>\n\n` +
       `<b>规则说明：</b>\n` +
       `• 猜硬币正反面，猜中赢 <b>2 倍</b>，猜错失去本金。\n` +
       `• 赔率公平（50% vs 50%）。\n\n` +
       `请先选择下注金额：`;
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: "下注 10 🪙", callback_data: "game_coin_bet_10" },
-          { text: "下注 50 🪙", callback_data: "game_coin_bet_50" },
-          { text: "下注 100 🪙", callback_data: "game_coin_bet_100" }
-        ],
-        [{ text: "🎛️ 自定义下注", callback_data: "game_c_coin_show_10" }],
-        [{ text: "🔙 返回大厅", callback_data: "game_hub" }]
-      ]
-    };
-    return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
+    return editMessageText(token, chatId, messageId, text, getGameMainKeyboard("coin"), "HTML");
   },
 
+  /** 二级界面：猜正面 / 反面 */
   async renderChoice(token, env, chatId, userKey, messageId, betAmount) {
     const pts = await getUserPoints(env, userKey);
     const text =
       `🪙 <b>抛硬币</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `💰 <b>当前积分：</b> <code>${pts}</code>\n` +
       `💵 <b>已选下注：</b> <code>${betAmount}</code> 积分\n\n` +
       `请选择你要猜的面：`;
@@ -47,12 +41,13 @@ export const CoinGame = {
           { text: "👑 正面", callback_data: `game_coin_play_${betAmount}_heads` },
           { text: "🌵 反面", callback_data: `game_coin_play_${betAmount}_tails` }
         ],
-        [{ text: "🔙 重选金额", callback_data: "game_coin_main" }]
+        getBackToGameMainRow("coin")
       ]
     };
     return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
   },
 
+  /** 开奖：先扣分再抛硬币，猜中 2 倍返还 */
   async play(token, env, callbackId, chatId, userKey, messageId, betAmount, choice, sceneKey = null) {
     if (!env.DB) return answerCallback(token, callbackId, "❌ 未绑定数据库！", true);
     const afterDeduct = await tryDeductPoints(env, userKey, betAmount);
@@ -78,10 +73,10 @@ export const CoinGame = {
 
     const resultMsg =
       `🪙 <b>抛硬币开奖</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `🎲 <b>结果：</b> <b>${resultText}</b>\n` +
       `💬 <b>你的选择：</b> ${choiceText}\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `🏆 <b>结算：</b> ${isWin ? "🎉 恭喜赢了！" : "💸 遗憾输了！"}\n` +
       `💰 <b>变动：</b> ${isWin ? `+${reward}` : `-${betAmount}`}\n` +
       `🪙 <b>余额：</b> <b>${currentBalance}</b>`;

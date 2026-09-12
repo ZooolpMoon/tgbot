@@ -6,9 +6,11 @@
 
 import { sendMessage, sendMessageWithKeyboard, editMessageText, answerCallback } from "../../telegram/api.js";
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
+import { grid, LAYOUT } from "../../utils/layout.js";
 import { createRedeemCode, listRedeemCodes, setRedeemCodeEnabled } from "../../services/redeem.js";
 import { logAdminAction } from "../../services/admin-log.js";
 import { escapeHtml } from "../../utils/html.js";
+import { getDateKey } from "../../services/time.js";
 import { ADMIN_CALLBACK } from "../../config/constants.js";
 
 const USAGE =
@@ -20,6 +22,7 @@ const USAGE =
   "<code>/code_new 100</code> —— 100 积分，限 1 人，永久\n" +
   "<code>/code_new 50 20 7</code> —— 50 积分，限 20 次，7 天有效";
 
+/** /code_new：生成兑换码（面额必填，次数与有效天数可选） */
 export async function cmdCodeNew({ env, ctx, token, chatId, isGroupCtx, rawText, myId }) {
   if (!env.DB) {
     await sendAutoDelete(token, chatId, "❌ 未绑定数据库。", null, isGroupCtx, ctx);
@@ -59,7 +62,7 @@ export async function cmdCodeNew({ env, ctx, token, chatId, isGroupCtx, rawText,
   await sendMessage(
     token, chatId,
     `✅ <b>兑换码已生成</b>\n` +
-    `-------------------------\n` +
+    `${LAYOUT.DIVIDER}\n` +
     `🎟️ <code>${res.code}</code>\n` +
     `🎁 面额：<b>${res.points}</b> 积分\n` +
     `🔢 使用：${scope}（每人限兑一次）\n` +
@@ -75,6 +78,7 @@ export async function cmdCodeNew({ env, ctx, token, chatId, isGroupCtx, rawText,
 }
 
 // ---------- 列表 ----------
+/** 兑换码列表（倒序分页，两列开关按钮） */
 export async function renderCodeList(token, env, chatId, messageId = null, page = 1) {
   if (!env.DB) {
     const text = "❌ 未绑定数据库。";
@@ -82,11 +86,12 @@ export async function renderCodeList(token, env, chatId, messageId = null, page 
   }
 
   const { rows, total, totalPages, page: safePage } = await listRedeemCodes(env, page);
-  const today = new Date().toISOString().slice(0, 10);
+  // 用项目统一时区判断是否过期；用 UTC 会与兑换时的校验结果差 8 小时
+  const today = getDateKey(env);
 
   let text = `🎟️ <b>兑换码</b>\n`;
   text += `页码：<b>${safePage} / ${totalPages}</b>（共 ${total} 个）\n`;
-  text += `-------------------------\n\n`;
+  text += `${LAYOUT.DIVIDER}\n\n`;
 
   const inline_keyboard = [];
   const pendingToggles = [];
@@ -103,15 +108,14 @@ export async function renderCodeList(token, env, chatId, messageId = null, page 
 
       pendingToggles.push({
         text: `${Number(row.enabled) === 1 ? "🚫" : "✅"} …${String(row.code).slice(-6)}`,
-        callback_data: `${ADMIN_CALLBACK.CODE_TOGGLE_PREFIX}${row.id}`
+        // 带上页码，切换后停留在当前页而不是跳回第一页
+        callback_data: `${ADMIN_CALLBACK.CODE_TOGGLE_PREFIX}${row.id}_${safePage}`
       });
     }
   }
 
   // 两列网格：一排两个开关按钮
-  for (let i = 0; i < pendingToggles.length; i += 2) {
-    inline_keyboard.push(pendingToggles.slice(i, i + 2));
-  }
+  inline_keyboard.push(...grid(pendingToggles));
 
   const navRow = [];
   if (safePage > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `${ADMIN_CALLBACK.CODES_PREFIX}${safePage - 1}` });
@@ -124,6 +128,7 @@ export async function renderCodeList(token, env, chatId, messageId = null, page 
   return sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML");
 }
 
+/** /code_list：直接新发一条列表 */
 export async function cmdCodeList({ env, ctx, token, chatId, isGroupCtx }) {
   if (!env.DB) {
     await sendAutoDelete(token, chatId, "❌ 未绑定数据库。", null, isGroupCtx, ctx);
@@ -133,8 +138,12 @@ export async function cmdCodeList({ env, ctx, token, chatId, isGroupCtx }) {
 }
 
 // ---------- 启用 / 停用 ----------
+/** 启用 / 停用兑换码；回调数据形如 admin_code_toggle_<id>_<page> */
 export async function handleCodeToggle({ env, token, callback, chatId, msgId, data, adminId = null }) {
-  const codeId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.CODE_TOGGLE_PREFIX, ""), 10);
+  const raw = String(data).replace(ADMIN_CALLBACK.CODE_TOGGLE_PREFIX, "");
+  const [rawId, rawPage] = raw.split("_");
+  const codeId = Number.parseInt(rawId, 10);
+  const page = Number.parseInt(rawPage, 10) || 1;
   if (!env.DB || !Number.isInteger(codeId)) return;
 
   const row = await env.DB.prepare("SELECT code, enabled FROM redeem_codes WHERE id = ?").bind(codeId).first();
@@ -153,5 +162,5 @@ export async function handleCodeToggle({ env, token, callback, chatId, msgId, da
   });
 
   await answerCallback(token, callback.id, next ? "✅ 已启用" : "🚫 已停用");
-  await renderCodeList(token, env, chatId, msgId, 1);
+  await renderCodeList(token, env, chatId, msgId, page);
 }

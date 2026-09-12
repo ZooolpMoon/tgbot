@@ -4,16 +4,12 @@
 // ==========================================
 
 import { sendMessageWithKeyboard, editMessageText } from "../telegram/api.js";
+import { grid } from "../utils/layout.js";
 
-/** 把按钮数组按每行 2 个排成网格 */
-function grid(buttons, perRow = 2) {
-  const rows = [];
-  for (let i = 0; i < buttons.length; i += perRow) {
-    rows.push(buttons.slice(i, i + perRow));
-  }
-  return rows;
-}
-
+/**
+ * 管理员主菜单键盘。
+ * @param {boolean} showShop 群聊里不显示商城入口（商城仅私聊可用）
+ */
 export function getAdminMainKeyboard(showShop = true) {
   const buttons = [
     { text: "💬 私聊用户", callback_data: "admin_users_private_1" },
@@ -45,10 +41,12 @@ const MENU_TEXT =
   `-------------------------\n` +
   `用户管理 · 商城与兑换码 · 每日任务 · 功能开关 · 日志统计`;
 
+/** 新发一条管理员主菜单（/admin 指令用） */
 export async function sendAdminMainMenu(token, chatId, showShop = true) {
   return sendMessageWithKeyboard(token, chatId, MENU_TEXT, getAdminMainKeyboard(showShop), "HTML");
 }
 
+/** 原地刷新管理员主菜单（按钮回调用） */
 export async function renderAdminMainMenu(token, chatId, messageId, showShop = true) {
   return editMessageText(token, chatId, messageId, MENU_TEXT, getAdminMainKeyboard(showShop), "HTML");
 }

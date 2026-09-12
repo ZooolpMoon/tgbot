@@ -23,6 +23,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const FILES = ["wrangler.production.toml", ".dev.vars"];
 
 // ---------- 解析目标仓库 ----------
+/** 目标仓库优先取环境变量，其次取未跟踪文件 .config-backup（一行 owner/repo） */
 function resolveTargetRepo() {
   if (process.env.CONFIG_BACKUP_REPO) return process.env.CONFIG_BACKUP_REPO.trim();
   const localConfig = path.join(repoRoot, ".config-backup");
@@ -47,6 +48,7 @@ if (!TARGET_REPO) {
 }
 
 // ---------- 找 git ----------
+/** 找一个可用的 git 可执行文件（PATH 里没有时尝试 Windows 默认安装路径） */
 function findGit() {
   const candidates = [
     process.env.GIT_BIN,
@@ -68,10 +70,12 @@ function findGit() {
 }
 
 // ---------- 取 Token ----------
+/** 从环境变量取 GitHub Token */
 function tokenFromEnv() {
   return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
 }
 
+/** 通过 git credential fill 读取系统凭据管理器里的 Token */
 function tokenFromCredentialManager() {
   const git = findGit();
   if (!git) return "";
@@ -99,6 +103,7 @@ if (!token) {
   process.exit(2);
 }
 
+/** 调用 GitHub REST API，统一带上鉴权头并返回 { ok, status, json, text } */
 async function api(pathname, init = {}) {
   const res = await fetch(`https://api.github.com${pathname}`, {
     ...init,

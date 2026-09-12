@@ -25,10 +25,12 @@ export const FEATURES = [
 const PREFIX = "feature.";
 const FEATURE_KEYS = FEATURES.map((f) => f.key);
 
+/** 是否是已知的功能开关键 */
 export function isFeatureKey(key) {
   return FEATURE_KEYS.includes(key);
 }
 
+/** 开关键 → 中文名（未知键原样返回） */
 export function featureLabel(key) {
   return FEATURES.find((f) => f.key === key)?.label || key;
 }
@@ -93,6 +95,7 @@ export async function getFeatureMap(env, sceneKey = null) {
   return map;
 }
 
+/** 判断某个场景下某功能是否可用（未知开关一律视为可用） */
 export async function isFeatureEnabled(env, sceneKey, feature) {
   if (!isFeatureKey(feature)) return true;
   const map = await getFeatureMap(env, sceneKey);

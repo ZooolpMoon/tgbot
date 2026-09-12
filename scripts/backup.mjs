@@ -13,6 +13,7 @@ import path from "node:path";
 
 const argv = process.argv.slice(2);
 
+/** 读取 `--flag value` 形式的参数，缺省时返回 fallback */
 function readFlag(name, fallback) {
   const i = argv.indexOf(name);
   if (i === -1) return fallback;

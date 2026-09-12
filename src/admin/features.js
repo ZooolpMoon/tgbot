@@ -12,6 +12,7 @@
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
 import { ADMIN_CALLBACK } from "../config/constants.js";
+import { grid, compactLabel, clampPage, totalPagesOf, pageOffset, pagerRow, LAYOUT } from "../utils/layout.js";
 import {
   GLOBAL_SCOPE, FEATURES, getFeatureMap, getExplicitSettings,
   setFeature, clearFeatureOverrides
@@ -21,12 +22,23 @@ import { logAdminAction } from "../services/admin-log.js";
 const SCENES_PER_PAGE = 8;
 const LABEL_MAX = 12;
 
-const short = (text, n = LABEL_MAX) => {
-  const s = String(text || "").trim();
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
-};
+/** 菜单按钮文案统一走 compactLabel，避免溢出与截断 emoji */
+const short = (text, n = LABEL_MAX) => compactLabel(text, n);
+
+/** 功能开关首页键盘（纯函数，便于排版测试） */
+export function getFeatureHomeKeyboard() {
+  return {
+    inline_keyboard: grid([
+      { text: "🌍 全局设置", callback_data: ADMIN_CALLBACK.FEATURES_GLOBAL },
+      { text: "👥 群聊场景", callback_data: `${ADMIN_CALLBACK.FEATURES_GROUP_PREFIX}1` },
+      { text: "💬 私聊场景", callback_data: `${ADMIN_CALLBACK.FEATURES_PRIVATE_PREFIX}1` },
+      { text: "🔙 返回主菜单", callback_data: ADMIN_CALLBACK.MAIN_MENU }
+    ])
+  };
+}
 
 // ---------- 首页：三个作用域 ----------
+/** 功能开关首页：全局 / 群聊场景 / 私聊场景 三个入口 */
 export async function renderFeatureHome(token, env, chatId, messageId) {
   if (!env.DB) return editMessageText(token, chatId, messageId, "❌ 未绑定数据库。");
 
@@ -41,35 +53,22 @@ export async function renderFeatureHome(token, env, chatId, messageId) {
   text += `👥 <b>群聊场景</b> —— 单独为某个群开关\n`;
   text += `💬 <b>私聊场景</b> —— 单独为某个用户开关\n`;
 
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "🌍 全局设置", callback_data: ADMIN_CALLBACK.FEATURES_GLOBAL },
-        { text: "👥 群聊场景", callback_data: `${ADMIN_CALLBACK.FEATURES_GROUP_PREFIX}1` }
-      ],
-      [
-        { text: "💬 私聊场景", callback_data: `${ADMIN_CALLBACK.FEATURES_PRIVATE_PREFIX}1` },
-        { text: "🔙 返回主菜单", callback_data: ADMIN_CALLBACK.MAIN_MENU }
-      ]
-    ]
-  };
-
-  return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
+  return editMessageText(token, chatId, messageId, text, getFeatureHomeKeyboard(), "HTML");
 }
 
 // ---------- 场景列表（群聊 / 私聊）----------
+/** 场景选择列表（分页，两列网格） */
 async function renderScenePicker(token, env, chatId, messageId, kind, page = 1) {
   const isGroup = kind === "group";
   const where = isGroup
     ? "WHERE s.chat_type IN ('group','supergroup')"
     : "WHERE s.chat_type = 'private'";
 
-  let safePage = Math.max(1, Math.floor(Number(page) || 1));
-
   const countRes = await env.DB.prepare(`SELECT COUNT(*) AS total FROM user_scenes s ${where}`).first();
   const total = Number(countRes?.total) || 0;
-  const totalPages = Math.ceil(total / SCENES_PER_PAGE) || 1;
-  if (safePage > totalPages) safePage = totalPages;
+  const totalPages = totalPagesOf(total, SCENES_PER_PAGE);
+  // 页码越界时收敛回最后一页，否则会查出空列表且没有返回路径
+  const safePage = clampPage(page, totalPages);
 
   const { results } = await env.DB.prepare(`
     SELECT s.id, s.scene_key, s.chat_id, s.user_id, s.first_name, s.username,
@@ -79,13 +78,13 @@ async function renderScenePicker(token, env, chatId, messageId, kind, page = 1) 
     ${where}
     ORDER BY s.updated_at DESC
     LIMIT ? OFFSET ?
-  `).bind(SCENES_PER_PAGE, (safePage - 1) * SCENES_PER_PAGE).all();
+  `).bind(SCENES_PER_PAGE, pageOffset(safePage, SCENES_PER_PAGE)).all();
 
   const rows = results || [];
 
   let text = `${isGroup ? "👥 <b>群聊场景</b>" : "💬 <b>私聊场景</b>"}\n`;
   text += `页码：<b>${safePage} / ${totalPages}</b>（共 ${total} 个）\n`;
-  text += `-------------------------\n`;
+  text += `${LAYOUT.DIVIDER}\n`;
   text += `点一个场景进去设置它的开关：\n\n`;
 
   const inline_keyboard = [];
@@ -93,25 +92,20 @@ async function renderScenePicker(token, env, chatId, messageId, kind, page = 1) 
   if (rows.length === 0) {
     text += `<i>还没有记录。</i>\n`;
   } else {
-    // 两个一行，避免菜单被拉成长条
-    for (let i = 0; i < rows.length; i += 2) {
-      inline_keyboard.push(
-        rows.slice(i, i + 2).map((row) => {
-          const name = isGroup ? `群 ${row.chat_id}` : (row.first_name || row.user_id || "未命名");
-          return {
-            text: `${isGroup ? "🏠" : "👤"} ${short(name)}`,
-            callback_data: `${ADMIN_CALLBACK.FEATURES_SCENE_PREFIX}${row.id}`
-          };
-        })
-      );
-    }
+    // 两列网格：8 个场景 = 4 行，加上翻页与返回也不会超过 8 行
+    const buttons = rows.map((row) => {
+      const name = isGroup ? `群 ${row.chat_id}` : (row.first_name || row.user_id || "未命名");
+      return {
+        text: `${isGroup ? "🏠" : "👤"} ${short(name)}`,
+        callback_data: `${ADMIN_CALLBACK.FEATURES_SCENE_PREFIX}${row.id}`
+      };
+    });
+    inline_keyboard.push(...grid(buttons));
   }
 
-  const navRow = [];
   const prefix = isGroup ? ADMIN_CALLBACK.FEATURES_GROUP_PREFIX : ADMIN_CALLBACK.FEATURES_PRIVATE_PREFIX;
-  if (safePage > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `${prefix}${safePage - 1}` });
-  if (safePage < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `${prefix}${safePage + 1}` });
-  if (navRow.length > 0) inline_keyboard.push(navRow);
+  const navRow = pagerRow({ page: safePage, totalPages, prefix });
+  if (navRow) inline_keyboard.push(navRow);
 
   inline_keyboard.push([{ text: "🔙 返回功能开关", callback_data: ADMIN_CALLBACK.FEATURES_HOME }]);
 
@@ -119,6 +113,7 @@ async function renderScenePicker(token, env, chatId, messageId, kind, page = 1) 
 }
 
 // ---------- 某个作用域的开关列表 ----------
+/** 单个作用域（全局或某个场景）的开关面板 */
 async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title, rowId = null }) {
   const effective = await getFeatureMap(env, scopeKey);
   const explicit = await getExplicitSettings(env, scopeKey);
@@ -137,18 +132,11 @@ async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title
   }
 
   const scopeToken = isGlobal ? "g" : `s${rowId}`;
-  const inline_keyboard = [];
-  for (let i = 0; i < FEATURES.length; i += 2) {
-    inline_keyboard.push(
-      FEATURES.slice(i, i + 2).map((f) => {
-        const on = effective[f.key] !== false;
-        return {
-          text: `${on ? "✅" : "🚫"} ${f.label}`,
-          callback_data: `${ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX}${scopeToken}_${f.key}`
-        };
-      })
-    );
-  }
+  const buttons = FEATURES.map((f) => ({
+    text: `${effective[f.key] === false ? "🚫" : "✅"} ${f.label}`,
+    callback_data: `${ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX}${scopeToken}_${f.key}`
+  }));
+  const inline_keyboard = grid(buttons);
 
   if (isGlobal) {
     inline_keyboard.push([{ text: "🔙 返回功能开关", callback_data: ADMIN_CALLBACK.FEATURES_HOME }]);
@@ -161,6 +149,10 @@ async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title
 }
 
 // ---------- 对外入口 ----------
+/**
+ * 统一的开关面板入口。
+ * scopeToken 约定：g = 全局；gl<页码> = 群聊场景列表；pl<页码> = 私聊场景列表；s<行ID> = 某个场景。
+ */
 export async function renderFeatureScope(token, env, chatId, messageId, scopeToken) {
   if (!env.DB) return editMessageText(token, chatId, messageId, "❌ 未绑定数据库。");
 
@@ -200,6 +192,7 @@ export async function renderFeatureScope(token, env, chatId, messageId, scopeTok
 }
 
 // ---------- 切换开关 ----------
+/** 点击开关按钮：当前关闭就打开，当前开启就关闭（写场景级覆盖） */
 export async function handleFeatureToggle({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const rest = String(data).replace(ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX, "");
   const sep = rest.indexOf("_");
@@ -244,6 +237,7 @@ export async function handleFeatureToggle({ env, token, callback, chatId, msgId,
 }
 
 // ---------- 恢复跟随全局 ----------
+/** 清掉该场景的全部覆盖，重新跟随全局设置 */
 export async function handleFeatureReset({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const rowId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.FEATURES_RESET_PREFIX, ""), 10);
   if (!Number.isInteger(rowId)) return;

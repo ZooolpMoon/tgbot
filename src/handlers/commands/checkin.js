@@ -1,13 +1,17 @@
 // ==========================================
 // /checkin 每日签到
+//
+// 流程：写入签到记录（主键保证一天一次）→ 算连续天数 → 发奖励 → 记流水。
+// 同一天重复签到只提示、不重复发奖。
 // ==========================================
 
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { getDateKey } from "../../services/time.js";
-import { logPointChange } from "../../services/points.js";
+import { adjustPoints, logPointChange } from "../../services/points.js";
 import { computeCheckinStreak, calcCheckinReward } from "../../services/checkin.js";
 import { completeTask } from "../../services/tasks.js";
 
+/** /checkin 指令实现 */
 export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx, uctx }) {
   if (!env.DB) {
     await sendAutoDelete(token, chatId, "❌ 未绑定数据库，签到功能不可用。", null, isGroupCtx, ctx);
@@ -44,16 +48,18 @@ export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx,
   const reward = calcCheckinReward(streak);
   const nextReward = calcCheckinReward(streak + 1);
 
-  const updateRes = await env.DB.prepare(
-    "UPDATE users SET points = points + ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ? RETURNING points"
-  ).bind(reward.total, userKey).first();
+  // 加分失败（用户记录缺失等极端情况）时回滚签到记录，
+  // 避免出现「显示已签到但没拿到积分」的不一致状态。
+  const newBalance = await adjustPoints(env, userKey, reward.total);
+  if (newBalance === null) {
+    await env.DB.prepare(
+      "DELETE FROM daily_checkin WHERE user_key = ? AND date_str = ?"
+    ).bind(userKey, todayStr).run();
+    await sendAutoDelete(token, chatId, "❌ 签到失败：用户数据异常，请稍后重试。", null, isGroupCtx, ctx);
+    return;
+  }
 
-  const newBalance = Number(updateRes?.points);
-  await logPointChange(
-    env, userKey, reward.total,
-    Number.isFinite(newBalance) ? newBalance : 0,
-    `签到奖励 连续${streak}天 (${todayStr})`
-  );
+  await logPointChange(env, userKey, reward.total, newBalance, `签到奖励 连续${streak}天 (${todayStr})`);
 
   const totalRes = await env.DB.prepare(
     "SELECT COUNT(*) AS total FROM daily_checkin WHERE user_key = ?"
@@ -71,7 +77,7 @@ export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx,
     `🔥 <b>连续签到：</b> <b>${streak}</b> 天\n` +
     `🎁 <b>本次奖励：</b> +${reward.total} 积分\n` +
     milestoneLine +
-    `🪙 <b>当前积分：</b> <b>${Number.isFinite(newBalance) ? newBalance : "?"}</b>\n` +
+    `🪙 <b>当前积分：</b> <b>${newBalance}</b>\n` +
     `📊 <b>累计签到：</b> ${totalDays} 天\n\n` +
     `⏭️ 明天签到可得 <b>+${nextReward.total}</b> 积分，连续签到奖励会越来越高～`;
 

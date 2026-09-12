@@ -4,9 +4,11 @@
 
 import { editMessageText, sendMessageWithKeyboard } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
+import { clampPage, totalPagesOf, pageOffset, pagerRow, LAYOUT } from "../utils/layout.js";
 
 const PAGE_SIZE = 10;
 
+/** 操作类型 → 中文标签（历史动作也保留，方便查看老日志） */
 const ACTION_LABELS = {
   shop_item_add: "➕ 添加商品",
   shop_item_edit: "✏️ 编辑商品",
@@ -39,30 +41,29 @@ const ACTION_LABELS = {
   task_bonus: "🏆 修改全勤奖"
 };
 
+/** 把数据库里的动作键翻译成中文（未知动作原样显示，方便排查新功能） */
 export function actionLabel(action) {
   return ACTION_LABELS[action] || action;
 }
 
+/** 管理员操作日志（倒序分页，最新在前） */
 export async function renderAdminLogs(token, env, chatId, messageId, page = 1) {
   if (!env.DB) return editMessageText(token, chatId, messageId, "❌ 未绑定 D1 数据库。");
 
-  let safePage = Math.max(1, Math.floor(Number(page) || 1));
-
   const countRes = await env.DB.prepare("SELECT COUNT(*) AS total FROM admin_logs").first();
   const total = Number(countRes?.total) || 0;
-  const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
-  if (safePage > totalPages) safePage = totalPages;
-  const offset = (safePage - 1) * PAGE_SIZE;
+  const totalPages = totalPagesOf(total, PAGE_SIZE);
+  const safePage = clampPage(page, totalPages);
 
   const { results } = await env.DB.prepare(
     "SELECT id, admin_id, action, detail, created_at FROM admin_logs ORDER BY id DESC LIMIT ? OFFSET ?"
-  ).bind(PAGE_SIZE, offset).all();
+  ).bind(PAGE_SIZE, pageOffset(safePage, PAGE_SIZE)).all();
 
   const rows = results || [];
 
   let text = `📋 <b>管理员操作日志</b>\n`;
   text += `页码：<b>${safePage} / ${totalPages}</b>（共 ${total} 条）\n`;
-  text += `-------------------------\n\n`;
+  text += `${LAYOUT.DIVIDER}\n\n`;
 
   if (rows.length === 0) {
     text += `<i>暂无操作记录。</i>\n`;
@@ -75,10 +76,8 @@ export async function renderAdminLogs(token, env, chatId, messageId, page = 1) {
   }
 
   const inline_keyboard = [];
-  const navRow = [];
-  if (safePage > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `admin_logs_${safePage - 1}` });
-  if (safePage < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `admin_logs_${safePage + 1}` });
-  if (navRow.length > 0) inline_keyboard.push(navRow);
+  const navRow = pagerRow({ page: safePage, totalPages, prefix: "admin_logs_" });
+  if (navRow) inline_keyboard.push(navRow);
   inline_keyboard.push([{ text: "🔙 返回主菜单", callback_data: "admin_main_menu" }]);
 
   const keyboard = { inline_keyboard };

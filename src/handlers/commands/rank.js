@@ -4,6 +4,7 @@
 
 import { sendMessage, sendMessageWithKeyboard, editMessageText, deleteMessage } from "../../telegram/api.js";
 import { escapeHtml } from "../../utils/html.js";
+import { LAYOUT } from "../../utils/layout.js";
 import { PAGING } from "../../config/constants.js";
 
 const MEDALS = ["🥇", "🥈", "🥉"];
@@ -42,7 +43,7 @@ export async function renderRank(token, env, chatId, messageId = null, userKey =
   }
 
   let text = `🏆 <b>积分排行榜</b> · Top ${topN}\n`;
-  text += `-------------------------\n`;
+  text += `${LAYOUT.DIVIDER}\n`;
 
   if (rows.length === 0) {
     text += `<i>还没有积分数据，快去签到赚积分吧～</i>\n`;
@@ -80,10 +81,12 @@ export async function renderRank(token, env, chatId, messageId = null, userKey =
   return sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML");
 }
 
+/** /rank：新发一条排行榜（并标注「我」的排名） */
 export async function cmdRank({ env, token, chatId, userKey }) {
   await renderRank(token, env, chatId, null, userKey);
 }
 
+/** 关闭排行榜：直接删掉这条卡片 */
 export async function closeRank(token, chatId, messageId) {
   return deleteMessage(token, chatId, messageId);
 }

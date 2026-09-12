@@ -3,21 +3,60 @@
 // ==========================================
 
 import { editMessageText, sendMessage, sendMessageWithKeyboard } from "../telegram/api.js";
+import { grid, compactLabel, clampPage, totalPagesOf, pageOffset, pagerRow, pageInfoText, LAYOUT } from "../utils/layout.js";
 
+const PAGE_SIZE = 8;
+
+/**
+ * 场景列表键盘（纯函数，便于排版测试）。
+ * 8 个场景 = 4 行，加翻页 1 行、返回 1 行，最多 6 行。
+ */
+export function getUserListKeyboard(rows, safePage, totalPages, isPrivate) {
+  const inline_keyboard = [];
+
+  if (rows.length > 0) {
+    // 统一两列网格；群聊场景把「群 ID 尾号」写进按钮文案，
+    // 因此不需要额外分组标题行（标题行会让行数随群数量线性增长）。
+    const buttons = rows.map((u) => {
+      const name = String(u.first_name || u.username || u.user_id || "未命名");
+      const pts = Number.isFinite(Number(u.points)) ? Number(u.points) : 0;
+      const label = isPrivate
+        ? `#${u.id} ${name} · 🪙${pts}`
+        : `🏠…${String(u.chat_id || "未知").slice(-6)} ${name} · 🪙${pts}`;
+      return {
+        text: compactLabel(label, 30),
+        callback_data: `admin_manage_user_${u.id}`
+      };
+    });
+    inline_keyboard.push(...grid(buttons));
+  }
+
+  const pagePrefix = isPrivate ? "admin_users_private_" : "admin_users_group_";
+  const navRow = pagerRow({ page: safePage, totalPages, prefix: pagePrefix });
+  if (navRow) inline_keyboard.push(navRow);
+  inline_keyboard.push([{ text: "🔙 返回主菜单", callback_data: "admin_main_menu" }]);
+
+  return { inline_keyboard };
+}
+
+/**
+ * 渲染场景列表。
+ * @param {string} listType "private" 私聊场景 / "group" 群聊场景
+ */
 export async function renderUserListMenu(token, env, chatId, messageId, page = 1, listType = "private") {
   if (!env.DB) {
     const t = "❌ 未绑定 D1 数据库。";
     return messageId ? editMessageText(token, chatId, messageId, t) : sendMessage(token, chatId, t);
   }
 
-  const pageSize = 8;
-  const offset = (page - 1) * pageSize;
   const isPrivate = listType === "private";
   const where = isPrivate ? "WHERE s.chat_type = 'private'" : "WHERE s.chat_type IN ('group','supergroup')";
 
   const countRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM user_scenes s ${where}`).first();
-  const total = countRes ? countRes.total : 0;
-  const totalPages = Math.ceil(total / pageSize) || 1;
+  const total = Number(countRes?.total) || 0;
+  const totalPages = totalPagesOf(total, PAGE_SIZE);
+  // 页码收敛：越界时回到最后一页，避免出现空列表又没有导航按钮
+  const safePage = clampPage(page, totalPages);
 
   const { results } = await env.DB.prepare(`
     SELECT s.id, s.scene_key, s.user_key, s.user_id, s.chat_id, s.chat_type,
@@ -28,60 +67,19 @@ export async function renderUserListMenu(token, env, chatId, messageId, page = 1
     ${where}
     ORDER BY s.updated_at DESC
     LIMIT ? OFFSET ?
-  `).bind(pageSize, offset).all();
+  `).bind(PAGE_SIZE, pageOffset(safePage, PAGE_SIZE)).all();
 
   const title = isPrivate ? "💬 <b>私聊场景列表</b>" : "👥 <b>群聊场景列表</b>";
-  let text = `${title}（共 ${total} 个）\n页码：<b>${page} / ${totalPages}</b>\n-------------------------\n`;
+  let text = `${title}\n${pageInfoText({ page: safePage, totalPages, total, unit: "个" })}\n${LAYOUT.DIVIDER}\n`;
   text += `💡 每个场景独立配置，但积分是全局共享的。\n\n`;
 
-  const inline_keyboard = [];
+  const rows = results || [];
 
-  if (results && results.length > 0) {
-    if (isPrivate) {
-      // 两列网格：一行两个用户，避免长列表拉成长条
-      for (let i = 0; i < results.length; i += 2) {
-        inline_keyboard.push(results.slice(i, i + 2).map((u) => {
-          const name = String(u.first_name || u.user_id || "未命名");
-          const shortName = name.length > 8 ? name.slice(0, 7) + "…" : name;
-          const pts = Number.isFinite(Number(u.points)) ? Number(u.points) : 0;
-          return {
-            text: `#${u.id} ${shortName} · 🪙${pts}`,
-            callback_data: `admin_manage_user_${u.id}`
-          };
-        }));
-      }
-    } else {
-      const groups = new Map();
-      results.forEach(u => {
-        const gid = String(u.chat_id || "unknown");
-        if (!groups.has(gid)) groups.set(gid, []);
-        groups.get(gid).push(u);
-      });
-      for (const [gid, members] of groups) {
-        inline_keyboard.push([{ text: `🏠 群 ${gid}（${members.length} 个场景）`, callback_data: `admin_group_info_${gid}` }]);
-        members.forEach(u => {
-          const name = u.first_name || u.user_id;
-          const tag = u.username ? ` (${u.username})` : "";
-          const pts = Number.isFinite(Number(u.points)) ? Number(u.points) : 0;
-          inline_keyboard.push([{
-            text: `  ↳ #${u.id} ${name}${tag} | 🪙 ${pts}`,
-            callback_data: `admin_manage_user_${u.id}`
-          }]);
-        });
-      }
-    }
-  } else {
+  if (rows.length === 0) {
     text += `\n<i>(当前没有${isPrivate ? "私聊" : "群聊"}场景记录)</i>\n`;
   }
 
-  const pagePrefix = isPrivate ? "admin_users_private_" : "admin_users_group_";
-  const navRow = [];
-  if (page > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `${pagePrefix}${page - 1}` });
-  if (page < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `${pagePrefix}${page + 1}` });
-  if (navRow.length > 0) inline_keyboard.push(navRow);
-  inline_keyboard.push([{ text: "🔙 返回主菜单", callback_data: "admin_main_menu" }]);
-
-  const keyboard = { inline_keyboard };
+  const keyboard = getUserListKeyboard(rows, safePage, totalPages, isPrivate);
   if (messageId) return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
   return sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML");
 }

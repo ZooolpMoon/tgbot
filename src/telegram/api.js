@@ -1,6 +1,12 @@
 // ==========================================
 // 📡 Telegram API 封装
+//
+// 所有出站请求统一走这里：
+//   • 429 / 5xx / 网络抖动自动退避重试（最多 3 次）
+//   • 业务返回 ok:false（例如「消息内容未修改」）不重试，原样交回调用方
 // ==========================================
+
+import { randomFloat } from "../utils/random.js";
 
 const BASE = (token) => `https://api.telegram.org/bot${token}`;
 
@@ -8,6 +14,7 @@ const BASE = (token) => `https://api.telegram.org/bot${token}`;
 const MAX_ATTEMPTS = 3;
 const MAX_BACKOFF_MS = 8000;
 
+/** 等待若干毫秒（退避重试用） */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -22,14 +29,21 @@ function parseRetryAfter(res, json) {
   return 0;
 }
 
+/**
+ * 计算退避时长：有 retry_after 就听 Telegram 的，否则指数退避 + 随机抖动，
+ * 并且不超过 MAX_BACKOFF_MS。
+ */
 function backoffMs(attempt, retryAfterSec) {
   const base = retryAfterSec > 0
     ? retryAfterSec * 1000
     : 400 * Math.pow(2, attempt - 1);
-  const jitter = Math.floor(Math.random() * 150);
+  // 抖动使用加密随机数：既满足项目「不用 Math.random」的约定，
+  // 也能避免多个请求在同一毫秒一起重试造成二次拥塞。
+  const jitter = Math.floor(randomFloat() * 150);
   return Math.min(MAX_BACKOFF_MS, base + jitter);
 }
 
+/** 发送 JSON 请求；429 / 5xx / 网络错误按退避策略重试 */
 async function postJSON(url, body) {
   let lastError = null;
 
@@ -80,18 +94,21 @@ async function postJSON(url, body) {
   return { ok: false, error: lastError };
 }
 
+/** 发送纯文本消息；parseMode 传 "HTML" 才会解析标签 */
 export function sendMessage(token, chatId, text, parseMode = null) {
   const body = { chat_id: chatId, text };
   if (parseMode) body.parse_mode = parseMode;
   return postJSON(`${BASE(token)}/sendMessage`, body);
 }
 
+/** 发送带 inline keyboard 的消息 */
 export function sendMessageWithKeyboard(token, chatId, text, replyMarkup, parseMode = null) {
   const body = { chat_id: chatId, text, reply_markup: replyMarkup };
   if (parseMode) body.parse_mode = parseMode;
   return postJSON(`${BASE(token)}/sendMessage`, body);
 }
 
+/** 发送消息并返回 message_id（群聊自动删除功能依赖它） */
 export async function sendMessageGetId(token, chatId, text, parseMode = null) {
   const body = { chat_id: chatId, text };
   if (parseMode) body.parse_mode = parseMode;
@@ -102,6 +119,7 @@ export async function sendMessageGetId(token, chatId, text, parseMode = null) {
   return null;
 }
 
+/** 编辑已有消息（可同时替换键盘） */
 export function editMessageText(token, chatId, messageId, text, replyMarkup = null, parseMode = null) {
   const body = { chat_id: chatId, message_id: messageId, text };
   if (replyMarkup) body.reply_markup = replyMarkup;
@@ -109,6 +127,7 @@ export function editMessageText(token, chatId, messageId, text, replyMarkup = nu
   return postJSON(`${BASE(token)}/editMessageText`, body);
 }
 
+/** 回应按钮点击；showAlert=true 时以弹窗形式提示用户 */
 export function answerCallback(token, callbackQueryId, text, showAlert = false) {
   return postJSON(`${BASE(token)}/answerCallbackQuery`, {
     callback_query_id: callbackQueryId,
@@ -117,10 +136,12 @@ export function answerCallback(token, callbackQueryId, text, showAlert = false) 
   });
 }
 
+/** 删除消息（群聊清理与「关闭卡片」用） */
 export function deleteMessage(token, chatId, messageId) {
   return postJSON(`${BASE(token)}/deleteMessage`, { chat_id: chatId, message_id: messageId });
 }
 
+/** 发送「正在输入」等聊天状态 */
 export function sendChatAction(token, chatId, action) {
   return postJSON(`${BASE(token)}/sendChatAction`, { chat_id: chatId, action });
 }

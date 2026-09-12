@@ -20,6 +20,7 @@ const failures = [];
 let fileCount = 0;
 let importCount = 0;
 
+/** 递归收集目录下所有文件（相对路径） */
 function walk(dir) {
   const abs = path.join(repoRoot, dir);
   if (!existsSync(abs)) return [];

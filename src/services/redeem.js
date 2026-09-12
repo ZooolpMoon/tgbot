@@ -2,6 +2,11 @@
 // 🎟️ 兑换码
 // 管理员生成 → 用户 /redeem 领取积分
 // 约束：每个码每人只能兑一次；可选「总次数上限」与「过期日期」
+//
+// 兑换顺序（任何一步失败都要补偿）：
+//   1. 写 redeem_logs 占「每人一次」名额（UNIQUE 约束兜底）
+//   2. 条件 UPDATE 占全局次数
+//   3. adjustPoints 发积分
 // ==========================================
 
 import { randomInt } from "../utils/random.js";
@@ -26,6 +31,12 @@ export function generateCode() {
     body += ALPHABET[randomInt(ALPHABET.length)];
   }
   return `${CODE_PREFIX}${body}`;
+}
+
+/** 判断兑换码是否已过期；expires_at 为空表示永久有效 */
+export function isCodeExpired(expiresAt, todayStr) {
+  if (!expiresAt) return false;
+  return String(expiresAt) < String(todayStr);
 }
 
 /**
@@ -80,7 +91,7 @@ export async function redeemCode(env, userKey, rawCode) {
   if (Number(row.enabled) !== 1) return { ok: false, error: "该兑换码已被停用" };
 
   const today = getDateKey(env);
-  if (row.expires_at && String(row.expires_at) < today) {
+  if (isCodeExpired(row.expires_at, today)) {
     return { ok: false, error: `该兑换码已于 ${row.expires_at} 过期` };
   }
   if (Number(row.max_uses) > 0 && Number(row.used_count) >= Number(row.max_uses)) {

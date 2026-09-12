@@ -2,6 +2,11 @@
 // ⚙️ 全局常量
 // ==========================================
 
+// ==========================================
+// 🤖 AI 模型
+// ==========================================
+
+// 主模型；可用环境变量 AI_MODELS 覆盖整条回退链
 export const AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 // 主模型调用失败时，按顺序自动回退到后面的模型（可用环境变量 AI_MODELS 覆盖，逗号分隔）
 export const AI_MODELS = [
@@ -11,13 +16,22 @@ export const AI_MODELS = [
 ];
 export const AI_MAX_TOKENS = 2048;
 
+// ==========================================
+// 🔢 默认值（新建场景 / 没有数据库时使用）
+// ==========================================
+
 export const DEFAULTS = {
   LANG: "zh",
   POINTS: 100,
   MAX_DAILY: 50,
   RATE_LIMIT_SEC: 5,
+  // 每日额度设为该值表示「不限制」
   UNLIMITED: -1
 };
+
+// ==========================================
+// 🪙 积分数值 / 奖惩规则
+// ==========================================
 
 export const POINTS = {
   AI_COST: 1,
@@ -32,9 +46,16 @@ export const POINTS = {
   CHECKIN_MILESTONE_BONUS: 20
 };
 
+// ==========================================
+// 📏 运行规则（时长、历史上下文预算）
+// ==========================================
+
 export const RULES = {
+  // 群聊里指令类消息的自动删除延迟
   AUTO_DELETE_MS: 5000,
+  // 管理员控制台解锁有效期（秒）
   ADMIN_SESSION_SEC: 1800,
+  // 落库的历史消息条数上限
   HISTORY_LIMIT: 10,
   // AI 上下文总量上限（字符数），超出时从最旧的消息开始丢弃
   HISTORY_MAX_CHARS: 6000,
@@ -63,6 +84,12 @@ export const PAGING = {
   POINTS_PER_PAGE: 10,
   RANK_TOP: 10
 };
+
+// ==========================================
+// 👑 管理员回调数据（callback_data）
+// 前缀统一为 admin_ / shop_ / game_ / rank_ / points_，分发时按前缀路由。
+// 注意：新增前缀时不要与已有前缀互为前缀关系，否则会被提前匹配。
+// ==========================================
 
 export const ADMIN_CALLBACK = {
   MAIN_MENU: "admin_main_menu",
@@ -104,7 +131,8 @@ export const ADMIN_CALLBACK = {
   TASK_DELOK_PREFIX: "admin_task_dok_",
   TASK_DETAIL_PREFIX: "admin_task_",
   BROADCAST_CONFIRM: "admin_broadcast_confirm",
-  BROADCAST_CANCEL: "admin_broadcast_cancel"
+  BROADCAST_CANCEL: "admin_broadcast_cancel",
+  BROADCAST_CONTINUE: "admin_broadcast_continue"
 };
 
 // ==========================================

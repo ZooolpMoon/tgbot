@@ -9,7 +9,7 @@ import {
   editMessageText
 } from "../../telegram/api.js";
 import { sendAutoDelete, sleep } from "../../telegram/auto-delete.js";
-import { BROADCAST } from "../../config/constants.js";
+import { BROADCAST, ADMIN_CALLBACK } from "../../config/constants.js";
 import { ERR } from "../../config/messages.js";
 import { escapeHtml } from "../../utils/html.js";
 import { logAdminAction } from "../../services/admin-log.js";
@@ -25,6 +25,10 @@ const RECIPIENTS_SQL = `
 `;
 
 // ---------- /broadcast <内容> ----------
+/**
+ * /broadcast：把正文写入草稿并弹出二次确认（不会直接发送）。
+ * 群发对象是「私聊过机器人且未被封禁」的用户。
+ */
 export async function cmdBroadcast({ env, ctx, token, chatId, isMaster, isGroupCtx, rawText }) {
   if (!isMaster) {
     await sendAutoDelete(token, chatId, ERR.PERMISSION_DENIED, null, isGroupCtx, ctx);
@@ -188,7 +192,7 @@ async function runBroadcast({ env, token, chatId, adminId }) {
             `点击下方按钮继续发送剩余用户：`,
             {
               inline_keyboard: [
-                [{ text: "▶️ 继续发送", callback_data: "admin_broadcast_continue" }]
+                [{ text: "▶️ 继续发送", callback_data: ADMIN_CALLBACK.BROADCAST_CONTINUE }]
               ]
             },
             "HTML"

@@ -1,40 +1,54 @@
 // ==========================================
 // 🎮 游戏注册表与分发器
+//
+// 每个游戏对外暴露两个入口：
+//   renderMain     —— 游戏主界面（选下注金额）
+//   onBetConfirm   —— 确认下注后的下一步（直接开奖 / 选择买大买小）
 // ==========================================
 
 import { editMessageText, sendMessageWithKeyboard, answerCallback, deleteMessage } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
+import { grid, LAYOUT } from "../utils/layout.js";
 import { renderCustomBet } from "./shared.js";
 import { DiceGame } from "./dice.js";
 import { SlotsGame } from "./slots.js";
 import { CoinGame } from "./coin.js";
 import { WheelGame } from "./wheel.js";
-import { logWarn } from "../core/logger.js";
+import { logWarn, logError } from "../core/logger.js";
 
+/** 游戏大厅键盘：2×2 网格 + 独立关闭按钮 */
+export function getGameCenterKeyboard() {
+  return {
+    inline_keyboard: [
+      ...grid([
+        { text: "🎲 骰子猜大小", callback_data: "game_dice_main" },
+        { text: "🎰 欢乐老虎机", callback_data: "game_slots_main" },
+        { text: "🪙 抛硬币", callback_data: "game_coin_main" },
+        { text: "🎡 幸运转盘", callback_data: "game_wheel_main" }
+      ]),
+      [{ text: "❌ 关闭", callback_data: "game_close" }]
+    ]
+  };
+}
+
+/** 渲染游戏大厅（新发或原地刷新） */
 export async function renderGameCenter(token, chatId, messageId = null) {
   const text =
     `🎮 <b>游戏</b>\n` +
-    `-------------------------\n` +
+    `${LAYOUT.DIVIDER}\n` +
     `欢迎来到游戏中心！请选择你想玩的游戏：\n\n` +
     `🎲 <b>骰子猜大小</b>：下注猜大小，1:2 赔率\n` +
     `🎰 <b>欢乐老虎机</b>：最高赢取 50 倍大奖\n` +
     `🪙 <b>抛硬币</b>：猜正反面，赢了 2 倍\n` +
     `🎡 <b>幸运转盘</b>：转盘抽倍率，最高 50 倍`;
 
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "🎲 骰子猜大小", callback_data: "game_dice_main" }],
-      [{ text: "🎰 欢乐老虎机", callback_data: "game_slots_main" }],
-      [{ text: "🪙 抛硬币", callback_data: "game_coin_main" }],
-      [{ text: "🎡 幸运转盘", callback_data: "game_wheel_main" }],
-      [{ text: "❌ 关闭", callback_data: "game_close" }]
-    ]
-  };
+  const keyboard = getGameCenterKeyboard();
 
   if (messageId) return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
   return sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML");
 }
 
+/** 游戏键 → 处理函数；新增游戏只需在这里加一条 */
 const GAME_REGISTRY = {
   dice: {
     renderMain: (t, e, c, u, m) => DiceGame.renderMain(t, e, c, u, m),
@@ -54,6 +68,10 @@ const GAME_REGISTRY = {
   }
 };
 
+/**
+ * 游戏类回调统一入口。
+ * 所有异常都会转成 alert 提示，避免 Telegram 端一直转圈。
+ */
 export async function handleGameCallbacks(token, env, callback, chatId, userKey, messageId, fromId, data, sceneKey = null) {
   try {
     if (data === "game_hub") {
@@ -140,7 +158,7 @@ export async function handleGameCallbacks(token, env, callback, chatId, userKey,
     logWarn("未匹配的 game 回调:", data);
     return answerCallback(token, callback.id, `⚠️ 未识别的游戏操作`, true);
   } catch (err) {
-    console.error("handleGameCallbacks 异常:", err);
+    logError("handleGameCallbacks 异常:", err);
     try {
       return await answerCallback(token, callback.id, `❌ 游戏异常: ${err.message || err}`, true);
     } catch (_) {

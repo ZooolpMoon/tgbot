@@ -624,8 +624,10 @@ stateDiagram-v2
 - **原子扣分**：`UPDATE users SET points = points - ? WHERE points >= ?`，并发不会超扣
 - **原子取消**：`UPDATE ... SET status='cancelled' WHERE id=? AND status='pending'`，只有真正把状态从 pending 改掉的那一次才退款，不会重复退
 - **库存不足自动退款**：扣库存失败立即退还积分
+- **限购并发兜底**：下单后按真实订单数复核一次，并发点击导致超出的那一单自动取消并退款
 - **取消退款链路**：退积分 → 回滚库存 → 写 `shop_order_log` → 通知用户（+ 管理员）
 - **通知管理员**：优先 `ADMIN_NOTIFY_CHAT_ID`，否则用 `MY_TELEGRAM_ID`
+- **引导式输入会话 30 分钟过期**：添加商品、编辑商品、每日任务编辑、下单备注都会超时失效（定时任务再兜底清理），不会一直吞掉普通消息
 
 ---
 
@@ -687,7 +689,7 @@ graph LR
     A --> A8[stats.js]
     A --> A9[logs.js]
     G --> G1[index.js] & G2[shared.js] & G3[dice.js] & G4[slots.js] & G5[coin.js] & G6[wheel.js]
-    Sh --> Sh1[index.js] & Sh2[admin.js] & Sh3[actions.js] & Sh4[notify.js] & Sh5[add.js] & Sh6[edit.js]
+    Sh --> Sh1[index.js] & Sh2[admin.js] & Sh3[actions.js] & Sh4[notify.js] & Sh5[add.js] & Sh6[edit.js] & Sh7[categories.js]
     S --> S1[users.js] & S2[points.js] & S3[quota.js] & S4[time.js] & S5[checkin.js] & S6[admin-log.js]
 
     style Root fill:#4a90e2,color:#fff
@@ -736,8 +738,24 @@ tgbot/
     │   ├── features.js          # ⚙️ 功能开关（全局 + 场景覆盖）
     │   ├── tasks.js             # ✅ 每日任务：定义 CRUD、进度与发奖
     │   └── history.js           # 🧠 AI 上下文裁剪（可单测）
-    └── utils/                   # html.js（转义）· random.js（加密随机数）
+    └── utils/                   # html.js（转义）· random.js（加密随机数）· layout.js（菜单排版/分页）
 ```
+
+---
+
+### 📐 菜单排版约定
+
+所有 inline keyboard 共用 `src/utils/layout.js`，规则是**单行最多 2 个按钮、整个菜单最多 8 行、按钮文案最多 32 字、`callback_data` 最多 64 字节**。工具提供：
+
+| 导出 | 作用 |
+|------|------|
+| `grid(buttons, perRow = 2)` | 按两列网格切分按钮 |
+| `compactLabel(text, max = 32)` | 按 Unicode 码点截断（不会切坏 emoji） |
+| `clampPage(page, totalPages)` / `totalPagesOf()` / `pageOffset()` | 页码收敛与分页计算 |
+| `pagerRow({ page, totalPages, prefix })` | 生成「上一页 / 下一页」按钮行 |
+| `validateKeyboard(kb)` | 校验键盘是否符合上述约束（测试直接用它） |
+
+`test/layout.test.mjs` 覆盖了所有会随数据量增长的菜单（用户列表、任务列表、商品列表、订单列表、游戏面板等），改排版时请一并跑测试。
 
 ---
 
@@ -778,7 +796,7 @@ tgbot/
 npm run deploy:prod                    # 部署到 Cloudflare（用 wrangler.production.toml）
 npm run dev                            # 本地预览（用 .dev.vars）
 npm run check                          # 语法 + import 自检
-npm test                               # 跑测试（内存 SQLite，79 个用例）
+npm test                               # 跑测试（内存 SQLite，100 个用例）
 
 # 日志与版本
 npx wrangler tail                      # 实时日志

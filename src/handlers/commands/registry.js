@@ -41,10 +41,12 @@ import {
 } from "./admin/index.js";
 
 // ---------- 小工具 ----------
+/** 取指令后面的参数文本，例如 argText("/code_new 100", "/code_new") → "100" */
 function argText(rawText, name) {
   return String(rawText || "").replace(new RegExp(`^${name}(@\\w+)?`, "i"), "").trim();
 }
 
+/** 商城管理入口：动态 import 避免管理端代码进入冷启动路径 */
 async function renderShopAdmin(ctx) {
   const { renderShopAdmin: render } = await import("../../shop/admin.js");
   await render(ctx.token, ctx.env, ctx.chatId, null);
@@ -181,6 +183,10 @@ const COMMAND_MAP = (() => {
   return map;
 })();
 
+/**
+ * 解析用户输入对应的命令（支持 /cmd@bot 形式）。
+ * @returns {object|null} 命令定义；不是指令或未注册时返回 null
+ */
 export function resolveCommand(text) {
   const first = String(text || "").trim().split(/\s+/)[0] || "";
   if (!first.startsWith("/")) return null;
@@ -189,7 +195,8 @@ export function resolveCommand(text) {
 
 // ---------- 分发 ----------
 /**
- * 按注册表执行命令。返回 true 表示已经处理（包括被权限/开关拦下并给出提示）。
+ * 按注册表执行命令：依次判定管理员权限 → 仅私聊 → 功能开关。
+ * @returns {Promise<boolean>} true 表示已处理（包括被拦下并给出提示）
  */
 export async function dispatchCommand(text, ctx) {
   const cmd = resolveCommand(text);
@@ -231,6 +238,10 @@ export async function dispatchCommand(text, ctx) {
 }
 
 // ---------- 自动生成 /help ----------
+/**
+ * 由命令表生成 /help 文案。
+ * 普通用户看不到管理指令，群聊里看不到「仅私聊」指令。
+ */
 export function buildHelpText({ isMaster, isGroupCtx }) {
   const visible = COMMANDS.filter((c) => {
     if (c.scope === "admin") return isMaster;

@@ -1,5 +1,6 @@
 // ==========================================
 // /start
+// 首次使用（或群聊里第一次被 @）时的欢迎信息，同时落库场景配置。
 // ==========================================
 
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
@@ -7,6 +8,7 @@ import { saveSceneConfig } from "../../services/users.js";
 import { getDateKey } from "../../services/time.js";
 import { TIPS } from "../../config/messages.js";
 
+/** /start 指令实现：展示身份、积分、额度与常用指令入口 */
 export async function cmdStart({ env, ctx, token, chatId, uctx, userConfig, isGroupCtx, isMaster, firstName, username, sceneKey }) {
   let dailyCount = 0;
   const todayStr = getDateKey(env);

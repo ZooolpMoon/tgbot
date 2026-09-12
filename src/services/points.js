@@ -1,9 +1,15 @@
 // ==========================================
 // 🪙 积分服务
+//
+// 约定：涉及积分的操作必须「原子更新 + 写流水」。
+//   • 扣分走 tryDeductPoints（WHERE points >= ?，余额不足直接返回 null）
+//   • 加分走 adjustPoints / refundPoint
+//   • 任何一次变动都要用 logPointChange 记一条流水
 // ==========================================
 
 import { logError } from "../core/logger.js";
 
+/** 老库兜底建表（新库由 ensureSchema 统一建） */
 export async function ensurePointsLogTable(env) {
   if (!env.DB) return;
   await env.DB.prepare(`
@@ -18,6 +24,7 @@ export async function ensurePointsLogTable(env) {
   `).run();
 }
 
+/** 写一条积分流水；失败只记日志，不影响主流程 */
 export async function logPointChange(env, userKey, changeAmount, balanceAfter, reason) {
   if (!env.DB || !userKey) return;
   try {
@@ -29,6 +36,10 @@ export async function logPointChange(env, userKey, changeAmount, balanceAfter, r
   }
 }
 
+/**
+ * 原子扣分（余额不足返回 null，不会出现负数余额）。
+ * @returns {Promise<number|null>} 扣分后的余额
+ */
 export async function tryDeductPoints(env, userKey, amount) {
   if (!env.DB) return null;
   const res = await env.DB.prepare(
@@ -37,6 +48,7 @@ export async function tryDeductPoints(env, userKey, amount) {
   return res && Number.isFinite(Number(res.points)) ? Number(res.points) : null;
 }
 
+/** 退款 / 补分（会写流水，reason 用于对账） */
 export async function refundPoint(env, userKey, amount, reason) {
   if (!env.DB || !userKey) return;
   const safeAmount = Math.max(0, Math.floor(Number(amount) || 0));
@@ -51,6 +63,10 @@ export async function refundPoint(env, userKey, amount, reason) {
   }
 }
 
+/**
+ * 任意增减积分（可传负数）。调用方需自行保证结果不会变成负数。
+ * @returns {Promise<number|null>} 变动后的余额，用户不存在时返回 null
+ */
 export async function adjustPoints(env, userKey, delta) {
   if (!env.DB) return null;
   const res = await env.DB.prepare(

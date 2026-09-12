@@ -1,12 +1,15 @@
 // ==========================================
 // 🕒 时区与日期
+// 所有「今天」都必须经过这里，保证签到、额度、任务与兑换码使用同一时区。
 // ==========================================
 
+/** 应用时区；未配置时回退 Asia/Shanghai */
 export function getAppTimeZone(env) {
   const tz = env?.APP_TIMEZONE ? String(env.APP_TIMEZONE).trim() : "Asia/Shanghai";
   return tz || "Asia/Shanghai";
 }
 
+/** 取某一天在本应用时区下的日期键（YYYY-MM-DD） */
 export function getDateKey(env, date = new Date()) {
   const timeZone = getAppTimeZone(env);
   const parts = new Intl.DateTimeFormat("en-CA", {

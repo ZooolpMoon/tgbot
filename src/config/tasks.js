@@ -16,10 +16,12 @@ export const TASK_TRIGGERS = [
 
 export const TRIGGER_KEYS = TASK_TRIGGERS.map((t) => t.key);
 
+/** 按 key 查触发条件定义（不存在返回 null） */
 export function triggerDef(key) {
   return TASK_TRIGGERS.find((t) => t.key === key) || null;
 }
 
+/** 触发条件的中文名（未知 key 原样返回） */
 export function triggerLabel(key) {
   return triggerDef(key)?.label || key;
 }

@@ -1,15 +1,16 @@
 // ==========================================
 // 🗄️ 全局设置
-// v2.1.0 起功能开关只服务全局，这张表（沿用历史表名 scene_settings）
-// 只存 scene_key = 'global' 的记录：
-//   feature.<key>   功能开关
-//   task.<name>     每日任务相关设置（如全勤奖）
+// 这张表（沿用历史表名 scene_settings）按 scene_key 分行：
+//   scene_key = 'global'      全局设置：feature.<key> 功能开关、task.<name> 任务设置、schema.version
+//   scene_key = 具体场景键     v2.2.0 起的场景级覆盖（同一个键优先于全局）
+// 因此本模块只读写 global 行，场景级覆盖请用 services/features.js。
 // ==========================================
 
 import { logError } from "../core/logger.js";
 
 export const SETTINGS_SCOPE = "global";
 
+/** 读取一条全局设置；不存在或解析失败返回 fallback */
 export async function getSetting(env, name, fallback = null) {
   if (!env.DB) return fallback;
   try {
@@ -23,6 +24,7 @@ export async function getSetting(env, name, fallback = null) {
   }
 }
 
+/** 按前缀批量读取全局设置，返回 { name: value } */
 export async function getSettings(env, prefix = "") {
   const map = {};
   if (!env.DB) return map;
@@ -38,6 +40,7 @@ export async function getSettings(env, prefix = "") {
   return map;
 }
 
+/** 写入 / 覆盖一条全局设置 */
 export async function setSetting(env, name, value) {
   if (!env.DB || !name) return false;
   await env.DB.prepare(`
@@ -48,6 +51,7 @@ export async function setSetting(env, name, value) {
   return true;
 }
 
+/** 删除一条全局设置（删除后回退默认值） */
 export async function deleteSetting(env, name) {
   if (!env.DB || !name) return false;
   await env.DB.prepare("DELETE FROM scene_settings WHERE scene_key = ? AND name = ?")

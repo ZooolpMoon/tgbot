@@ -5,7 +5,7 @@
 // Node 22.5+ 才有 node:sqlite；低版本会跳过依赖它的测试。
 // ==========================================
 
-import { SCHEMA_SQL } from "../src/core/db.js";
+import { SCHEMA_SQL, splitSchemaStatements } from "../src/core/db.js";
 
 let DatabaseSync = null;
 try {
@@ -16,12 +16,12 @@ try {
 
 export const hasSqlite = Boolean(DatabaseSync);
 
-/** 把 SCHEMA_SQL 里的注释去掉后整段建表 */
+/**
+ * 把 SCHEMA_SQL 里的注释去掉后整段建表。
+ * 复用 src/core/db.js 的拆分逻辑，保证测试与生产建表语句完全一致。
+ */
 function schemaSql() {
-  return SCHEMA_SQL
-    .split("\n")
-    .filter((line) => !line.trim().startsWith("--"))
-    .join("\n");
+  return splitSchemaStatements(SCHEMA_SQL).join(";\n") + ";";
 }
 
 /**

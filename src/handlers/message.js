@@ -4,6 +4,9 @@
 // 2. 引导式文本输入（添加/编辑商品、订单备注）
 // 3. 指令 → 命令注册表（权限 / 仅私聊 / 功能开关都在注册表里判定）
 // 4. 非指令 → AI 对话
+//
+// 注意各段判断的先后顺序：引导式输入必须排在指令分发之前，
+// 否则用户正在填写的表单内容会被当成未知指令丢掉。
 // ==========================================
 
 import { sendAutoDelete } from "../telegram/auto-delete.js";
@@ -19,6 +22,7 @@ import { renderShopItem } from "../shop/index.js";
 import { getPendingNoteRequest, saveOrderNote, cancelOrderNote } from "../shop/notes.js";
 import { isTaskGuideActive, handleTaskGuideInput, cancelTaskGuide } from "../admin/tasks.js";
 
+/** 处理 message / edited_message 更新 */
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
   const message = payload.message || payload.edited_message;
   let userText = (message.text || "").trim();
@@ -75,7 +79,8 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     if (firstToken.includes("@")) {
       const target = firstToken.split("@").slice(1).join("@").toLowerCase();
       if (target && target !== botUsername) return;
-      userText = userText.replace(/@\w+/g, "").trim();
+      // 只去掉发往本机器人的 @用户名，保留正文里提到的其他人
+      userText = userText.replace(new RegExp(`@${botUsername}\\b`, "gi"), "").trim();
       if (!userText) return;
     }
   }
@@ -97,6 +102,7 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   const command = userText.split(/\s+/)[0].split("@")[0].toLowerCase();
   const botMention = botUsername ? `@${botUsername}` : "Bot";
 
+  // 指令处理用的复合上下文：`ctx` 字段是 Worker 原生 ctx（sendAutoDelete 会从中取 waitUntil）
   const baseCtx = {
     env, ctx, token, chatId, userKey, sceneKey,
     uctx, userConfig, isGroupCtx, isMaster,
@@ -105,12 +111,12 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   };
 
   // ---------- 管理员引导式文本输入（添加商品 / 编辑商品字段）----------
+  // 这两个流程互斥，任何一个命中都会消费掉本条消息
   if (!isGroupCtx && isMaster && !isCommandLike) {
     if (await handleAddItemInput({ env, token, chatId, userText, adminId: userId })) return;
     if (await handleEditItemInput({ env, token, chatId, userText, adminId: userId })) return;
   }
 
-  // ---------- 商城下单备注输入（私聊，任何用户）----------
   // ---------- 每日任务管理的引导式输入（管理员，私聊）----------
   if (!isGroupCtx && isMaster && (await isTaskGuideActive(env, chatId))) {
     if (isCommandLike) {
@@ -123,6 +129,7 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     }
   }
 
+  // ---------- 商城下单备注输入（私聊，任何用户）----------
   if (!isGroupCtx) {
     const pendingNote = await getPendingNoteRequest(env, chatId);
     if (pendingNote) {

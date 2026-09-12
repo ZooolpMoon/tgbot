@@ -1,5 +1,8 @@
 // ==========================================
 // 🚀 Worker 入口
+//
+// fetch     —— Telegram Webhook 入口（POST 才处理，其它方法返回部署探活文案）
+// scheduled —— Cron Triggers 入口（清理过期数据 + 给管理员发日报）
 // ==========================================
 import { resolveUserContext } from "./core/context.js";
 import { handleCallback } from "./handlers/callback.js";
@@ -9,6 +12,11 @@ import { ensureSchema } from "./core/db.js";
 import { runScheduledTasks } from "./services/daily.js";
 
 export default {
+  /**
+   * Webhook 入口。
+   * 无论业务是否成功都返回 200，避免 Telegram 因 5xx 反复重推同一条更新；
+   * 真正的异常会写入日志，方便 wrangler tail 排查。
+   */
   async fetch(request, env, ctx) {
     if (request.method !== "POST") {
       return new Response("已成功部署！", { status: 200 });
@@ -51,6 +59,7 @@ export default {
   },
 
   // 定时任务（Cron Triggers）：清理过期数据 + 推送每日概况
+  /** 定时任务入口：先保证建表，再执行清理与日报推送 */
   async scheduled(event, env, ctx) {
     try {
       await ensureSchema(env);

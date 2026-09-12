@@ -1,18 +1,41 @@
 // ==========================================
 // 🛒 积分商城 - 用户侧
+// 浏览商品 → 商品详情 → 填写备注 → 确认兑换 → 我的订单（可自助取消退款）
 // ==========================================
 
-import { sendMessage, sendMessageWithKeyboard, editMessageText } from "../telegram/api.js";
+import { sendMessage, sendMessageWithKeyboard, editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
 import { escapeHtml } from "../utils/html.js";
-import { answerCallback } from "../telegram/api.js";
+import { grid, compactLabel, clampPage, totalPagesOf, pageOffset, pagerRow, LAYOUT } from "../utils/layout.js";
 import { tryDeductPoints, refundPoint, logPointChange } from "../services/points.js";
 import { randomInt } from "../utils/random.js";
 import { logError } from "../core/logger.js";
 import { SHOP } from "../config/constants.js";
 import { getOrderNote, cancelOrderNote } from "./notes.js";
 import { completeTask } from "../services/tasks.js";
+import { categoryText } from "./categories.js";
 
+/**
+ * 商城首页键盘（纯函数，便于排版测试）。
+ * 8 件商品 = 4 行，加翻页 1 行、我的订单 1 行、关闭 1 行，最多 7 行。
+ */
+export function getShopHomeKeyboard(items, safePage, totalPages) {
+  const inline_keyboard = grid(
+    items.map((it) => ({
+      text: compactLabel(`${it.icon} ${it.name} · 🪙${it.price}`, 30),
+      callback_data: `shop_view_${it.id}`
+    }))
+  );
+
+  const navRow = pagerRow({ page: safePage, totalPages, prefix: "shop_home_page_" });
+  if (navRow) inline_keyboard.push(navRow);
+
+  inline_keyboard.push([{ text: "📜 我的订单", callback_data: "shop_orders_1" }]);
+  inline_keyboard.push([{ text: "🔙 关闭", callback_data: "shop_close" }]);
+  return { inline_keyboard };
+}
+
+/** 商城首页：商品列表（两列网格）+ 翻页 + 我的订单 */
 export async function renderShopHome(token, env, chatId, userKey, messageId = null, page = 1) {
   if (!env.DB) {
     return sendMessage(token, chatId, "❌ 商城未启用（未绑定数据库）。");
@@ -23,47 +46,32 @@ export async function renderShopHome(token, env, chatId, userKey, messageId = nu
     "SELECT COUNT(*) AS n FROM shop_items WHERE enabled = 1"
   ).first();
   const total = Number(countRes?.n) || 0;
-  const totalPages = Math.ceil(total / pageSize) || 1;
-
-  let safePage = Math.max(1, Math.floor(Number(page) || 1));
-  if (safePage > totalPages) safePage = totalPages;
-  const offset = (safePage - 1) * pageSize;
+  const totalPages = totalPagesOf(total, pageSize);
+  const safePage = clampPage(page, totalPages);
 
   const pts = await getUserPoints(env, userKey);
   const { results } = await env.DB.prepare(
     "SELECT id, name, icon, price, stock FROM shop_items WHERE enabled = 1 ORDER BY id ASC LIMIT ? OFFSET ?"
-  ).bind(pageSize, offset).all();
+  ).bind(pageSize, pageOffset(safePage, pageSize)).all();
 
   const items = results || [];
 
   let text = `🛒 <b>积分商城</b>\n`;
-  text += `-------------------------\n`;
+  text += `${LAYOUT.DIVIDER}\n`;
   text += `💰 <b>我的积分：</b> <code>${pts}</code>\n\n`;
   text += `📦 <b>在售商品：</b> ${safePage} / ${totalPages} 页（共 ${total} 件）\n\n`;
-
-  const inline_keyboard = [];
 
   if (items.length === 0) {
     text += `<i>(暂无在售商品，请稍后再来)</i>\n`;
   } else {
-    items.forEach((it) => {
+    // 正文列出价格与库存，按钮只放「图标 + 名称」，避免按钮被挤爆
+    for (const it of items) {
       const stockText = it.stock === -1 ? "∞" : (it.stock > 0 ? `${it.stock}` : "已售罄");
       text += `${it.icon} <b>${escapeHtml(it.name)}</b> — 🪙 ${it.price}（库存：${stockText}）\n`;
-      inline_keyboard.push([
-        { text: `${it.icon} ${it.name} · 🪙 ${it.price}`, callback_data: `shop_view_${it.id}` }
-      ]);
-    });
+    }
   }
 
-  const navRow = [];
-  if (safePage > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `shop_home_page_${safePage - 1}` });
-  if (safePage < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `shop_home_page_${safePage + 1}` });
-  if (navRow.length > 0) inline_keyboard.push(navRow);
-
-  inline_keyboard.push([{ text: "📜 我的订单", callback_data: "shop_orders_1" }]);
-  inline_keyboard.push([{ text: "🔙 关闭", callback_data: "shop_close" }]);
-
-  const keyboard = { inline_keyboard };
+  const keyboard = getShopHomeKeyboard(items, safePage, totalPages);
 
   if (messageId) {
     return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
@@ -72,6 +80,7 @@ export async function renderShopHome(token, env, chatId, userKey, messageId = nu
 }
 
 // ---------- 商品详情 ----------
+/** 商品详情：展示价格/库存/限购/备注，并提供兑换入口 */
 export async function renderShopItem(token, env, chatId, userKey, messageId, itemId) {
   if (!env.DB) {
     const text = "❌ 商城未启用（未绑定数据库）。";
@@ -92,7 +101,7 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
 
   const pts = await getUserPoints(env, userKey);
   const stockText = item.stock === -1 ? "无限" : (item.stock > 0 ? `${item.stock}` : "已售罄");
-  const catText = { virtual: "虚拟物品", service: "服务" }[item.category] || item.category;
+  const catText = categoryText(item.category);
   const note = await getOrderNote(env, chatId, item.id);
   const perUserLimit = Number(item.per_user_limit) || 0;
 
@@ -130,6 +139,11 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
 }
 
 // ---------- 执行兑换 ----------
+/**
+ * 用户点击「确认兑换」：
+ * 校验上架/库存/限购 → 原子扣积分 → 扣库存 → 建订单 →
+ * 任何一步失败都会把前面已发生的扣减补偿回来。
+ */
 export async function handleShopBuy(token, env, callback, chatId, userKey, userId, messageId, itemId, firstName = "") {
   if (!env.DB) return answerCallback(token, callback.id, "❌ 商城未启用", true);
 
@@ -182,11 +196,13 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   // 创建订单
   const orderNo = "S" + Date.now().toString(36).toUpperCase() + randomInt(1679616).toString(36).padStart(4, "0").toUpperCase();
 
+  let orderId = null;
   try {
-    await env.DB.prepare(`
+    const inserted = await env.DB.prepare(`
       INSERT INTO shop_orders (order_no, user_key, user_id, chat_id, item_id, item_name, item_icon, price, status, remark)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
     `).bind(orderNo, userKey, userId, chatId, item.id, item.name, item.icon, item.price, note || "").run();
+    orderId = Number(inserted?.meta?.last_row_id) || null;
   } catch (e) {
     // 订单创建失败时回滚：退回积分，并恢复已扣减的库存。
     if (stockDecremented) {
@@ -197,6 +213,26 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
     await refundPoint(env, userKey, item.price, `创建订单失败自动退款 [${item.name}]`);
     logError("商城创建订单失败:", e);
     return answerCallback(token, callback.id, "❌ 下单失败，积分和库存已自动退回", true);
+  }
+
+  // 限购兜底：并发点击时两条请求可能同时通过前置校验，
+  // 这里以「落库后的真实订单数」为准，多出来的那一单自动取消并退款。
+  if (perUserLimit > 0 && orderId) {
+    const afterRes = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM shop_orders WHERE user_key = ? AND item_id = ? AND status <> 'cancelled'"
+    ).bind(userKey, item.id).first();
+    if ((Number(afterRes?.n) || 0) > perUserLimit) {
+      await env.DB.prepare(
+        "UPDATE shop_orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'"
+      ).bind(orderId).run();
+      if (stockDecremented) {
+        await env.DB.prepare(
+          "UPDATE shop_items SET stock = stock + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).bind(item.id).run();
+      }
+      await refundPoint(env, userKey, item.price, `超出限购自动退款 [${item.name}]`);
+      return answerCallback(token, callback.id, `❌ 该商品每人限购 ${perUserLimit} 件，本单已自动退款`, true);
+    }
   }
 
   // 订单已创建，清掉备注草稿（失败时不清理，用户不用重填）
@@ -243,6 +279,32 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
 }
 
 // ---------- 我的订单 ----------
+/**
+ * 我的订单键盘（纯函数，便于排版测试）。
+ * 待处理订单的「取消并退款」单独占一行，避免误触相邻订单。
+ */
+export function getMyOrdersKeyboard(orders, safePage, totalPages) {
+  const inline_keyboard = [];
+
+  for (const o of orders) {
+    if (o.status === "pending") {
+      inline_keyboard.push([
+        {
+          text: compactLabel(`❌ 取消 ${o.order_no} 并退款`, 30),
+          callback_data: `shop_ucancel_${o.id}_${safePage}`
+        }
+      ]);
+    }
+  }
+
+  const navRow = pagerRow({ page: safePage, totalPages, prefix: "shop_orders_" });
+  if (navRow) inline_keyboard.push(navRow);
+  inline_keyboard.push([{ text: "🔙 返回商城", callback_data: "shop_home" }]);
+
+  return { inline_keyboard };
+}
+
+/** 我的订单：按最新在前分页，待处理订单可自助取消并退款 */
 export async function renderMyOrders(token, env, chatId, userKey, messageId, page = 1) {
   if (!env.DB) {
     const text = "❌ 商城未启用（未绑定数据库）。";
@@ -252,20 +314,17 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
   }
 
   const pageSize = SHOP.ORDERS_PER_PAGE;
-  let safePage = Math.max(1, Math.floor(Number(page) || 1));
 
   const countRes = await env.DB.prepare(
     "SELECT COUNT(*) AS total FROM shop_orders WHERE user_key = ?"
   ).bind(userKey).first();
   const total = Number(countRes?.total) || 0;
-  const totalPages = Math.ceil(total / pageSize) || 1;
-  if (safePage > totalPages) safePage = totalPages;
-
-  const offset = (safePage - 1) * pageSize;
+  const totalPages = totalPagesOf(total, pageSize);
+  const safePage = clampPage(page, totalPages);
 
   const { results } = await env.DB.prepare(
     "SELECT id, order_no, item_name, item_icon, price, status, created_at FROM shop_orders WHERE user_key = ? ORDER BY id DESC LIMIT ? OFFSET ?"
-  ).bind(userKey, pageSize, offset).all();
+  ).bind(userKey, pageSize, pageOffset(safePage, pageSize)).all();
 
   const statusMap = {
     pending: "⏳ 待处理",
@@ -275,9 +334,7 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
 
   let text = `📜 <b>我的订单</b>\n`;
   text += `页码：<b>${safePage} / ${totalPages}</b>（共 ${total} 条）\n`;
-  text += `-------------------------\n\n`;
-
-  const inline_keyboard = [];
+  text += `${LAYOUT.DIVIDER}\n\n`;
 
   if (!results || results.length === 0) {
     text += `<i>还没有兑换记录，去商城看看吧～</i>\n`;
@@ -287,23 +344,10 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
       text += `🧾 <code>${o.order_no}</code> · 🪙 ${o.price}\n`;
       text += `📌 状态：${statusMap[o.status] || o.status}\n`;
       text += `🕒 ${o.created_at}\n\n`;
-
-      // 待处理订单允许用户自助取消并退款
-      if (o.status === "pending") {
-        inline_keyboard.push([
-          { text: `❌ 取消订单 ${o.order_no} 并退款`, callback_data: `shop_ucancel_${o.id}_${safePage}` }
-        ]);
-      }
     });
   }
 
-  const navRow = [];
-  if (safePage > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `shop_orders_${safePage - 1}` });
-  if (safePage < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `shop_orders_${safePage + 1}` });
-  if (navRow.length > 0) inline_keyboard.push(navRow);
-  inline_keyboard.push([{ text: "🔙 返回商城", callback_data: "shop_home" }]);
-
-  const keyboard = { inline_keyboard };
+  const keyboard = getMyOrdersKeyboard(results || [], safePage, totalPages);
 
   if (!messageId) {
     return sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML");

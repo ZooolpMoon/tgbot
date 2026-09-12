@@ -45,6 +45,7 @@ export async function cancelOrderWithRefund(env, order, note = "refunded") {
   return true;
 }
 
+/** 按主键读订单（不存在返回 null） */
 export async function getOrderById(env, orderId) {
   if (!env.DB) return null;
   return env.DB.prepare("SELECT * FROM shop_orders WHERE id = ?").bind(orderId).first();
@@ -112,6 +113,7 @@ export async function handleUserCancelOrder(token, env, callback, userKey, order
 // ==========================================
 
 // 上架/下架
+/** 切换商品上架状态，并写管理员操作日志 */
 export async function actionToggleItem(token, env, callback, itemId, adminId = null) {
   const it = await env.DB.prepare("SELECT name, enabled FROM shop_items WHERE id = ?").bind(itemId).first();
   if (!it) return answerCallback(token, callback.id, "❌ 商品不存在", true);
@@ -130,6 +132,7 @@ export async function actionToggleItem(token, env, callback, itemId, adminId = n
 }
 
 // 删除商品
+/** 删除商品（已产生的订单记录会保留，不受影响） */
 export async function actionDeleteItem(token, env, callback, itemId, adminId = null) {
   const it = await env.DB.prepare("SELECT name FROM shop_items WHERE id = ?").bind(itemId).first();
   await env.DB.prepare("DELETE FROM shop_items WHERE id = ?").bind(itemId).run();
@@ -142,6 +145,7 @@ export async function actionDeleteItem(token, env, callback, itemId, adminId = n
 }
 
 // 标记完成（虚拟物品/服务由管理员人工确认发放）
+/** 把待处理订单标记为已完成，并通知用户 */
 export async function actionDone(token, env, callback, orderId, adminId = null) {
   const o = await getOrderById(env, orderId);
   if (!o) return answerCallback(token, callback.id, "❌ 订单不存在", true);
@@ -180,6 +184,7 @@ export async function actionDone(token, env, callback, orderId, adminId = null) 
 }
 
 // 管理员：取消并退款
+/** 管理员取消订单：退积分 + 回滚库存（复用原子状态流转，避免重复退款） */
 export async function actionCancel(token, env, callback, orderId, adminId = null) {
   const o = await getOrderById(env, orderId);
   if (!o) return answerCallback(token, callback.id, "❌ 订单不存在", true);

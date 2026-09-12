@@ -1,19 +1,23 @@
 // ==========================================
 // 🎡 游戏：幸运转盘
+// 倍率分布：30% ×0 / 25% ×0.5 / 20% ×1 / 15% ×2 / 8% ×5 / 1.5% ×10 / 0.5% ×50。
 // ==========================================
 
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
+import { LAYOUT } from "../utils/layout.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
 import { completeTask } from "../services/tasks.js";
 import { randomFloat } from "../utils/random.js";
+import { getGameMainKeyboard } from "./shared.js";
 
 export const WheelGame = {
+  /** 游戏主界面：选下注金额（点下注后立即开奖） */
   async renderMain(token, env, chatId, userKey, messageId) {
     const pts = await getUserPoints(env, userKey);
     const text =
       `🎡 <b>幸运转盘</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `💰 <b>当前积分：</b> <code>${pts}</code>\n\n` +
       `<b>转盘赔率分布：</b>\n` +
       `• 💀 ×0   —— 30%\n` +
@@ -24,20 +28,10 @@ export const WheelGame = {
       `• 🤑 ×10  —— 1.5%\n` +
       `• 👑 ×50  —— 0.5%\n\n` +
       `请选择下注金额（下注后直接开奖）：`;
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: "转 10 🪙", callback_data: "game_wheel_play_10" },
-          { text: "转 50 🪙", callback_data: "game_wheel_play_50" },
-          { text: "转 100 🪙", callback_data: "game_wheel_play_100" }
-        ],
-        [{ text: "🎛️ 自定义下注", callback_data: "game_c_wheel_show_10" }],
-        [{ text: "🔙 返回大厅", callback_data: "game_hub" }]
-      ]
-    };
-    return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
+    return editMessageText(token, chatId, messageId, text, getGameMainKeyboard("wheel", "转"), "HTML");
   },
 
+  /** 开奖：先扣分再转盘，按倍率结算（不足 1 分的部分向下取整） */
   async play(token, env, callbackId, chatId, userKey, messageId, betAmount, sceneKey = null) {
     if (!env.DB) return answerCallback(token, callbackId, "❌ 未绑定数据库！", true);
     const afterDeduct = await tryDeductPoints(env, userKey, betAmount);
@@ -67,9 +61,9 @@ export const WheelGame = {
 
     const resultMsg =
       `🎡 <b>幸运转盘开奖</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `🎰 <b>结果：</b> ${emoji} <b>${multiplier}x</b> —— ${label}\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `🏆 <b>结算：</b> ${multiplier >= 2 ? "🎉 恭喜赢了！" : multiplier === 1 ? "🙂 保本" : multiplier === 0 ? "💸 未中奖" : "😐 部分退还"}\n` +
       `💰 <b>变动：</b> ${netChange >= 0 ? `+${netChange}` : `${netChange}`}\n` +
       `🪙 <b>余额：</b> <b>${currentBalance}</b>`;

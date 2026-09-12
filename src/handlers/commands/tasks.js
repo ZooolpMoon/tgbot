@@ -1,10 +1,12 @@
 // ==========================================
 // ✅ /tasks 每日任务
+// 展示今日任务清单与完成进度（任务定义由管理员在控制台维护）。
 // ==========================================
 
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { getTodayTasks } from "../../services/tasks.js";
 
+/** /tasks 指令实现 */
 export async function cmdTasks({ env, ctx, token, chatId, userKey, isGroupCtx }) {
   if (!env.DB) {
     await sendAutoDelete(token, chatId, "❌ 未绑定数据库，每日任务不可用。", null, isGroupCtx, ctx);

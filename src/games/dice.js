@@ -1,43 +1,37 @@
 // ==========================================
 // 🎲 游戏：骰子猜大小
+// 赔率 1:2（含本金），3 骰和 11-18 为大、3-10 为小。
 // ==========================================
 
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
+import { LAYOUT } from "../utils/layout.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
 import { completeTask } from "../services/tasks.js";
 import { randomInt } from "../utils/random.js";
+import { getGameMainKeyboard, getBackToGameMainRow } from "./shared.js";
 
 export const DiceGame = {
+  /** 游戏主界面：选下注金额 */
   async renderMain(token, env, chatId, userKey, messageId) {
     const pts = await getUserPoints(env, userKey);
     const text =
       `🎲 <b>骰子猜大小</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `💰 <b>当前积分：</b> <code>${pts}</code>\n\n` +
       `<b>规则说明：</b>\n` +
       `• 3 个骰子点数和 3-10 为<b>【小】</b>，11-18 为<b>【大】</b>。\n` +
       `• 赔率为 <b>1 : 2</b>。\n\n` +
       `请先选择下注金额：`;
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: "下注 10 🪙", callback_data: "game_dice_bet_10" },
-          { text: "下注 50 🪙", callback_data: "game_dice_bet_50" },
-          { text: "下注 100 🪙", callback_data: "game_dice_bet_100" }
-        ],
-        [{ text: "🎛️ 自定义下注", callback_data: "game_c_dice_show_10" }],
-        [{ text: "🔙 返回大厅", callback_data: "game_hub" }]
-      ]
-    };
-    return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
+    return editMessageText(token, chatId, messageId, text, getGameMainKeyboard("dice"), "HTML");
   },
 
+  /** 二级界面：选大 / 选小 */
   async renderBetChoice(token, env, chatId, userKey, messageId, betAmount) {
     const pts = await getUserPoints(env, userKey);
     const text =
       `🎲 <b>骰子猜大小</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `💰 <b>当前积分：</b> <code>${pts}</code>\n` +
       `💵 <b>已选下注：</b> <code>${betAmount}</code> 积分\n\n` +
       `请选择你要买【大】还是买【小】：`;
@@ -47,12 +41,16 @@ export const DiceGame = {
           { text: "🔴 猜【小】(3-10)", callback_data: `game_dice_play_${betAmount}_small` },
           { text: "🔵 猜【大】(11-18)", callback_data: `game_dice_play_${betAmount}_big` }
         ],
-        [{ text: "🔙 重选金额", callback_data: "game_dice_main" }]
+        getBackToGameMainRow("dice")
       ]
     };
     return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
   },
 
+  /**
+   * 开奖：先原子扣积分，再掷骰子，赢了按 2 倍（含本金）返还。
+   * 扣分失败（积分不足）时不会掷骰子，保证「不扣钱不开奖」。
+   */
   async play(token, env, callbackId, chatId, userKey, messageId, betAmount, choice, sceneKey = null) {
     if (!env.DB) return answerCallback(token, callbackId, "❌ 未绑定数据库！", true);
 
@@ -84,11 +82,11 @@ export const DiceGame = {
 
     const resultMsg =
       `🎲 <b>骰子开奖结果</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `🎲 <b>点数：</b> ${diceStr} (共 <b>${sum}</b> 点)\n` +
       `🎯 <b>结果：</b> <b>${actualText}</b>\n` +
       `💬 <b>您的选择：</b> ${choice === "big" ? "大" : "小"}\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `🏆 <b>结算：</b> ${isWin ? "🎉 恭喜赢了！" : "💸 遗憾输了！"}\n` +
       `💰 <b>变动：</b> ${isWin ? `+${reward}` : `-${betAmount}`}\n` +
       `🪙 <b>余额：</b> <b>${currentBalance}</b>`;

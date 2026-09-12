@@ -8,6 +8,7 @@ import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { redeemCode } from "../../services/redeem.js";
 import { completeTask } from "../../services/tasks.js";
 
+/** /redeem <兑换码>：校验并发放积分，成功后触发「使用兑换码」类任务 */
 export async function cmdRedeem({ env, ctx, token, chatId, userKey, isGroupCtx, rawText }) {
   if (isGroupCtx) {
     await sendAutoDelete(
@@ -49,6 +50,7 @@ export async function cmdRedeem({ env, ctx, token, chatId, userKey, isGroupCtx, 
     "HTML"
   );
 
-  // 触发「使用一次兑换码」类任务
+  // 触发「使用一次兑换码」类任务。
+  // 私聊场景键就是 private:<uid>，这里直接用 chatId 构造（私聊里二者相同）。
   await completeTask(env, userKey, "redeem", { sceneKey: `private:${chatId}`, chatId, token });
 }

@@ -4,6 +4,34 @@
 
 import { DEFAULTS } from "../config/constants.js";
 
+/**
+ * 解析「每日额度」字段。
+ * 数据库里可能是 NULL / 空串 / 非法值，统一收敛为：-1 = 不限，其余为 >= 0 的整数。
+ * @param {unknown} rawValue user_scenes.max_daily
+ */
+export function parseMaxDaily(rawValue) {
+  if (rawValue === null || rawValue === undefined || rawValue === "") return DEFAULTS.MAX_DAILY;
+  const n = Number(rawValue);
+  if (!Number.isFinite(n)) return DEFAULTS.MAX_DAILY;
+  if (n === DEFAULTS.UNLIMITED) return DEFAULTS.UNLIMITED;
+  return Math.max(0, Math.floor(n));
+}
+
+/**
+ * 解析「发送冷却秒数」字段，非法值回退默认，最小 0。
+ * @param {unknown} rawValue user_scenes.rate_limit_sec
+ */
+export function parseRateLimit(rawValue) {
+  if (rawValue === null || rawValue === undefined || rawValue === "") return DEFAULTS.RATE_LIMIT_SEC;
+  const n = Number(rawValue);
+  if (!Number.isFinite(n)) return DEFAULTS.RATE_LIMIT_SEC;
+  return Math.max(0, Math.floor(n));
+}
+
+/**
+ * 写入 / 更新用户与场景信息。
+ * users 表存「跨场景共享」的数据（积分、封禁状态），user_scenes 存场景级配置。
+ */
 export async function upsertUserInfo(env, uctx) {
   if (!env.DB || !uctx) return;
   const { userKey, userId, username, firstName, sceneKey, chatId, chatType } = uctx;
@@ -34,6 +62,11 @@ export async function upsertUserInfo(env, uctx) {
   ]);
 }
 
+/**
+ * 保存场景配置（语言 / 自定义 prompt / 每日额度 / 冷却 / 最后发言时间）。
+ * 注意：max_daily、rate_limit_sec、last_msg_time 用 COALESCE 保留旧值，
+ * 避免只改语言时把管理员设置好的额度覆盖回默认值。
+ */
 export async function saveSceneConfig(env, uctx, config) {
   if (!env.DB || !uctx) return;
   const { userKey, sceneKey, chatId, chatType, userId, username, firstName } = uctx;
@@ -68,12 +101,20 @@ export async function saveSceneConfig(env, uctx, config) {
   ).run();
 }
 
+/**
+ * 读取用户全局积分。
+ * 没有数据库或用户不存在时返回默认初始积分，保证调用方拿到的永远是合法数字。
+ */
 export async function getUserPoints(env, userKey) {
   if (!env.DB) return DEFAULTS.POINTS;
   const u = await env.DB.prepare("SELECT points FROM users WHERE user_key = ?").bind(userKey).first();
   return u && Number.isFinite(Number(u.points)) ? Math.max(0, Math.floor(Number(u.points))) : DEFAULTS.POINTS;
 }
 
+/**
+ * 一次性加载「用户全局数据 + 场景配置」，供消息处理链路使用。
+ * 任何字段非法都会回退到默认值，避免把脏数据带进业务逻辑。
+ */
 export async function loadUserConfig(env, userKey, sceneKey) {
   const config = {
     lang: DEFAULTS.LANG,
@@ -104,19 +145,8 @@ export async function loadUserConfig(env, userKey, sceneKey) {
     config.lang = s.lang || DEFAULTS.LANG;
     config.customPrompt = s.custom_prompt || "";
 
-    const pmd = Number(s.max_daily);
-    if (s.max_daily === null || s.max_daily === undefined || s.max_daily === "" || !Number.isFinite(pmd)) {
-      config.maxDaily = DEFAULTS.MAX_DAILY;
-    } else if (pmd === DEFAULTS.UNLIMITED) {
-      config.maxDaily = DEFAULTS.UNLIMITED;
-    } else {
-      config.maxDaily = Math.max(0, Math.floor(pmd));
-    }
-
-    const prl = Number(s.rate_limit_sec);
-    config.rateLimitSec = (s.rate_limit_sec === null || s.rate_limit_sec === undefined || s.rate_limit_sec === "" || !Number.isFinite(prl))
-      ? DEFAULTS.RATE_LIMIT_SEC
-      : Math.max(0, Math.floor(prl));
+    config.maxDaily = parseMaxDaily(s.max_daily);
+    config.rateLimitSec = parseRateLimit(s.rate_limit_sec);
 
     const plt = Number(s.last_msg_time);
     config.lastMsgTime = (s.last_msg_time === null || s.last_msg_time === undefined || s.last_msg_time === "" || !Number.isFinite(plt))
@@ -131,6 +161,7 @@ export async function loadUserConfig(env, userKey, sceneKey) {
 // 🚫 封禁状态
 // ==========================================
 
+/** 查询用户是否被封禁；老库没有 blocked 字段时按未封禁处理 */
 export async function isUserBlocked(env, userKey) {
   if (!env.DB || !userKey) return false;
   try {
@@ -144,6 +175,7 @@ export async function isUserBlocked(env, userKey) {
   }
 }
 
+/** 设置封禁状态，返回设置后的结果 */
 export async function setUserBlocked(env, userKey, blocked) {
   if (!env.DB || !userKey) return false;
   const value = blocked ? 1 : 0;

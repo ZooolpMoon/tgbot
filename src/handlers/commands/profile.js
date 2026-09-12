@@ -1,5 +1,6 @@
 // ==========================================
 // /profile
+// 个人信息卡片：身份、积分、签到、今日任务与场景额度。
 // ==========================================
 
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
@@ -8,6 +9,7 @@ import { computeCheckinStreak, calcCheckinReward } from "../../services/checkin.
 import { getTodayTasks } from "../../services/tasks.js";
 import { escapeHtml } from "../../utils/html.js";
 
+/** 汇总当前用户在当前场景下的全部状态并渲染成卡片 */
 export async function cmdProfile({ env, ctx, token, chatId, uctx, userConfig, isGroupCtx, isMaster, sceneKey, userKey }) {
   let dailyCount = 0;
   let totalCheckins = 0;

@@ -1,10 +1,12 @@
 // ==========================================
 // 💬 用户可见文案
+// 统一放在这里，避免同一个提示在多个文件里各写一份。
 // ==========================================
 
 import { POINTS } from "./constants.js";
 import { escapeHtml } from "../utils/html.js";
 
+/** 错误与拦截提示（ERR.XXX 直接拼进消息即可） */
 export const ERR = {
   PERMISSION_DENIED: "❌ 权限不足：只有管理员可以访问管理控制台。",
   ADMIN_LOCKED: "❌ 请先输入 /admin 解锁控制台。",
@@ -19,6 +21,7 @@ export const ERR = {
   BLOCKED: "🚫 你已被管理员限制使用本机器人。\n如有疑问请联系管理员。"
 };
 
+/** 欢迎语与菜单标题（含变量插值，参数都需要转义后再拼接） */
 export const TIPS = {
   MENU_TITLE: "👑 <b>管理员控制台</b>\n-------------------------\n点击下方按钮查看或编辑用户数据：",
   WELCOME: (name, user, tag, pts, quota, lang, isMaster = false) =>

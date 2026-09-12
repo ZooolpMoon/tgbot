@@ -1,6 +1,9 @@
 // ==========================================
 // 🛒 商城 - 管理员引导式编辑商品
 // 入口：/shop_edit <商品ID>  或  商品详情 → ✏️ 编辑
+//
+// 会话存在 shop_edit_sessions，30 分钟不操作自动失效，
+// 避免管理员中途离开后，普通私聊消息被当成「新字段值」吞掉。
 // ==========================================
 
 import {
@@ -11,11 +14,37 @@ import {
 } from "../telegram/api.js";
 import { sendAutoDelete } from "../telegram/auto-delete.js";
 import { escapeHtml } from "../utils/html.js";
+import { grid } from "../utils/layout.js";
 import { SHOP_EDIT_FIELDS } from "../config/constants.js";
 import { logAdminAction } from "../services/admin-log.js";
-import { CATEGORY_MAP } from "./add.js";
+import { CATEGORY_MAP, CATEGORY_TEXT, categoryText, parseCategory } from "./categories.js";
 
-const CATEGORY_TEXT = { virtual: "虚拟物品", service: "服务" };
+const SESSION_TTL_MINUTES = 30;
+
+/**
+ * 商品字段编辑键盘（两列网格）。
+ * 面板与指令入口共用同一份定义，避免两处按钮不一致（以前 /shop_edit 就少了「限购」）。
+ */
+export function buildItemEditKeyboard(itemId) {
+  const field = (key, text) => ({
+    text,
+    callback_data: `shop_admin_editf_${itemId}_${key}`
+  });
+  return {
+    inline_keyboard: [
+      ...grid([
+        field("name", "📛 改名称"),
+        field("price", "💰 改价格"),
+        field("stock", "📦 改库存"),
+        field("limit", "🙋 改限购"),
+        field("category", "📂 改分类"),
+        field("icon", "🎨 改图标")
+      ]),
+      [field("description", "📝 改说明")],
+      [{ text: "🔙 返回商品详情", callback_data: `shop_admin_item_${itemId}` }]
+    ]
+  };
+}
 
 // ---------- 字段编辑面板 ----------
 export async function renderItemEditMenu(token, env, chatId, messageId, itemId) {
@@ -39,31 +68,16 @@ export async function renderItemEditMenu(token, env, chatId, messageId, itemId) 
     `💰 价格：🪙 ${item.price}\n` +
     `📦 库存：${stockText}\n` +
     `🙋 限购：${limitText}\n` +
-    `📂 分类：${CATEGORY_TEXT[item.category] || item.category}\n` +
+    `📂 分类：${categoryText(item.category)}\n` +
     `🔘 状态：${item.enabled ? "✅ 已上架" : "🚫 已下架"}\n` +
     `📝 说明：${escapeHtml(item.description) || "（无）"}\n\n` +
     `请选择要修改的字段，机器人会一步步引导你输入新值：`;
 
-  const kb = [];
-  kb.push([
-    { text: "📛 改名称", callback_data: `shop_admin_editf_${item.id}_name` },
-    { text: "💰 改价格", callback_data: `shop_admin_editf_${item.id}_price` },
-    { text: "📦 改库存", callback_data: `shop_admin_editf_${item.id}_stock` }
-  ]);
-  kb.push([
-    { text: "📂 改分类", callback_data: `shop_admin_editf_${item.id}_category` },
-    { text: "🎨 改图标", callback_data: `shop_admin_editf_${item.id}_icon` }
-  ]);
-  kb.push([
-    { text: "🙋 改限购", callback_data: `shop_admin_editf_${item.id}_limit` },
-    { text: "📝 改说明", callback_data: `shop_admin_editf_${item.id}_description` }
-  ]);
-  kb.push([{ text: "🔙 返回商品详情", callback_data: `shop_admin_item_${item.id}` }]);
-
-  return editMessageText(token, chatId, messageId, text, { inline_keyboard: kb }, "HTML");
+  return editMessageText(token, chatId, messageId, text, buildItemEditKeyboard(item.id), "HTML");
 }
 
 // ---------- 为某个字段开启输入会话 ----------
+/** 记录「正在编辑哪个商品的哪个字段」，然后提示管理员输入新值 */
 export async function startEditField({ env, token, chatId, itemId, field }) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
   if (!SHOP_EDIT_FIELDS[field]) return sendMessage(token, chatId, "⚠️ 不支持的字段。");
@@ -89,6 +103,7 @@ export async function startEditField({ env, token, chatId, itemId, field }) {
   return sendMessage(token, chatId, editPrompt(item, field), "HTML");
 }
 
+/** 按字段生成对应的输入提示 */
 function editPrompt(item, field) {
   const head = `✏️ <b>编辑商品 #${item.id}</b> · ${SHOP_EDIT_FIELDS[field]}\n-------------------------\n`;
   const cancelTip = `\n\n（回复 <code>/shop_edit cancel</code> 取消编辑）`;
@@ -101,7 +116,7 @@ function editPrompt(item, field) {
     case "stock":
       return head + `当前库存：<b>${Number(item.stock) === -1 ? "不限" : item.stock}</b>\n\n请输入<b>新的库存</b>（整数；-1 表示不限库存）：` + cancelTip;
     case "category":
-      return head + `当前分类：<b>${CATEGORY_TEXT[item.category] || item.category}</b>\n\n请选择<b>新分类</b>：\n1 虚拟物品\n2 服务\n\n（直接回复 1/2 或分类名）` + cancelTip;
+      return head + `当前分类：<b>${categoryText(item.category)}</b>\n\n请选择<b>新分类</b>：\n1 虚拟物品\n2 服务\n\n（直接回复 1/2 或分类名）` + cancelTip;
     case "icon":
       return head + `当前图标：<b>${escapeHtml(item.icon) || "无"}</b>\n\n请输入<b>新的 emoji 图标</b>：` + cancelTip;
     case "description":
@@ -122,11 +137,13 @@ export async function cancelEditItem(token, env, chatId) {
 }
 
 // ---------- 文本输入 → 落库 ----------
+/** 处理编辑流程里的文本输入；返回 true 表示这条消息已被消费 */
 export async function handleEditItemInput({ env, token, chatId, userText, adminId = null }) {
   if (!env.DB) return false;
 
   const session = await env.DB.prepare(
-    "SELECT * FROM shop_edit_sessions WHERE chat_id = ?"
+    `SELECT * FROM shop_edit_sessions
+     WHERE chat_id = ? AND updated_at >= datetime('now', '-${SESSION_TTL_MINUTES} minutes')`
   ).bind(chatId).first();
   if (!session) return false;
 
@@ -165,7 +182,7 @@ export async function handleEditItemInput({ env, token, chatId, userText, adminI
       break;
     }
     case "category": {
-      const category = CATEGORY_MAP[text.toLowerCase()];
+      const category = parseCategory(text);
       if (!category) validationError = "⚠️ 分类无效，请回复：1 虚拟物品 / 2 服务";
       else value = category;
       break;
@@ -217,7 +234,7 @@ export async function handleEditItemInput({ env, token, chatId, userText, adminI
     `💰 价格：🪙 ${after.price}\n` +
     `📦 库存：${stockText}\n` +
     `🙋 限购：${limitText}\n` +
-    `📂 分类：${CATEGORY_TEXT[after.category] || after.category}\n` +
+    `📂 分类：${categoryText(after.category)}\n` +
     `🔘 状态：${after.enabled ? "✅ 已上架" : "🚫 已下架"}\n` +
     `📝 说明：${escapeHtml(after.description) || "（无）"}\n\n` +
     `继续修改请发送 <code>/shop_edit ${after.id}</code>。`;
@@ -234,6 +251,7 @@ export async function handleEditItemInput({ env, token, chatId, userText, adminI
 }
 
 // ---------- /shop_edit 指令 ----------
+/** /shop_edit <商品ID>：直接打开某个商品的字段编辑菜单；带 cancel 则结束会话 */
 export async function cmdShopEdit({ env, ctx, token, chatId, isMaster, isGroupCtx, rawText, myId }) {
   if (!env.DB) {
     await sendAutoDelete(token, chatId, "❌ 未绑定数据库。", null, isGroupCtx, ctx);
@@ -274,21 +292,7 @@ export async function cmdShopEdit({ env, ctx, token, chatId, isMaster, isGroupCt
   await sendMessageWithKeyboard(
     token, chatId,
     `✏️ <b>编辑商品 #${item.id}</b>\n-------------------------\n${escapeHtml(item.name)}\n\n请选择要修改的字段：`,
-    {
-      inline_keyboard: [
-        [
-          { text: "📛 改名称", callback_data: `shop_admin_editf_${item.id}_name` },
-          { text: "💰 改价格", callback_data: `shop_admin_editf_${item.id}_price` },
-          { text: "📦 改库存", callback_data: `shop_admin_editf_${item.id}_stock` }
-        ],
-        [
-          { text: "📂 改分类", callback_data: `shop_admin_editf_${item.id}_category` },
-          { text: "🎨 改图标", callback_data: `shop_admin_editf_${item.id}_icon` }
-        ],
-        [{ text: "📝 改说明", callback_data: `shop_admin_editf_${item.id}_description` }],
-        [{ text: "🔙 商品详情", callback_data: `shop_admin_item_${item.id}` }]
-      ]
-    },
+    buildItemEditKeyboard(item.id),
     "HTML"
   );
 }

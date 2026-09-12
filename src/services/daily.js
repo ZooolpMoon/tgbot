@@ -2,6 +2,10 @@
 // ⏰ 定时任务（Workers Cron Triggers）
 // 1. 清理过期/陈旧数据
 // 2. 给管理员推送「昨日概况 + 待处理订单」提醒
+//
+// 清理的对象都是「引导式输入会话 / 草稿」：
+// 这些状态会拦截用户的普通消息，一旦残留就会一直吞消息，
+// 所以除了处理器自身的 30 分钟有效期，定时任务还要兜底删除。
 // ==========================================
 
 import { getDateKey, shiftDateKey } from "./time.js";
@@ -11,7 +15,8 @@ import { escapeHtml } from "../utils/html.js";
 import { logError, logInfo } from "../core/logger.js";
 
 /**
- * 清理过期数据。返回各表清理条数，便于日志与测试。
+ * 清理过期数据（引导会话、草稿、过期兑换码）。
+ * @returns {Promise<object|null>} 各表清理条数；没有数据库时返回 null
  */
 export async function cleanupStaleData(env) {
   if (!env.DB) return null;
@@ -39,6 +44,10 @@ export async function cleanupStaleData(env) {
     "DELETE FROM shop_edit_sessions WHERE updated_at <= datetime('now', '-1 day')"
   ).run();
 
+  const taskSessions = await env.DB.prepare(
+    "DELETE FROM task_edit_sessions WHERE updated_at <= datetime('now', '-1 day')"
+  ).run();
+
   const expiredCodes = await env.DB.prepare(
     "UPDATE redeem_codes SET enabled = 0 WHERE enabled = 1 AND expires_at IS NOT NULL AND expires_at < ?"
   ).bind(today).run();
@@ -49,12 +58,13 @@ export async function cleanupStaleData(env) {
     orderDrafts: orderDrafts.meta.changes,
     addSessions: addSessions.meta.changes,
     editSessions: editSessions.meta.changes,
+    taskSessions: taskSessions.meta.changes,
     expiredCodes: expiredCodes.meta.changes
   };
 }
 
 /**
- * 汇总昨日（按 APP_TIMEZONE）的运行数据。
+ * 汇总昨日（按 APP_TIMEZONE）的运行数据 + 当前待处理订单。
  */
 export async function collectDailySummary(env) {
   const today = getDateKey(env);
@@ -90,7 +100,7 @@ export async function collectDailySummary(env) {
 }
 
 /**
- * 定时任务总入口：清理 + 推送概况。
+ * 定时任务总入口：清理 → 汇总 → 给管理员推送概况（未配置管理员时只清理）。
  */
 export async function runScheduledTasks(env, token) {
   const cleanup = await cleanupStaleData(env);
@@ -103,7 +113,7 @@ export async function runScheduledTasks(env, token) {
 
   const lines = [];
   lines.push(`🌙 <b>每日概况</b> · ${summary.yesterday}`);
-  lines.push(`-------------------------`);
+  lines.push("-------------------------");
   lines.push(`🟢 <b>昨日活跃场景：</b> ${summary.activeScenes}`);
   lines.push(`💬 <b>昨日消息量：</b> ${summary.messages}`);
   lines.push(`📅 <b>昨日签到人数：</b> ${summary.checkins}`);

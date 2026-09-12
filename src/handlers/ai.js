@@ -1,5 +1,9 @@
 // ==========================================
 // 🤖 AI 对话处理
+//
+// 计费顺序（必须保证「要么都成功，要么都回滚」）：
+//   1. 频率限制 → 2. 占今日额度 → 3. 扣积分 → 4. 调模型
+// 第 4 步失败时，第 2、3 步会通过 rollback() 全额退回。
 // ==========================================
 
 import { sendMessage, sendChatAction } from "../telegram/api.js";
@@ -13,6 +17,11 @@ import { resolveHistoryBudget, clampMessage, trimHistory } from "../services/his
 import { completeTask } from "../services/tasks.js";
 import { logError, logWarn } from "../core/logger.js";
 
+/**
+ * AI 对话主流程。
+ * 顺序：频率限制 → 占额度 → 扣积分 → 组装上下文 → 调模型 → 记流水 → 落库历史 → 触发任务。
+ * @param {object} params 由 handlers/message.js 传入的上下文
+ */
 export async function handleAIRequest({
   env, ctx, token, chatId, userKey, sceneKey, isGroupCtx, isMaster,
   firstName, userText, userConfig
@@ -25,6 +34,8 @@ export async function handleAIRequest({
 
   let quotaReserved = false;
   let pointsCharged = false;
+  /** 扣分后余额（用于写流水，避免再次查库导致余额与实际不符） */
+  let balanceAfterCharge = null;
   let chargedDateStr = null;
   const previousLastMsgTime = userConfig.lastMsgTime;
 
@@ -63,6 +74,7 @@ export async function handleAIRequest({
       await sendAutoDelete(token, chatId, ERR.POINTS_EMPTY, null, isGroupCtx, ctx);
       return;
     }
+    balanceAfterCharge = balance;
     pointsCharged = true;
   } else if (userConfig.points < POINTS.AI_COST) {
     await sendAutoDelete(token, chatId, ERR.POINTS_EMPTY, null, isGroupCtx, ctx);
@@ -115,7 +127,9 @@ export async function handleAIRequest({
   });
   const messages = [{ role: "system", content: baseSystemPrompt }, ...historyMessages];
 
-  ctx.waitUntil(sendChatAction(token, chatId, "typing"));
+  const typingTask = sendChatAction(token, chatId, "typing");
+  if (ctx?.waitUntil) ctx.waitUntil(typingTask);
+  else await typingTask;
 
   if (!env.AI) {
     await rollback(env, pointsCharged, quotaReserved, userKey, sceneKey, chargedDateStr || todayStr, previousLastMsgTime);
@@ -134,13 +148,13 @@ export async function handleAIRequest({
 
   // 记录积分流水（扣分）
   if (env.DB && pointsCharged) {
-    const cur = await env.DB.prepare("SELECT points FROM users WHERE user_key = ?").bind(userKey).first();
-    const balance = Number(cur?.points);
-    await logPointChange(env, userKey, -POINTS.AI_COST, Number.isFinite(balance) ? balance : 0, "AI 对话消耗");
+    // 直接用扣分时返回的余额，避免中间又被别的请求改动导致流水余额对不上
+    const balance = Number.isFinite(balanceAfterCharge) ? balanceAfterCharge : 0;
+    await logPointChange(env, userKey, -POINTS.AI_COST, balance, "AI 对话消耗");
   }
 
   // 存储历史
-  ctx.waitUntil((async () => {
+  const saveHistoryTask = (async () => {
     if (!env.DB) return;
     if (userConfig.maxDaily === -1) {
       await env.DB.prepare(
@@ -155,7 +169,9 @@ export async function handleAIRequest({
     await env.DB.prepare(
       "INSERT INTO chat_history (scene_key, messages, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(scene_key) DO UPDATE SET messages = EXCLUDED.messages, updated_at = CURRENT_TIMESTAMP"
     ).bind(sceneKey, JSON.stringify(trimmed)).run();
-  })());
+  })();
+  if (ctx?.waitUntil) ctx.waitUntil(saveHistoryTask);
+  else await saveHistoryTask;
 
   await sendMessage(token, chatId, replyText);
 
@@ -174,7 +190,9 @@ function resolveModels(env) {
   return custom.length > 0 ? custom : AI_MODELS;
 }
 
+/** 从 Workers AI 的返回体里取回复文本（兼容不同模型的结构差异） */
 function extractReplyText(res) {
+  // Workers AI 不同模型的返回结构略有差异，这里做兼容取值
   if (!res) return "";
   const text = res.response || res.choices?.[0]?.message?.content || res.result?.response || "";
   return typeof text === "string" ? text.trim() : "";
@@ -207,6 +225,7 @@ async function runAIWithFallback(env, messages) {
   return { text: "", model: null, fallback: false };
 }
 
+/** 模型调用失败时回滚：退积分、退额度、还原上次发言时间 */
 async function rollback(env, pointsCharged, quotaReserved, userKey, sceneKey, dateStr, prevLastMsgTime) {
   if (!env.DB) return;
   try {

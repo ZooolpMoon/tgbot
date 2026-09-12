@@ -1,10 +1,12 @@
 // ==========================================
 // /setprompt
+// 为当前场景设置 AI 的个性化要求；/setprompt clear 清空。
 // ==========================================
 
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { saveSceneConfig } from "../../services/users.js";
 
+/** /setprompt <设定> | clear：写入 / 清空场景级自定义 prompt */
 export async function cmdSetPrompt({ env, ctx, token, chatId, uctx, userConfig, isGroupCtx, rawText }) {
   const arg = rawText.replace(/^\/setprompt(@\w+)?/i, "").trim();
 

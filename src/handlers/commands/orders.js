@@ -6,6 +6,7 @@
 import { renderMyOrders } from "../../shop/index.js";
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
 
+/** /orders 指令实现（仅私聊） */
 export async function cmdOrders({ env, token, chatId, userKey, isGroupCtx, ctx }) {
   if (isGroupCtx) {
     await sendAutoDelete(

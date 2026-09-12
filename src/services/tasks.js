@@ -38,6 +38,7 @@ export async function getEnabledTaskDefs(env) {
   return all.filter((d) => Number(d.enabled) === 1);
 }
 
+/** 读取单个任务定义（不存在返回 null） */
 export async function getTaskDef(env, id) {
   if (!env.DB) return null;
   return env.DB.prepare(
@@ -49,12 +50,14 @@ export async function getTaskDef(env, id) {
 // 全勤奖设置
 // ==========================================
 
+/** 读取全勤奖积分数（全局设置，非法值回退默认） */
 export async function getTaskBonus(env) {
   const raw = await getSetting(env, TASK_BONUS_SETTING, String(DEFAULT_TASK_BONUS));
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_TASK_BONUS;
 }
 
+/** 设置全勤奖积分数，范围 0 ~ MAX_POINTS，0 表示不发 */
 export async function setTaskBonus(env, points) {
   const n = Math.floor(Number(points));
   if (!Number.isFinite(n) || n < 0 || n > MAX_POINTS) return false;
@@ -66,6 +69,7 @@ export async function setTaskBonus(env, points) {
 // 进度查询
 // ==========================================
 
+/** 查询某用户今天的任务完成情况（没有数据库时返回尚未完成的默认视图） */
 export async function getTodayTasks(env, userKey) {
   const defs = await getEnabledTaskDefs(env);
   const bonus = await getTaskBonus(env);
@@ -199,6 +203,10 @@ export async function completeTask(env, userKey, trigger, { sceneKey = null, cha
 // 管理端 CRUD
 // ==========================================
 
+/**
+ * 新建任务定义（管理员引导式添加的落库入口）。
+ * 触发条件必须是代码里已定义的 TASK_TRIGGERS，名称与奖励做了范围校验。
+ */
 export async function createTaskDef(env, { trigger, label, hint = "", points = 1 }) {
   if (!env.DB) return { ok: false, error: "未绑定数据库" };
   if (!TRIGGER_KEYS.includes(String(trigger))) return { ok: false, error: "未知的触发条件" };
@@ -222,6 +230,7 @@ export async function createTaskDef(env, { trigger, label, hint = "", points = 1
   return { ok: true, id: Number(res.meta.last_row_id), label: name, trigger, points: pts };
 }
 
+/** 修改任务定义；只更新传入的字段（label / hint / points / enabled） */
 export async function updateTaskDef(env, id, fields = {}) {
   if (!env.DB) return { ok: false, error: "未绑定数据库" };
 
@@ -258,6 +267,7 @@ export async function updateTaskDef(env, id, fields = {}) {
   return { ok: true };
 }
 
+/** 删除任务定义（用户已有的当日进度记录会保留，只是不再展示） */
 export async function deleteTaskDef(env, id) {
   if (!env.DB) return false;
   const res = await env.DB.prepare("DELETE FROM daily_task_defs WHERE id = ?").bind(id).run();

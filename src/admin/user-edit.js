@@ -5,9 +5,15 @@
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getDateKey } from "../services/time.js";
 import { escapeHtml } from "../utils/html.js";
-import { setUserBlocked } from "../services/users.js";
+import { setUserBlocked, parseMaxDaily, parseRateLimit } from "../services/users.js";
+import { LAYOUT } from "../utils/layout.js";
 import { logAdminAction } from "../services/admin-log.js";
 
+/**
+ * 场景管理面板：积分 / 流水 / 限额 / 频率 / 功能开关 / 封禁 / 删除。
+ * 所有操作都会带 rowId（user_scenes.id），并且都是「场景级」配置，
+ * 只有积分与封禁是跨场景共享的（存在 users 表）。
+ */
 export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
   if (!env.DB) return;
 
@@ -34,16 +40,11 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
   ).bind(scene.scene_key, todayStr).first();
   const todayCount = Number.isFinite(Number(dailyRow?.count)) ? Math.max(0, Math.floor(Number(dailyRow.count))) : 0;
 
-  const rawMaxDaily = scene.max_daily;
-  const pmd = Number(rawMaxDaily);
-  let maxDaily;
-  if (rawMaxDaily === null || rawMaxDaily === undefined || rawMaxDaily === "" || !Number.isFinite(pmd)) maxDaily = 50;
-  else if (pmd === -1) maxDaily = -1;
-  else maxDaily = Math.max(0, Math.floor(pmd));
+  const maxDaily = parseMaxDaily(scene.max_daily);
 
   const limitDisplay = maxDaily === -1 ? `已用 ${todayCount} 条 (不限额)` : `${todayCount} / ${maxDaily} 条`;
   const pts = Number.isFinite(Number(scene.points)) ? Number(scene.points) : 0;
-  const rate = Number.isFinite(Number(scene.rate_limit_sec)) ? Math.max(0, Math.floor(Number(scene.rate_limit_sec))) : 5;
+  const rate = parseRateLimit(scene.rate_limit_sec);
   const blocked = Number(scene.blocked) === 1;
 
   const sourceText = (scene.chat_type === "group" || scene.chat_type === "supergroup")
@@ -52,7 +53,7 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
 
   const text =
     `🛠️ <b>场景管理菜单</b>\n` +
-    `-------------------------\n` +
+    `${LAYOUT.DIVIDER}\n` +
     `🔢 <b>场景行 ID:</b> <code>${scene.id}</code>\n` +
     `🧩 <b>场景键:</b> <code>${escapeHtml(scene.scene_key)}</code>\n` +
     `💰 <b>全局积分键:</b> <code>${escapeHtml(scene.user_key)}</code>\n` +
@@ -101,6 +102,10 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
   return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
 }
 
+/**
+ * 删除场景：同时清掉该场景的对话记忆与今日用量，
+ * 但保留 users 里的全局积分（积分是跨场景共享的）。
+ */
 export async function handleDeleteScene({ env, token, callback, chatId, msgId, data, renderUserListMenu, adminId = null }) {
   const rowId = parseInt(data.replace("admin_deluser_confirm_", ""), 10);
   if (!env.DB || !Number.isInteger(rowId)) return;
@@ -136,6 +141,7 @@ export async function handleDeleteScene({ env, token, callback, chatId, msgId, d
 // 🚫 封禁 / 解封用户
 // ==========================================
 
+/** 切换封禁状态；封禁是用户级（所有场景停止服务），不是场景级 */
 export async function handleToggleBlock({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const rowId = parseInt(data.replace("admin_block_", ""), 10);
   if (!env.DB || !Number.isInteger(rowId)) return;
@@ -172,6 +178,7 @@ export async function handleToggleBlock({ env, token, callback, chatId, msgId, d
 // 🧹 清空指定场景（某群某用户 / 私聊）的 AI 记忆
 // ==========================================
 
+/** 只清空 chat_history，不动积分与场景配置 */
 export async function handleClearSceneMemory({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const rowId = parseInt(data.replace("admin_clearmem_", ""), 10);
   if (!env.DB || !Number.isInteger(rowId)) return;

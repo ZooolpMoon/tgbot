@@ -8,6 +8,7 @@
 
 import { sendMessage, sendMessageWithKeyboard, editMessageText, answerCallback } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
+import { grid, compactLabel, clampPage, totalPagesOf, pagerRow, LAYOUT } from "../utils/layout.js";
 import { ADMIN_CALLBACK } from "../config/constants.js";
 import { TASK_TRIGGERS, triggerLabel } from "../config/tasks.js";
 import {
@@ -18,7 +19,15 @@ import { logAdminAction } from "../services/admin-log.js";
 
 const MAX_POINTS = 1000;
 
-// ---------- 会话 ----------
+/** 任务列表每页显示多少个（2 列 × 3 行，给翻页和按钮留出空间） */
+const TASKS_PER_PAGE = 6;
+
+// ---------- 引导会话 ----------
+// 会话超过 30 分钟自动失效：否则管理员点开「添加任务」后走开，
+// 之后所有私聊文本都会被当成任务输入吞掉（真实踩过的坑）。
+const SESSION_TTL_MINUTES = 30;
+
+/** 写入 / 刷新引导会话（每次输入都会刷新 updated_at，等于续期） */
 async function setSession(env, chatId, step, taskId = null, draft = null) {
   await env.DB.prepare(`
     INSERT INTO task_edit_sessions (chat_id, task_id, step, draft, updated_at)
@@ -28,62 +37,110 @@ async function setSession(env, chatId, step, taskId = null, draft = null) {
   `).bind(chatId, taskId, step, draft ? JSON.stringify(draft) : "").run();
 }
 
+/** 读取未过期的引导会话；过期的行由定时任务统一清理 */
 async function getSession(env, chatId) {
-  return env.DB.prepare("SELECT * FROM task_edit_sessions WHERE chat_id = ?").bind(chatId).first();
+  if (!env.DB || !chatId) return null;
+  return env.DB.prepare(
+    `SELECT * FROM task_edit_sessions
+     WHERE chat_id = ? AND updated_at >= datetime('now', '-${SESSION_TTL_MINUTES} minutes')`
+  ).bind(chatId).first();
 }
 
+/** 删除引导会话（流程结束或取消时调用） */
 async function clearSession(env, chatId) {
   await env.DB.prepare("DELETE FROM task_edit_sessions WHERE chat_id = ?").bind(chatId).run();
 }
 
+/** 安全解析会话里的草稿 JSON（脏数据不应该让整条链路抛异常） */
+function parseDraft(raw) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** 任务列表正文（只渲染当前页的任务） */
 async function taskListText(env) {
   const defs = await listTaskDefs(env);
   const bonus = await getTaskBonus(env);
-
-  let text = `✅ <b>每日任务管理</b>\n`;
-  text += `-------------------------\n`;
-  text += `共 <b>${defs.length}</b> 个任务（启用 <b>${defs.filter((d) => Number(d.enabled) === 1).length}</b> 个）\n`;
-  text += `🏆 全勤奖：<b>${bonus}</b> 积分\n\n`;
-
-  if (defs.length === 0) {
-    text += `<i>还没有任务，点「➕ 添加任务」创建一个。</i>\n`;
-  } else {
-    for (const d of defs) {
-      text += `${Number(d.enabled) === 1 ? "✅" : "🚫"} <b>${escapeHtml(d.label)}</b> · +${d.points}\n`;
-      text += `    └ 触发：${escapeHtml(triggerLabel(d.trigger))}${d.hint ? ` · 提示：${escapeHtml(d.hint)}` : ""}\n`;
-    }
-  }
-  return { text, defs, bonus };
+  return { defs, bonus };
 }
 
-export async function renderTaskAdmin(token, env, chatId, messageId = null) {
+/** 某个任务在第几页（找不到时回到第 1 页） */
+export function pageOfTask(defs, taskId) {
+  const index = (defs || []).findIndex((d) => Number(d.id) === Number(taskId));
+  if (index < 0) return 1;
+  return Math.floor(index / TASKS_PER_PAGE) + 1;
+}
+
+/**
+ * 任务列表键盘（纯函数，便于排版测试）。
+ * 每页最多 6 个任务 = 3 行，加「添加/全勤奖」1 行、翻页 1 行、返回 1 行，共 6 行。
+ */
+export function getTaskListKeyboard(pageDefs, safePage, totalPages) {
+  const inline_keyboard = grid(
+    pageDefs.map((d) => ({
+      // 任务名最长 40 字，按钮文案必须压缩，否则会超出 Telegram 的显示宽度
+      text: compactLabel(`${Number(d.enabled) === 1 ? "✅" : "🚫"} ${d.label} +${d.points}`, 30),
+      callback_data: `${ADMIN_CALLBACK.TASK_DETAIL_PREFIX}${d.id}`
+    })),
+    2
+  );
+  inline_keyboard.push([
+    { text: "➕ 添加任务", callback_data: ADMIN_CALLBACK.TASK_ADD },
+    { text: "🏆 修改全勤奖", callback_data: ADMIN_CALLBACK.TASK_BONUS }
+  ]);
+
+  const navRow = pagerRow({ page: safePage, totalPages, prefix: `${ADMIN_CALLBACK.TASKS_PREFIX}_p` });
+  if (navRow) inline_keyboard.push(navRow);
+
+  inline_keyboard.push([{ text: "🔙 返回主菜单", callback_data: ADMIN_CALLBACK.MAIN_MENU }]);
+  return { inline_keyboard };
+}
+
+/**
+ * 每日任务管理面板。
+ * 任务数量由管理员自由增删，所以列表必须分页，否则按钮行数会无限增长。
+ */
+export async function renderTaskAdmin(token, env, chatId, messageId = null, page = 1) {
   if (!env.DB) {
     const t = "❌ 未绑定数据库。";
     return messageId ? editMessageText(token, chatId, messageId, t) : sendMessage(token, chatId, t);
   }
 
-  const { text, defs } = await taskListText(env);
+  const { defs, bonus } = await taskListText(env);
+  const totalPages = totalPagesOf(defs.length, TASKS_PER_PAGE);
+  const safePage = clampPage(page, totalPages);
+  const start = (safePage - 1) * TASKS_PER_PAGE;
+  const pageDefs = defs.slice(start, start + TASKS_PER_PAGE);
 
-  const inline_keyboard = [];
-  // 两列网格，避免任务多时菜单变成一条长龙
-  for (let i = 0; i < defs.length; i += 2) {
-    inline_keyboard.push(
-      defs.slice(i, i + 2).map((d) => ({
-        text: `${Number(d.enabled) === 1 ? "✅" : "🚫"} ${d.label.length > 10 ? d.label.slice(0, 9) + "…" : d.label} +${d.points}`,
-        callback_data: `${ADMIN_CALLBACK.TASK_DETAIL_PREFIX}${d.id}`
-      }))
-    );
+  let text = `✅ <b>每日任务管理</b>\n`;
+  text += `共 <b>${defs.length}</b> 个任务（启用 <b>${defs.filter((d) => Number(d.enabled) === 1).length}</b> 个）\n`;
+  text += `页码：<b>${safePage} / ${totalPages}</b>\n`;
+  text += `🏆 全勤奖：<b>${bonus}</b> 积分\n`;
+  text += `${LAYOUT.DIVIDER}\n`;
+
+  if (pageDefs.length === 0) {
+    text += `<i>还没有任务，点「➕ 添加任务」创建一个。</i>\n`;
+  } else {
+    for (const d of pageDefs) {
+      text += `${Number(d.enabled) === 1 ? "✅" : "🚫"} <b>${escapeHtml(d.label)}</b> · +${d.points}\n`;
+      text += `    └ 触发：${escapeHtml(triggerLabel(d.trigger))}${d.hint ? ` · 提示：${escapeHtml(d.hint)}` : ""}\n`;
+    }
   }
-  inline_keyboard.push([{ text: "➕ 添加任务", callback_data: ADMIN_CALLBACK.TASK_ADD }]);
-  inline_keyboard.push([{ text: "🏆 修改全勤奖", callback_data: ADMIN_CALLBACK.TASK_BONUS }]);
-  inline_keyboard.push([{ text: "🔙 返回主菜单", callback_data: ADMIN_CALLBACK.MAIN_MENU }]);
 
-  const keyboard = { inline_keyboard };
+  const keyboard = getTaskListKeyboard(pageDefs, safePage, totalPages);
   if (messageId) return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
   return sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML");
 }
 
-// ---------- 任务详情 ----------
+/**
+ * 任务详情面板。
+ * 返回按钮会回到该任务所在的页码（任务多时不会把管理员丢回第一页）。
+ */
 export async function renderTaskDetail(token, env, chatId, messageId, taskId) {
   if (!env.DB) return;
 
@@ -93,9 +150,13 @@ export async function renderTaskDetail(token, env, chatId, messageId, taskId) {
       { inline_keyboard: [[{ text: "🔙 返回任务列表", callback_data: ADMIN_CALLBACK.TASKS_PREFIX }]] });
   }
 
+  const allDefs = await listTaskDefs(env);
+  const backPage = pageOfTask(allDefs, taskId);
+  const listCallback = backPage > 1 ? `${ADMIN_CALLBACK.TASKS_PREFIX}_p${backPage}` : ADMIN_CALLBACK.TASKS_PREFIX;
+
   const text =
     `✅ <b>任务 #${def.id}</b>\n` +
-    `-------------------------\n` +
+    `${LAYOUT.DIVIDER}\n` +
     `📛 <b>名称：</b> ${escapeHtml(def.label)}\n` +
     `⚡ <b>触发条件：</b> ${escapeHtml(triggerLabel(def.trigger))}\n` +
     `💬 <b>完成提示：</b> ${escapeHtml(def.hint) || "（无）"}\n` +
@@ -117,7 +178,7 @@ export async function renderTaskDetail(token, env, chatId, messageId, taskId) {
         }
       ],
       [{ text: "🗑️ 删除任务", callback_data: `${ADMIN_CALLBACK.TASK_DEL_PREFIX}${def.id}` }],
-      [{ text: "🔙 返回任务列表", callback_data: ADMIN_CALLBACK.TASKS_PREFIX }]
+      [{ text: "🔙 返回任务列表", callback_data: listCallback }]
     ]
   };
 
@@ -125,9 +186,15 @@ export async function renderTaskDetail(token, env, chatId, messageId, taskId) {
 }
 
 // ---------- 引导式：添加任务 ----------
+/** 第 1 步：让管理员从代码定义好的触发条件里挑一个 */
 export async function startTaskAdd({ env, token, chatId }) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
 
+  // 商城添加/编辑是另外两套引导流程，开始任务引导前先清掉，避免互相抢消息
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM shop_add_sessions WHERE chat_id = ?").bind(chatId),
+    env.DB.prepare("DELETE FROM shop_edit_sessions WHERE chat_id = ?").bind(chatId)
+  ]);
   await setSession(env, chatId, "add:trigger", null, {});
 
   const text =
@@ -145,6 +212,7 @@ export async function startTaskAdd({ env, token, chatId }) {
   return sendMessageWithKeyboard(token, chatId, text, { inline_keyboard }, "HTML");
 }
 
+/** 处理「选择触发条件」，通过后进入第 2 步（输入任务名称） */
 export async function handleTaskTriggerPick({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const trigger = String(data).replace(ADMIN_CALLBACK.TASK_PICK_PREFIX, "");
   const session = await getSession(env, chatId);
@@ -175,6 +243,7 @@ const FIELD_PROMPTS = {
   points: (def) => `当前奖励：<b>+${def.points}</b> 积分\n\n请输入<b>新的奖励积分</b>（1 ~ ${MAX_POINTS}）：`
 };
 
+/** 进入「修改某个字段」的引导步骤（名称 / 提示 / 奖励） */
 export async function startTaskFieldEdit({ env, token, chatId, taskId, field }) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
 
@@ -194,6 +263,7 @@ export async function startTaskFieldEdit({ env, token, chatId, taskId, field }) 
   );
 }
 
+/** 全勤奖：当天所有启用任务都完成后额外发放的积分 */
 export async function startTaskBonusEdit({ env, token, chatId }) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
 
@@ -212,11 +282,13 @@ export async function startTaskBonusEdit({ env, token, chatId }) {
 }
 
 // ---------- 引导式文本输入的总入口 ----------
+/** 管理员是否正处在任务引导流程中（过期会话视为无） */
 export async function isTaskGuideActive(env, chatId) {
   if (!env.DB) return false;
   return Boolean(await getSession(env, chatId));
 }
 
+/** /cancel 或「取消」按钮：结束引导 */
 export async function cancelTaskGuide({ env, token, chatId }) {
   if (env.DB) await clearSession(env, chatId);
   return sendMessage(token, chatId, "🚫 已取消每日任务编辑。");
@@ -236,7 +308,7 @@ export async function handleTaskGuideInput({ env, token, chatId, userText, admin
   if (!text) return true;
 
   const step = String(session.step || "");
-  const draft = session.draft ? JSON.parse(session.draft) : {};
+  const draft = parseDraft(session.draft);
 
   // ---- 添加：任务名称 → 提示 → 奖励 ----
   if (step === "add:label") {
@@ -283,7 +355,9 @@ export async function handleTaskGuideInput({ env, token, chatId, userText, admin
       "HTML"
     );
     await logAdminAction(env, { adminId, chatId, action: "task_create", detail: `#${res.id} ${res.label} +${res.points}` });
-    await renderTaskAdmin(token, env, chatId, null);
+    // 新任务排在最后，直接跳到最后一页，管理员能立刻看到它
+    const allDefs = await listTaskDefs(env);
+    await renderTaskAdmin(token, env, chatId, null, pageOfTask(allDefs, res.id));
     return true;
   }
 
@@ -342,6 +416,7 @@ export async function handleTaskGuideInput({ env, token, chatId, userText, admin
 }
 
 // ---------- 启用 / 停用 / 删除 ----------
+/** 启用 / 停用任务（停用后不再参与结算，已有进度保留） */
 export async function handleTaskToggle({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const taskId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.TASK_TOGGLE_PREFIX, ""), 10);
   if (!Number.isInteger(taskId)) return;
@@ -362,6 +437,7 @@ export async function handleTaskToggle({ env, token, callback, chatId, msgId, da
   await renderTaskDetail(token, env, chatId, msgId, taskId);
 }
 
+/** 删除前先二次确认 */
 export async function handleTaskDelete({ env, token, callback, chatId, msgId, data }) {
   const taskId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.TASK_DEL_PREFIX, ""), 10);
   if (!Number.isInteger(taskId)) return;
@@ -388,6 +464,7 @@ export async function handleTaskDelete({ env, token, callback, chatId, msgId, da
   );
 }
 
+/** 确认删除：只删任务定义，用户当天已获得的积分与进度记录保留 */
 export async function handleTaskDeleteConfirm({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const taskId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.TASK_DELOK_PREFIX, ""), 10);
   if (!Number.isInteger(taskId)) return;

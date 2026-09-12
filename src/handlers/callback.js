@@ -1,5 +1,12 @@
 // ==========================================
 // 🔘 callback_query 总入口
+//
+// 路由顺序很重要（都用 startsWith 判断前缀）：
+//   0. 群聊里屏蔽商城（商城仅私聊）
+//   0.5 封禁校验（管理员不受限）
+//   1. 游戏 → 2. 商城用户侧 → 2.5 积分/排行榜
+//   3. 管理员权限校验 → 4. 商城管理端 → 4.5 群发 → 5. 其他管理功能
+// 前缀更长的分支必须排在更短的前面，否则会被提前截胡。
 // ==========================================
 
 import { answerCallback, deleteMessage, editMessageText, sendMessage } from "../telegram/api.js";
@@ -66,6 +73,10 @@ import { upsertUserInfo, isUserBlocked } from "../services/users.js";
 import { isFeatureEnabled } from "../services/features.js";
 import { logError } from "../core/logger.js";
 
+/**
+ * 处理按钮回调（callback_query）。
+ * 各分支都会负责应答复按钮，避免用户在客户端看到一直转圈。
+ */
 export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   const callback = payload.callback_query;
   const fromId = uctx.userId;
@@ -82,14 +93,16 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   }
   const msgId = callback.message.message_id;
 
-  if (env.DB) ctx.waitUntil(upsertUserInfo(env, uctx));
+  // 后台更新用户资料，不阻塞回调响应（ctx 可能为空，加保护）
+  if (env.DB && ctx?.waitUntil) ctx.waitUntil(upsertUserInfo(env, uctx));
 
   const isGroupCtx = uctx.chatType === "group" || uctx.chatType === "supergroup";
 
   // ==========================================
   // 0. 商城：仅私聊可用
   // ==========================================
-  if (isGroupCtx && (data.startsWith("shop_") || data.startsWith("shop_admin_"))) {
+  // shop_admin_ 本身就以 shop_ 开头，这里用一次前缀判断即可
+  if (isGroupCtx && data.startsWith("shop_")) {
     await answerCallback(token, callback.id, "🛒 商城功能仅支持私聊使用", true);
     return;
   }
@@ -334,7 +347,7 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // ==========================================
   // 4.5 群发消息（二次确认 / 继续发送）
   // ==========================================
-  if (data === ADMIN_CALLBACK.BROADCAST_CONFIRM || data === "admin_broadcast_continue") {
+  if (data === ADMIN_CALLBACK.BROADCAST_CONFIRM || data === ADMIN_CALLBACK.BROADCAST_CONTINUE) {
     await answerCallback(token, callback.id, "🚀 开始群发…");
     await startBroadcast({ env, ctx, token, chatId, messageId: msgId, adminId: fromId });
     return;
@@ -470,6 +483,12 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     else if (data === ADMIN_CALLBACK.TASKS_PREFIX) {
       await renderTaskAdmin(token, env, chatId, msgId);
       await answerCallback(token, callback.id, "每日任务管理");
+    }
+    else if (data.startsWith(`${ADMIN_CALLBACK.TASKS_PREFIX}_p`)) {
+      // 任务列表分页（任务多时避免按钮行数无限增长）
+      const page = parseInt(data.replace(`${ADMIN_CALLBACK.TASKS_PREFIX}_p`, ""), 10) || 1;
+      await renderTaskAdmin(token, env, chatId, msgId, page);
+      await answerCallback(token, callback.id, `每日任务 第 ${page} 页`);
     }
     else if (data === ADMIN_CALLBACK.TASK_ADD) {
       await startTaskAdd({ env, token, chatId });

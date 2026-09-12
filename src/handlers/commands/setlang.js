@@ -1,10 +1,12 @@
 // ==========================================
 // /setlang
+// 只影响 AI 回复语言（zh / en），管理端文案始终是中文。
 // ==========================================
 
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { saveSceneConfig } from "../../services/users.js";
 
+/** /setlang zh|en：写入场景配置 */
 export async function cmdSetLang({ env, ctx, token, chatId, uctx, userConfig, isGroupCtx, rawText }) {
   const arg = rawText.replace(/^\/setlang(@\w+)?/i, "").trim().toLowerCase();
   if (arg === "zh" || arg === "en") {

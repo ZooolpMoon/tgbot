@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 79 个用例）
+2. `npm test` 通过（当前 100 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -67,10 +67,14 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - `src/services/`：业务服务（users/points/quota/checkin/redeem/tasks/features/settings/daily/admin-log/history）
   - `src/handlers/`：消息与回调入口
   - `src/admin/`：管理面板 UI
-  - `src/shop/`、`src/games/`：业务模块
+  - `src/shop/`：商城（`categories.js` 统一定义商品分类映射）
+  - `src/games/`：小游戏（注册表 + 4 个游戏）
+  - `src/utils/`：通用工具（`html.js` 转义、`random.js` 加密随机、`layout.js` 菜单排版）
 - **加命令**：在 `src/handlers/commands/registry.js` 的 `COMMANDS` 加一条即可（权限、别名、仅私聊、功能开关、`/help` 文案都由注册表处理），不要再去 `message.js` 里加 `if`。
 - **加功能开关**：在 `src/services/features.js` 的 `FEATURES` 里加一项即可。开关是**三级**的（全局 → 群聊场景 / 私聊场景覆盖），入口在 `src/admin/features.js`；新增开关不用改管理端代码。
-- **菜单排版约定**：按钮按**两列网格**排（`src/admin/menus.js` 的 `grid()` 是参考实现），单行不超过 2 个按钮、整个菜单不超过 ~8 行；`callback_data` 必须 ≤ 64 字节。`npm test` 里的 `test/layout.test.mjs` 会检查这些约束。
+- **菜单排版**：统一用 `src/utils/layout.js`（`grid` / `compactLabel` / `clampPage` / `pagerRow` / `validateKeyboard`），不要再各写一份 `grid()`。约定：单行 ≤ 2 个按钮、整个菜单 ≤ 8 行、按钮文案 ≤ 32 字、`callback_data` ≤ 64 字节。
+  - 会随数据量增长的菜单（用户列表、任务列表、商品 / 订单列表）**必须分页**，并把键盘抽成纯函数（如 `getUserListKeyboard`），方便 `test/layout.test.mjs` 直接校验排版。
+- **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `task_edit_sessions` / `shop_order_drafts` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。
 - **改 Schema 时注意**：迁移里**不要**写会清空 `scene_settings` 里非 `global` 记录的语句——那会抹掉场景级功能开关（v2.1.0 踩过一次，已在 v2.2.0 修掉并有回归测试）。
 - **改 Schema**：
   1. 在 `SCHEMA_SQL` 里加表/索引（`CREATE TABLE IF NOT EXISTS`）

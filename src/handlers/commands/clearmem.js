@@ -17,6 +17,13 @@ const USAGE =
   "• <code>/clearmem -1001234567890 123456789</code> —— 清除某群某用户的记忆\n\n" +
   "也可以从 <b>管理员控制台 → 用户管理 → 场景编辑</b> 里点「🧹 清空此场景记忆」。";
 
+/**
+ * /clearmem：按参数决定清理范围
+ *   无参数   → 用法说明
+ *   me       → 当前场景
+ *   <群ID>   → 该群所有成员
+ *   <群ID> <用户ID> → 指定成员
+ */
 export async function cmdClearMem({ env, ctx, token, chatId, isMaster, isGroupCtx, rawText, sceneKey, myId }) {
   if (!env.DB) {
     await sendAutoDelete(token, chatId, "❌ 未绑定数据库。", null, isGroupCtx, ctx);

@@ -1,19 +1,23 @@
 // ==========================================
 // 🎰 游戏：欢乐老虎机
+// 三个相同 = 10 倍（💎💎💎 = 50 倍），任意两个相同 = 2 倍。
 // ==========================================
 
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
+import { LAYOUT } from "../utils/layout.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
 import { completeTask } from "../services/tasks.js";
 import { randomInt } from "../utils/random.js";
+import { getGameMainKeyboard } from "./shared.js";
 
 export const SlotsGame = {
+  /** 游戏主界面：选下注金额（点下注后立即开奖） */
   async renderMain(token, env, chatId, userKey, messageId) {
     const pts = await getUserPoints(env, userKey);
     const text =
       `🎰 <b>欢乐老虎机</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `💰 <b>当前积分：</b> <code>${pts}</code>\n\n` +
       `<b>赔率说明：</b>\n` +
       `• 🍒🍒🍒 (任意三个相同)：<b>10 倍</b>\n` +
@@ -21,20 +25,10 @@ export const SlotsGame = {
       `• 🍒🍒❔ (任意两个相同)：<b>2 倍</b>\n` +
       `• 其他组合：未中奖\n\n` +
       `请选择下注金额（下注后直接开奖）：`;
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: "拉 10 🪙", callback_data: "game_slots_play_10" },
-          { text: "拉 50 🪙", callback_data: "game_slots_play_50" },
-          { text: "拉 100 🪙", callback_data: "game_slots_play_100" }
-        ],
-        [{ text: "🎛️ 自定义下注金额", callback_data: "game_c_slots_show_10" }],
-        [{ text: "🔙 返回大厅", callback_data: "game_hub" }]
-      ]
-    };
-    return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
+    return editMessageText(token, chatId, messageId, text, getGameMainKeyboard("slots", "拉"), "HTML");
   },
 
+  /** 开奖：先扣分再摇奖，中奖按倍率返还 */
   async play(token, env, callbackId, chatId, userKey, messageId, betAmount, sceneKey = null) {
     if (!env.DB) return answerCallback(token, callbackId, "❌ 未绑定数据库！", true);
     const afterDeduct = await tryDeductPoints(env, userKey, betAmount);
@@ -65,9 +59,9 @@ export const SlotsGame = {
 
     const resultMsg =
       `🎰 <b>老虎机开奖</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `🎰 <b>结果：</b> <b>${slotsStr}</b>\n` +
-      `-------------------------\n` +
+      `${LAYOUT.DIVIDER}\n` +
       `🏆 <b>倍率：</b> ${multiplier > 0 ? `🎉 ${multiplier} 倍奖励！` : "💸 未中奖"}\n` +
       `💰 <b>变动：</b> ${multiplier > 0 ? `+${reward}` : `-${betAmount}`}\n` +
       `🪙 <b>余额：</b> <b>${currentBalance}</b>`;

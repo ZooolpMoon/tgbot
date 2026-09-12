@@ -4,7 +4,9 @@
 
 import { editMessageText, sendMessage } from "../telegram/api.js";
 import { getDateKey, getAppTimeZone } from "../services/time.js";
+import { LAYOUT } from "../utils/layout.js";
 
+/** 管理员控制台里的「使用统计」面板（原地刷新） */
 export async function renderAdminStats(token, env, chatId, messageId) {
   if (!env.DB) return editMessageText(token, chatId, messageId, "❌ 未绑定 D1 数据库。", null, null);
   const todayStr = getDateKey(env);
@@ -27,7 +29,7 @@ export async function renderAdminStats(token, env, chatId, messageId) {
 
   const text =
     `📈 <b>系统使用统计</b>\n` +
-    `-------------------------\n` +
+    `${LAYOUT.DIVIDER}\n` +
     `📅 <b>统计日期:</b> ${todayStr}\n` +
     `👥 <b>全局用户总数:</b> ${totalUsers}\n` +
     `👥 <b>群聊场景数:</b> ${groupScenes}\n` +
@@ -50,6 +52,7 @@ export async function renderAdminStats(token, env, chatId, messageId) {
   return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
 }
 
+/** 以新消息的形式发送统计（/stats 指令用，避免刷掉别的内容） */
 export async function sendAdminStatsMessage(token, env, chatId) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定 D1 数据库。");
   const todayStr = getDateKey(env);
@@ -62,7 +65,7 @@ export async function sendAdminStatsMessage(token, env, chatId) {
 
   const text =
     `📈 系统使用统计\n` +
-    `-------------------------\n` +
+    `${LAYOUT.DIVIDER}\n` +
     `📅 统计日期：${todayStr}\n` +
     `👥 全局用户总数：${Number(totalRes?.total) || 0}\n` +
     `👥 群聊场景数：${Number(groupRes?.total) || 0}\n` +

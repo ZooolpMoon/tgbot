@@ -1,11 +1,33 @@
 // ==========================================
 // 🛒 商城管理（管理员）
+// 入口：管理员主菜单 → 商城管理；也可用 /shop_admin
 // ==========================================
 
 import { sendMessage, sendMessageWithKeyboard, editMessageText } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
+import { grid, compactLabel, clampPage, totalPagesOf, pageOffset, pagerRow, pageInfoText, LAYOUT } from "../utils/layout.js";
+import { categoryText } from "./categories.js";
+
+const ITEMS_PER_PAGE = 8;
+const ORDERS_PER_PAGE = 5;
 
 // ---------- 管理首页 ----------
+/** 商城管理首页键盘（纯函数，便于排版测试） */
+export function getShopAdminHomeKeyboard() {
+  return {
+    inline_keyboard: [
+      ...grid([
+        { text: "➕ 添加商品", callback_data: "shop_admin_add" },
+        { text: "📦 商品列表", callback_data: "shop_admin_items_1" },
+        { text: "⏳ 待处理订单", callback_data: "shop_admin_orders_pending_1" },
+        { text: "📜 全部订单", callback_data: "shop_admin_orders_all_1" }
+      ]),
+      [{ text: "🔙 返回主菜单", callback_data: "admin_main_menu" }]
+    ]
+  };
+}
+
+/** 商城管理首页：商品总数 + 待处理订单数 + 四个入口 */
 export async function renderShopAdmin(token, env, chatId, messageId = null) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
 
@@ -16,67 +38,62 @@ export async function renderShopAdmin(token, env, chatId, messageId = null) {
 
   const text =
     `🛒 <b>商城管理</b>\n` +
-    `-------------------------\n` +
+    `${LAYOUT.DIVIDER}\n` +
     `📦 商品总数：<b>${Number(itemCount?.n) || 0}</b>\n` +
     `⏳ 待处理订单：<b>${Number(pendingCount?.n) || 0}</b>\n\n` +
     `请选择操作：`;
 
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "➕ 添加商品", callback_data: "shop_admin_add" }],
-      [{ text: "📦 商品列表", callback_data: "shop_admin_items_1" }],
-      [{ text: "⏳ 待处理订单", callback_data: "shop_admin_orders_pending_1" }],
-      [{ text: "📜 全部订单", callback_data: "shop_admin_orders_all_1" }],
-      [{ text: "🔙 返回主菜单", callback_data: "admin_main_menu" }]
-    ]
-  };
+  const keyboard = getShopAdminHomeKeyboard();
 
   if (messageId) return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
   return sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML");
 }
 
 // ---------- 商品列表 ----------
+/** 商品列表键盘（纯函数，便于排版测试）：每页 8 件 = 4 行 + 翻页 + 返回 */
+export function getShopAdminItemsKeyboard(items, safePage, totalPages) {
+  const inline_keyboard = grid(
+    items.map((it) => ({
+      text: compactLabel(`${it.enabled ? "✅" : "🚫"} ${it.icon} ${it.name} · 🪙${it.price}`, 30),
+      callback_data: `shop_admin_item_${it.id}`
+    }))
+  );
+
+  const navRow = pagerRow({ page: safePage, totalPages, prefix: "shop_admin_items_" });
+  if (navRow) inline_keyboard.push(navRow);
+  inline_keyboard.push([{ text: "🔙 返回商城管理", callback_data: "shop_admin_home" }]);
+  return { inline_keyboard };
+}
+
+/** 商品列表（管理侧，倒序分页，含上下架状态） */
 export async function renderShopAdminItems(token, env, chatId, messageId, page = 1) {
   if (!env.DB) return;
 
-  const pageSize = 8;
-  const offset = (page - 1) * pageSize;
-
   const countRes = await env.DB.prepare("SELECT COUNT(*) AS n FROM shop_items").first();
   const total = Number(countRes?.n) || 0;
-  const totalPages = Math.ceil(total / pageSize) || 1;
+  const totalPages = totalPagesOf(total, ITEMS_PER_PAGE);
+  const safePage = clampPage(page, totalPages);
 
   const { results } = await env.DB.prepare(
     "SELECT id, name, icon, price, stock, enabled FROM shop_items ORDER BY id DESC LIMIT ? OFFSET ?"
-  ).bind(pageSize, offset).all();
+  ).bind(ITEMS_PER_PAGE, pageOffset(safePage, ITEMS_PER_PAGE)).all();
 
   let text = `📦 <b>商品列表</b>\n`;
-  text += `页码：<b>${page} / ${totalPages}</b>（共 ${total} 件）\n`;
-  text += `-------------------------\n\n`;
-
-  const inline_keyboard = [];
+  text += `${pageInfoText({ page: safePage, totalPages, total, unit: "件" })}\n`;
+  text += `${LAYOUT.DIVIDER}\n\n`;
 
   if (!results || results.length === 0) {
     text += `<i>还没有商品。</i>\n`;
   } else {
-    results.forEach((it) => {
-      const stockText = it.stock === -1 ? "∞" : it.stock;
+    for (const it of results) {
+      const stockText = Number(it.stock) === -1 ? "∞" : it.stock;
       const state = it.enabled ? "✅" : "🚫";
       text += `${state} ${it.icon} <b>${escapeHtml(it.name)}</b> · 🪙${it.price} · 库存 ${stockText}\n`;
-      inline_keyboard.push([
-        { text: `${state} ${it.icon} ${it.name} · 🪙${it.price}`, callback_data: `shop_admin_item_${it.id}` }
-      ]);
-    });
+    }
   }
 
-  const navRow = [];
-  if (page > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `shop_admin_items_${page - 1}` });
-  if (page < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `shop_admin_items_${page + 1}` });
-  if (navRow.length > 0) inline_keyboard.push(navRow);
-
-  inline_keyboard.push([{ text: "🔙 返回商城管理", callback_data: "shop_admin_home" }]);
-
-  return editMessageText(token, chatId, messageId, text, { inline_keyboard }, "HTML");
+  const keyboard = getShopAdminItemsKeyboard(results || [], safePage, totalPages);
+  return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
 }
 
 // ---------- 商品详情 ----------
@@ -92,7 +109,7 @@ export async function renderShopAdminItem(token, env, chatId, messageId, itemId)
       { inline_keyboard: [[{ text: "🔙 返回商品列表", callback_data: "shop_admin_items_1" }]] });
   }
 
-  const catText = { virtual: "虚拟", service: "服务" }[item.category] || item.category;
+  const catText = categoryText(item.category);
   const stockText = item.stock === -1 ? "无限" : item.stock;
   const limitText = Number(item.per_user_limit) > 0 ? `每人 ${item.per_user_limit} 件` : "不限";
 
@@ -109,7 +126,7 @@ export async function renderShopAdminItem(token, env, chatId, messageId, itemId)
 
   const keyboard = {
     inline_keyboard: [
-      [{ text: "✏️ 编辑名称/价格/库存/说明", callback_data: `shop_admin_edit_${item.id}` }],
+      [{ text: "✏️ 编辑商品信息", callback_data: `shop_admin_edit_${item.id}` }],
       [
         { text: item.enabled ? "🚫 下架" : "✅ 上架", callback_data: `shop_admin_toggle_${item.id}` },
         { text: "🗑️ 删除", callback_data: `shop_admin_del_${item.id}` }
@@ -122,51 +139,59 @@ export async function renderShopAdminItem(token, env, chatId, messageId, itemId)
 }
 
 // ---------- 订单列表 ----------
+/** 订单列表键盘（纯函数，便于排版测试）：每页 5 条 = 3 行 + 翻页 + 返回 */
+export function getShopAdminOrdersKeyboard(orders, safePage, totalPages, filter = "pending") {
+  const statusMap = { pending: "⏳", done: "✅", cancelled: "❌" };
+  const inline_keyboard = grid(
+    orders.map((o) => ({
+      text: `${statusMap[o.status] || "❔"} ${o.order_no}`,
+      callback_data: `shop_admin_order_${o.id}`
+    }))
+  );
+
+  const prefix = filter === "all" ? "shop_admin_orders_all_" : "shop_admin_orders_pending_";
+  const navRow = pagerRow({ page: safePage, totalPages, prefix });
+  if (navRow) inline_keyboard.push(navRow);
+  inline_keyboard.push([{ text: "🔙 返回商城管理", callback_data: "shop_admin_home" }]);
+  return { inline_keyboard };
+}
+
+/**
+ * 订单列表（管理侧）。
+ * @param {"pending"|"all"} filter pending = 只看待处理，all = 全部订单
+ */
 export async function renderShopAdminOrders(token, env, chatId, messageId, filter = "pending", page = 1) {
   if (!env.DB) return;
 
-  const pageSize = 5;
-  const offset = (page - 1) * pageSize;
   const where = filter === "all" ? "" : "WHERE status = 'pending'";
 
   const countRes = await env.DB.prepare(`SELECT COUNT(*) AS n FROM shop_orders ${where}`).first();
   const total = Number(countRes?.n) || 0;
-  const totalPages = Math.ceil(total / pageSize) || 1;
+  const totalPages = totalPagesOf(total, ORDERS_PER_PAGE);
+  const safePage = clampPage(page, totalPages);
 
   const { results } = await env.DB.prepare(
     `SELECT id, order_no, user_id, item_name, item_icon, price, status, created_at FROM shop_orders ${where} ORDER BY id DESC LIMIT ? OFFSET ?`
-  ).bind(pageSize, offset).all();
+  ).bind(ORDERS_PER_PAGE, pageOffset(safePage, ORDERS_PER_PAGE)).all();
 
   const statusMap = { pending: "⏳", done: "✅", cancelled: "❌" };
 
   let text = `📜 <b>${filter === "all" ? "全部订单" : "待处理订单"}</b>\n`;
-  text += `页码：<b>${page} / ${totalPages}</b>（共 ${total} 条）\n`;
-  text += `-------------------------\n\n`;
-
-  const inline_keyboard = [];
+  text += `${pageInfoText({ page: safePage, totalPages, total, unit: "条" })}\n`;
+  text += `${LAYOUT.DIVIDER}\n\n`;
 
   if (!results || results.length === 0) {
     text += `<i>没有订单。</i>\n`;
   } else {
-    results.forEach((o) => {
+    for (const o of results) {
       text += `${o.item_icon} <b>${escapeHtml(o.item_name)}</b> · 🪙${o.price}\n`;
       text += `🧾 <code>${o.order_no}</code> · 👤 <code>${o.user_id}</code>\n`;
       text += `📌 ${statusMap[o.status] || o.status} · 🕒 ${o.created_at}\n\n`;
-      inline_keyboard.push([
-        { text: `${statusMap[o.status]} ${o.order_no}`, callback_data: `shop_admin_order_${o.id}` }
-      ]);
-    });
+    }
   }
 
-  const navRow = [];
-  const prefix = filter === "all" ? "shop_admin_orders_all_" : "shop_admin_orders_pending_";
-  if (page > 1) navRow.push({ text: "⬅️ 上一页", callback_data: `${prefix}${page - 1}` });
-  if (page < totalPages) navRow.push({ text: "下一页 ➡️", callback_data: `${prefix}${page + 1}` });
-  if (navRow.length > 0) inline_keyboard.push(navRow);
-
-  inline_keyboard.push([{ text: "🔙 返回商城管理", callback_data: "shop_admin_home" }]);
-
-  return editMessageText(token, chatId, messageId, text, { inline_keyboard }, "HTML");
+  const keyboard = getShopAdminOrdersKeyboard(results || [], safePage, totalPages, filter);
+  return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
 }
 
 // ---------- 订单详情 ----------

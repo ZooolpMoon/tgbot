@@ -324,10 +324,18 @@ const MIGRATIONS = [
   `UPDATE scene_settings SET value = 'on' WHERE value NOT IN ('on', 'off') AND name LIKE 'feature.%'`
 ];
 
-function splitSchemaStatements(sql) {
-  return sql
+/**
+ * 把整段建表 SQL 拆成可逐条执行的语句。
+ * 先按行去掉 `--` 注释（含行尾注释），再按分号切分，
+ * 避免注释里出现的分号把语句切坏。测试用的 D1 替身也复用这个函数。
+ */
+export function splitSchemaStatements(sql) {
+  return String(sql || "")
     .split("\n")
-    .filter((line) => !line.trim().startsWith("--"))
+    .map((line) => {
+      const commentIndex = line.indexOf("--");
+      return (commentIndex === -1 ? line : line.slice(0, commentIndex)).trimEnd();
+    })
     .join("\n")
     .split(";")
     .map((stmt) => stmt.trim())
@@ -370,6 +378,7 @@ async function readSchemaVersion(env) {
   }
 }
 
+/** 把 Schema 版本号写回 scene_settings（失败只告警，不影响运行） */
 async function writeSchemaVersion(env, version) {
   try {
     await env.DB.prepare(`
@@ -382,6 +391,10 @@ async function writeSchemaVersion(env, version) {
   }
 }
 
+/**
+ * 冷启动引导：版本落后时才建表 + 跑迁移，最后写回版本号。
+ * 版本已经是最新时只花费一次查询。
+ */
 async function bootstrapSchema(env) {
   const applied = await readSchemaVersion(env);
   if (applied >= SCHEMA_VERSION) return;
@@ -393,6 +406,10 @@ async function bootstrapSchema(env) {
   await writeSchemaVersion(env, SCHEMA_VERSION);
 }
 
+/**
+ * 逐条执行增量迁移。
+ * 迁移都必须幂等：重复执行报「字段已存在」之类的错误直接忽略。
+ */
 async function runMigrations(env) {
   for (const stmt of MIGRATIONS) {
     try {
