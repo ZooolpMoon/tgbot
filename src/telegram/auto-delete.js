@@ -14,6 +14,12 @@ import { RULES } from "../config/constants.js";
 import { logError } from "../core/logger.js";
 import { defaultAutoDeleteSec, getAutoDeleteSeconds } from "../services/auto-delete.js";
 
+/**
+ * 超过这个时长就不在 isolate 里 sleep 了 —— Worker 的 waitUntil 撑不住几十分钟。
+ * 这类消息改成「写一条待删记录」，由定时任务（每 2 分钟）扫描删除。
+ */
+const LONG_DELAY_MS = 60 * 1000;
+
 /** 简单的 sleep（供自动删除与群发节流共用） */
 export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -63,6 +69,18 @@ export async function sendAutoDelete(token, chatId, text, parseMode, isGroupCtx,
 
   const sentId = await sendMessageGetId(token, chatId, text, parseMode, keyboard);
   if (!sentId) return;
+
+  // 长延时：交给定时任务（Telegram 允许删除 48 小时内的消息，30/60 分钟完全够）
+  if (delayMs >= LONG_DELAY_MS && env?.DB) {
+    try {
+      await env.DB.prepare(
+        "INSERT INTO pending_deletes (chat_id, message_id, delete_at, kind) VALUES (?, ?, ?, ?)"
+      ).bind(String(chatId), sentId, Math.floor((Date.now() + delayMs) / 1000), String(kind)).run();
+    } catch (e) {
+      logError("登记待删除消息失败（消息将保留）：", e);
+    }
+    return;
+  }
 
   const task = (async () => {
     try {

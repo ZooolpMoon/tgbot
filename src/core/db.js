@@ -92,6 +92,18 @@ CREATE INDEX IF NOT EXISTS idx_lottery_user ON lottery_draws(user_key, date_str)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lottery_free
   ON lottery_draws(user_key, date_str, source) WHERE source = 'free';
 
+-- 待删除的机器人消息（长延时用，v3.1.0）
+-- 为什么需要表：Worker 的 waitUntil 撑不住几十分钟，长延时必须靠定时任务扫描删除
+CREATE TABLE IF NOT EXISTS pending_deletes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id    TEXT    NOT NULL,
+  message_id INTEGER NOT NULL,
+  delete_at  INTEGER NOT NULL,          -- Unix 秒
+  kind       TEXT    DEFAULT '',
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pending_deletes_at ON pending_deletes(delete_at, id);
+
 -- ==========================================
 -- 👑 管理员会话
 -- ==========================================
@@ -398,7 +410,7 @@ let schemaPromise = null;
  */
 // v2.9.0 移除「每日任务」后不再建 daily_task_defs / task_edit_sessions / daily_tasks
 // （老库里这三张表会保留但不再使用，需要清理可手动 DROP）
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 

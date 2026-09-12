@@ -230,6 +230,9 @@ export const ADMIN_CALLBACK = {
   AUTO_DELETE_SCOPE_PREFIX: "admin_autodel_o_",
   AUTO_DELETE_KIND_PREFIX: "admin_autodel_k_",
   AUTO_DELETE_SET_PREFIX: "admin_autodel_s_",
+  // 全局兜底上限（所有消息都按它兜底）
+  AUTO_DELETE_CAP: "admin_autodel_cap",
+  AUTO_DELETE_CAP_SET_PREFIX: "admin_autodel_cap_s_",
 
   // ---------- 📚 知识库 ----------
   KB_HOME: "admin_kb",

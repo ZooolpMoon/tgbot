@@ -650,6 +650,8 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     // ---------- 🗑️ 消息自动删除 ----------
     else if (
       data === ADMIN_CALLBACK.AUTO_DELETE_HOME
+      || data === ADMIN_CALLBACK.AUTO_DELETE_CAP
+      || data.startsWith(ADMIN_CALLBACK.AUTO_DELETE_CAP_SET_PREFIX)
       || data.startsWith(ADMIN_CALLBACK.AUTO_DELETE_SCOPE_PREFIX)
       || data.startsWith(ADMIN_CALLBACK.AUTO_DELETE_KIND_PREFIX)
       || data.startsWith(ADMIN_CALLBACK.AUTO_DELETE_SET_PREFIX)

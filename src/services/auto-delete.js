@@ -24,6 +24,13 @@ const CACHE_TTL_MS = 30 * 1000;
 
 export const AUTO_DELETE_PREFIX = "autodelete.";
 export const AUTO_DELETE_GLOBAL_SCOPE = "global";
+/**
+ * 全局兜底上限：到了这个时间，机器人**所有**在群里的消息都会被删（不管它属于哪一类、原本设不设删除）。
+ * 存全局（scene_key = 'global'，name = 'autodelete.cap'）；0 / 未设置 = 不设上限。
+ */
+export const AUTO_DELETE_CAP_KEY = `${AUTO_DELETE_PREFIX}cap`;
+/** 兜底面板里可选的时长（秒）；0 = 不设上限 */
+export const AUTO_DELETE_CAP_PRESETS = [0, 1800, 3600];
 /** 上限一天，避免误填出现「删不掉」的错觉 */
 export const AUTO_DELETE_MAX_SEC = 86400;
 
@@ -172,8 +179,51 @@ export async function getAutoDeleteSources(env, sceneKey = null) {
 /** 某个场景下某类消息的保留秒数（0 = 不删除） */
 export async function getAutoDeleteSeconds(env, sceneKey, kind) {
   const map = await getAutoDeleteMap(env, sceneKey);
-  if (Object.prototype.hasOwnProperty.call(map, kind)) return map[kind];
-  return defaultAutoDeleteSec(kind);
+  const own = Object.prototype.hasOwnProperty.call(map, kind) ? map[kind] : defaultAutoDeleteSec(kind);
+
+  // 全局兜底：取「自己的时长」与「全局上限」里更早的那个
+  // （自己的时长是 0 = 不删除时，仍然受上限约束 → 到点就删）
+  const cap = await getAutoDeleteCap(env);
+  if (cap > 0) return own > 0 ? Math.min(own, cap) : cap;
+  return own;
+}
+
+/** 读取全局兜底上限（秒）；0 = 不设上限 */
+export async function getAutoDeleteCap(env) {
+  if (!env?.DB) return 0;
+  const cached = cacheGet(CACHE_NS, "cap", env.DB);
+  if (cached !== undefined) return cached;
+
+  let sec = 0;
+  try {
+    const row = await env.DB.prepare(
+      "SELECT value FROM scene_settings WHERE scene_key = ? AND name = ?"
+    ).bind(AUTO_DELETE_GLOBAL_SCOPE, AUTO_DELETE_CAP_KEY).first();
+    const parsed = parseAutoDeleteValue(row?.value);
+    sec = parsed === null ? 0 : parsed;
+  } catch (e) {
+    logError("读取全局兜底删除时间失败：", e);
+  }
+  return cacheSet(CACHE_NS, "cap", sec, CACHE_TTL_MS, env.DB);
+}
+
+/** 设置全局兜底上限（秒）；0 = 取消兜底 */
+export async function setAutoDeleteCap(env, seconds) {
+  if (!env?.DB) return false;
+  const sec = parseAutoDeleteValue(seconds);
+  if (sec === null) return false;
+  if (sec === 0) {
+    await env.DB.prepare("DELETE FROM scene_settings WHERE scene_key = ? AND name = ?")
+      .bind(AUTO_DELETE_GLOBAL_SCOPE, AUTO_DELETE_CAP_KEY).run();
+  } else {
+    await env.DB.prepare(`
+      INSERT INTO scene_settings (scene_key, name, value, updated_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(scene_key, name) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+    `).bind(AUTO_DELETE_GLOBAL_SCOPE, AUTO_DELETE_CAP_KEY, String(sec)).run();
+  }
+  cacheClear(CACHE_NS);
+  return true;
 }
 
 /**

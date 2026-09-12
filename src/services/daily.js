@@ -16,6 +16,7 @@ import { escapeHtml } from "../utils/html.js";
 import { logError, logInfo } from "../core/logger.js";
 import { expirePunishments, ACTIONS, formatDuration } from "./guard.js";
 import { reindexKnowledge } from "./knowledge.js";
+import { deleteMessage } from "../telegram/api.js";
 
 /**
  * 定时推送也可能发到群里（`ADMIN_NOTIFY_CHAT_ID` 配置成群时），
@@ -107,6 +108,47 @@ export async function cleanupStaleData(env) {
 }
 
 /**
+ * 处理「长延时自动删除」：把到点的机器人消息删掉。
+ *
+ * 为什么不在发送时 sleep：Worker 的 waitUntil 撑不住几十分钟（30/60 分钟）。
+ * 所以发送时只登记一条 pending_deletes，由定时任务（每 2 分钟）扫描执行。
+ * 单次最多删 30 条，避免一次跑太久；Telegram 侧删除失败（超过 48 小时 / 已删除）直接清掉记录。
+ *
+ * @returns {Promise<{deleted:number, failed:number, purged:number}>}
+ */
+export async function processPendingDeletes(env, token, { limit = 30 } = {}) {
+  if (!env?.DB || !token) return { deleted: 0, failed: 0, purged: 0 };
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // 超过 48 小时的消息 Telegram 已经不允许删除，直接清掉记录
+  const purgedRes = await env.DB.prepare(
+    "DELETE FROM pending_deletes WHERE delete_at <= ?"
+  ).bind(nowSec - 48 * 3600).run();
+
+  const { results } = await env.DB.prepare(
+    "SELECT id, chat_id, message_id FROM pending_deletes WHERE delete_at <= ? ORDER BY id ASC LIMIT ?"
+  ).bind(nowSec, Math.max(1, Math.floor(limit) || 30)).all();
+
+  const rows = results || [];
+  let deleted = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      const res = await deleteMessage(token, row.chat_id, row.message_id);
+      if (res && res.ok === false) failed++;
+      else deleted++;
+    } catch (e) {
+      failed++;
+      logError("删除待删消息失败：", e);
+    }
+    // 无论成功失败都清掉记录：失败多半是「消息已被删 / 太久」，重试没有意义
+    await env.DB.prepare("DELETE FROM pending_deletes WHERE id = ?").bind(row.id).run();
+  }
+
+  return { deleted, failed, purged: Number(purgedRes?.meta?.changes) || 0 };
+}
+
+/**
  * 汇总昨日（按 APP_TIMEZONE）的运行数据 + 当前待处理订单。
  */
 export async function collectDailySummary(env) {
@@ -146,6 +188,16 @@ export async function collectDailySummary(env) {
  * 定时任务总入口：清理 → 汇总 → 给管理员推送概况（未配置管理员时只清理）。
  */
 export async function runScheduledTasks(env, token, ctx = null) {
+  // 先处理「长延时自动删除」（每 2 分钟的 cron 会频繁跑这一条；开销很小）
+  let pendingDeletes = null;
+  if (token && env?.DB) {
+    try {
+      pendingDeletes = await processPendingDeletes(env, token);
+    } catch (e) {
+      logError("处理待删除消息失败：", e);
+    }
+  }
+
   const cleanup = await cleanupStaleData(env);
   const summary = await collectDailySummary(env);
 
@@ -160,6 +212,7 @@ export async function runScheduledTasks(env, token, ctx = null) {
   logInfo("定时任务完成：", JSON.stringify({
     cleanup: cleanupCounts,
     reindex,
+    pendingDeletes,
     summary: { ...summary, pendingList: summary.pendingList.length }
   }));
 

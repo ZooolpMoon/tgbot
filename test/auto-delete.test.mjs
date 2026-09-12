@@ -10,7 +10,8 @@ import { createTestDB, hasSqlite } from "../test-helpers/d1.mjs";
 import {
   AUTO_DELETE_KINDS, autoDeleteLabel, defaultAutoDeleteSec, formatAutoDeleteDelay,
   getAutoDeleteMap, getAutoDeleteSeconds, getExplicitAutoDelete, isAutoDeleteKind,
-  parseAutoDeleteValue, resolveAutoDeleteScope, setAutoDeleteSeconds, clearAutoDeleteOverride
+  getAutoDeleteCap, parseAutoDeleteValue, resolveAutoDeleteScope, setAutoDeleteCap,
+  setAutoDeleteSeconds, clearAutoDeleteOverride
 } from "../src/services/auto-delete.js";
 import { sendAutoDelete } from "../src/telegram/auto-delete.js";
 import { validateKeyboard } from "../src/utils/layout.js";
@@ -149,6 +150,38 @@ test("设置：非法输入与未知类型会被拒绝", { skip: !hasSqlite && "
 });
 
 // ==========================================
+// 全局兜底（最长保留时间）
+// ==========================================
+
+test("全局兜底：是「上限」，取自己的时长与兜底里更早的那个", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = { DB: db };
+
+  // 未设兜底：各类型按自己的设置
+  assert.equal(await getAutoDeleteSeconds(env, "group:-100", "cmd"), 5);
+  assert.equal(await getAutoDeleteSeconds(env, "group:-100", "ai"), 0);
+  assert.equal(await getAutoDeleteCap(env), 0);
+
+  // 兜底 30 分钟
+  await setAutoDeleteCap(env, 1800);
+  assert.equal(await getAutoDeleteCap(env), 1800);
+  assert.equal(await getAutoDeleteSeconds(env, "group:-100", "cmd"), 5, "自己的 5 秒更早 → 用 5 秒");
+  assert.equal(await getAutoDeleteSeconds(env, "group:-100", "ai"), 1800, "本来不删的也要在兜底时间删");
+  assert.equal(await getAutoDeleteSeconds(env, "group:-100", "card"), 1800);
+
+  // 场景自己设了更长的：仍然被兜底压到 30 分钟
+  await setAutoDeleteSeconds(env, "group:-100", "ai", 3600);
+  assert.equal(await getAutoDeleteSeconds(env, "group:-100", "ai"), 1800, "兜底优先于更长的场景设置");
+
+  // 关闭兜底 → 回到各类型自己的设置
+  await setAutoDeleteCap(env, 0);
+  assert.equal(await getAutoDeleteCap(env), 0);
+  assert.equal(await getAutoDeleteSeconds(env, "group:-100", "ai"), 3600);
+  assert.equal(db.get("SELECT COUNT(*) AS n FROM scene_settings WHERE name = 'autodelete.cap'").n, 0, "取消兜底应删掉记录");
+  db.close();
+});
+
+// ==========================================
 // 发送时按类型取时长
 // ==========================================
 
@@ -215,6 +248,51 @@ test("私聊发送：从不删除，键盘也不会丢", { skip: !hasSqlite && "
   assert.equal(callsOf("deleteMessage").length, 0, "私聊不应删除");
   const sent = callsOf("sendMessage").at(-1);
   assert.ok(sent.body.reply_markup, "卡片键盘应保留");
+  db.close();
+});
+
+test("长延时：不在 isolate 里 sleep，改成登记待删记录交给定时任务", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = { DB: db };
+  await setAutoDeleteCap(env, 1800); // 兜底 30 分钟
+
+  const ctx = makeCtx();
+  resetCalls();
+  await sendAutoDelete("T", "-100", "AI 回复", null, true, ctx, {
+    kind: "ai", env, sceneKey: "group:-100"
+  });
+
+  const row = db.get("SELECT * FROM pending_deletes");
+  assert.ok(row, "长延时消息应登记待删记录");
+  assert.equal(row.chat_id, "-100");
+  assert.equal(row.kind, "ai");
+  const inSeconds = Number(row.delete_at) - Math.floor(Date.now() / 1000);
+  assert.ok(inSeconds > 1700 && inSeconds <= 1800, `删除时间应约 30 分钟后，实际 ${inSeconds}s`);
+  assert.equal(callsOf("deleteMessage").length, 0, "不该立刻删除");
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("定时任务：删掉到点的消息，保留未到点的，清理超过 48 小时的", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = { DB: db };
+  const now = Math.floor(Date.now() / 1000);
+  db.exec(`
+    INSERT INTO pending_deletes (chat_id, message_id, delete_at, kind) VALUES
+      ('-100', 11, ${now - 10}, 'ai'),
+      ('-100', 12, ${now + 600}, 'ai'),
+      ('-100', 13, ${now - 49 * 3600}, 'ai');
+  `);
+
+  const { processPendingDeletes } = await import("../src/services/daily.js");
+  resetCalls();
+  const result = await processPendingDeletes(env, "T");
+
+  assert.equal(result.deleted, 1, "到点的应删除");
+  assert.equal(callsOf("deleteMessage").length, 1);
+  assert.equal(String(callsOf("deleteMessage")[0].body.message_id), "11");
+  const left = db.all("SELECT message_id FROM pending_deletes ORDER BY message_id");
+  assert.deepEqual(left.map((r) => Number(r.message_id)), [12], "未到点的保留、过期的清理掉");
   db.close();
 });
 
@@ -293,6 +371,53 @@ test("面板：改某个类型的时长、切换全局、恢复默认", { skip: 
   await click("admin_autodel_s_c_cmd_d");
   assert.equal(db.count("scene_settings", "scene_key = 'group:-100' AND name = 'autodelete.cmd'"), 0);
 
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("面板：全局兜底可以设成 30 分钟 / 1 小时或取消", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  db.exec(`INSERT INTO user_scenes (scene_key, user_key, chat_id, chat_type, user_id, username, first_name)
+           VALUES ('group:-100:user:999', 'user:999', '-100', 'supergroup', '999', 'admin', '管理员')`);
+  const env = { DB: db };
+  const ctx = makeCtx();
+  const uctx = {
+    chatId: "-100", userId: "999", chatType: "supergroup",
+    userKey: "user:999", sceneKey: "group:-100:user:999"
+  };
+  const { handleCallback } = await import("../src/handlers/callback.js");
+  const click = (data) => handleCallback({
+    env, ctx, token: "T", myId: "999", uctx,
+    payload: {
+      callback_query: {
+        id: `cb_${data}`, from: { id: 999 }, data,
+        message: { message_id: 10, chat: { id: -100, type: "supergroup" } }
+      }
+    }
+  });
+
+  // 首页能看到兜底入口与当前状态
+  resetCalls();
+  await click("admin_autodel");
+  const panel = callsOf("editMessageText").at(-1).body;
+  assert.ok(String(panel.text).includes("全局兜底"), "首页应显示兜底");
+  const keys = panel.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(keys.includes("admin_autodel_cap"), "应有兜底入口按钮");
+
+  // 打开兜底面板 → 设 30 分钟
+  await click("admin_autodel_cap");
+  const capPanel = callsOf("editMessageText").at(-1).body;
+  assert.ok(String(capPanel.text).includes("全局兜底删除"));
+  await click("admin_autodel_cap_s_1800");
+  assert.equal(db.get("SELECT value FROM scene_settings WHERE scene_key='global' AND name='autodelete.cap'").value, "1800");
+
+  // 改成 1 小时
+  await click("admin_autodel_cap_s_3600");
+  assert.equal(db.get("SELECT value FROM scene_settings WHERE scene_key='global' AND name='autodelete.cap'").value, "3600");
+
+  // 取消兜底
+  await click("admin_autodel_cap_s_0");
+  assert.equal(db.count("scene_settings", "name = 'autodelete.cap'"), 0);
   await Promise.all(ctx.pending);
   db.close();
 });

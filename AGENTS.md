@@ -109,6 +109,8 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 发消息时用 `sendAutoDelete(..., { kind, env, sceneKey, keyboard })`；复合上下文能自动提供 `env` / `sceneKey`，传原生 Worker ctx 时要显式补上
   - 设置存 `scene_settings` 的 `autodelete.<kind>`，两级：本场景 → 全局。群聊作用域会归一成 `group:<群ID>`（**不要用成员级 sceneKey**，否则每个成员一份设置）
   - 私聊不删除；带按钮的卡片要留时间点击，默认必须是 0
+  - **全局兜底（v3.1.0）**：`autodelete.cap`（全局，0 = 不设）是**上限**——实际删除时间取「该类型自己的时长」与「兜底」里更早的那个，所以本来「不删除」的消息也会在兜底时间被删
+  - **长延时不能 sleep**：Worker 的 `waitUntil` 撑不住几十分钟。`sendAutoDelete` 里 ≥1 分钟的延时改为写 `pending_deletes`，由 `services/daily.js` 的 `processPendingDeletes()` 在 cron（每 2 分钟）里删；超过 48 小时的记录直接清掉（Telegram 不允许删更早的消息）
 - **输入框命令菜单**（`services/command-menu.js`）：菜单由命令注册表自动生成，**加命令不用改这里**；用内容哈希（`commands.version`）判断是否需要调用 Telegram，且每个 isolate 只检查一次。改完注册表想立刻看到菜单，用 `/syncmenu`
 - **引导式输入会话**（`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts`）读取时都要带 `updated_at >= datetime('now','-30 minutes')`，并保证 `services/daily.js` 里有对应清理
 - **引导会话必须互斥**：开新引导流程前先 `clearGuideSessions(env, chatId)`（`services/sessions.js`），否则残留会话会吞掉后续所有文本（现象是「点了按钮没反应」）。群里也要放行管理员正在填的引导文本（见 `message.js` 的 `adminGuideActive`）
