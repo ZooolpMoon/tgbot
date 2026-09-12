@@ -59,6 +59,14 @@ function describeTagError(description, errorCode) {
   if (lower.includes("tag_invalid") || lower.includes("emoji")) {
     return "标签内容不合规：最多 16 个字、不能有 emoji。";
   }
+  if (lower.includes("chat_creator_required")) {
+    return "Telegram 拒绝了这次设置（CHAT_CREATOR_REQUIRED）：成员标签只对普通成员生效，"
+      + "群主和管理员都不行。如果你本来就是普通成员，那说明这个群要求由群主来管理标签。";
+  }
+  if (lower.includes("participant_missing") || lower.includes("user_not_participant")
+    || lower.includes("not a member")) {
+    return "你不在这个群里（或者已经退群），换一个群试试。";
+  }
   if (lower.includes("chat not found")) return "找不到这个群：机器人可能已被移出。";
   return raw ? `设置失败：${raw}` : `设置失败（错误码 ${errorCode || "未知"}）`;
 }
@@ -187,6 +195,55 @@ export async function getBotTagRights(token, env, chatId) {
 
   await saveBotChat(env, chatId, { tagsOk: canManageTags ? 1 : 0 });
   return { canManageTags, isAdmin, status };
+}
+
+/**
+ * 目标用户在这个群「能不能有标签」。
+ *
+ * Telegram 的成员标签只对**普通成员**生效（方法说明就是 "set a tag for a regular member"）：
+ *   • 群主（creator）——名字由「管理员头衔」控制，机器人改不了，实测返回 CHAT_CREATOR_REQUIRED
+ *   • 管理员 —— 同样走「管理员头衔」，标签不适用
+ *   • 已退群 / 被踢 —— 根本不在群里
+ * 提前查一次，比让用户填完标签再失败要好。
+ *
+ * @returns {Promise<{ok:boolean, code?:string, error?:string}>}
+ */
+export async function checkTagTarget({ token, chatId, userId }) {
+  let member = null;
+  try {
+    const json = await getChatMember(token, chatId, userId);
+    member = json?.ok ? json.result : null;
+  } catch (e) {
+    logError("查询成员身份失败：", e);
+  }
+  // 查不到（网络抖动 / 接口异常）就不拦，交给真正设置时的报错
+  if (!member) return { ok: true };
+
+  const status = String(member.status || "");
+  if (status === "creator") {
+    return {
+      ok: false,
+      code: "creator",
+      error: "你是这个群的<b>群主</b>，而 Telegram 的成员标签只能给<b>普通成员</b>设置"
+        + "（群主的名字由「管理员头衔」控制，机器人改不了）。换一个你在里面是普通成员的群吧。"
+    };
+  }
+  if (status === "administrator") {
+    return {
+      ok: false,
+      code: "administrator",
+      error: "你在那个群里是<b>管理员</b>，成员标签只对<b>普通成员</b>生效（管理员走的是「管理员头衔」）。"
+        + "换一个你是普通成员的群吧。"
+    };
+  }
+  if (status === "left" || status === "kicked") {
+    return {
+      ok: false,
+      code: "absent",
+      error: "你不在这个群里（或者已经退群），换一个群试试。"
+    };
+  }
+  return { ok: true, status };
 }
 
 /** 读「机器人给这个用户在这个群设过的标签」 */

@@ -104,7 +104,9 @@ function seedTagItem(db, { price = 500 } = {}) {
 
 const { handleCallback } = await import("../src/handlers/callback.js");
 const { handleMessage } = await import("../src/handlers/message.js");
-const { validateTagText, applyMemberTag, getAppliedTag, listTagGroups } = await import("../src/services/group-tags.js");
+const {
+  validateTagText, applyMemberTag, getAppliedTag, listTagGroups, checkTagTarget
+} = await import("../src/services/group-tags.js");
 const { cleanupStaleData } = await import("../src/services/daily.js");
 
 // ==========================================
@@ -374,6 +376,111 @@ test("选群步骤里发文字：提示点按钮，不会漏成 AI 对话", { sk
 // ==========================================
 // 6. 清理与工具函数
 // ==========================================
+
+test("群主 / 管理员不能有成员标签：选群时就被拦下并说明原因", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  // 群主
+  {
+    const db = createTestDB();
+    seedUser(db, "user:1", 1000);
+    const itemId = seedTagItem(db);
+    chatMembers["-100:1"] = { status: "creator", user: { id: 1 } };
+    const env = makeEnv(db);
+    const ctx = makeCtx();
+
+    await click(env, ctx, `shop_buy_${itemId}`);
+    resetCalls();
+    await click(env, ctx, "shop_tag_grp_-100");
+
+    assert.equal(db.get("SELECT step FROM group_tag_sessions").step, "group", "应停在选群步骤");
+    assert.match(String(lastEdit().text), /群主/, "要说清群主用不了成员标签");
+    await Promise.all(ctx.pending);
+    db.close();
+  }
+
+  // 管理员
+  {
+    const db = createTestDB();
+    seedUser(db, "user:1", 1000);
+    const itemId = seedTagItem(db);
+    chatMembers["-100:1"] = { status: "administrator", can_manage_tags: false, user: { id: 1 } };
+    const env = makeEnv(db);
+    const ctx = makeCtx();
+
+    await click(env, ctx, `shop_buy_${itemId}`);
+    resetCalls();
+    await click(env, ctx, "shop_tag_grp_-100");
+
+    assert.equal(db.get("SELECT step FROM group_tag_sessions").step, "group");
+    assert.match(String(lastEdit().text), /管理员/);
+    await Promise.all(ctx.pending);
+    db.close();
+  }
+
+  // 已退群
+  {
+    const db = createTestDB();
+    seedUser(db, "user:1", 1000);
+    const itemId = seedTagItem(db);
+    chatMembers["-100:1"] = { status: "left", user: { id: 1 } };
+    const env = makeEnv(db);
+    const ctx = makeCtx();
+
+    await click(env, ctx, `shop_buy_${itemId}`);
+    resetCalls();
+    await click(env, ctx, "shop_tag_grp_-100");
+    assert.match(String(lastEdit().text), /不在这个群里/);
+    await Promise.all(ctx.pending);
+    db.close();
+  }
+});
+
+test("checkTagTarget：查不到身份时不拦（交给真正设置时报错）", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = { DB: db };
+  // 没登记过的成员 → 接口返回失败 → 不拦（交给真正设置时报错）
+  const result = await checkTagTarget({ token: "T", chatId: "-100", userId: "777" });
+  assert.equal(result.ok, true);
+  db.close();
+});
+
+test("已经进入填标签步骤的群主：发标签时也会被拦下并解释", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:1", 1000);
+  const itemId = seedTagItem(db);
+  // 选群时是普通成员，选完才「变成」群主
+  chatMembers["-100:1"] = { status: "member", user: { id: 1 } };
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+
+  await click(env, ctx, `shop_buy_${itemId}`);
+  await click(env, ctx, "shop_tag_grp_-100");
+  assert.equal(db.get("SELECT step FROM group_tag_sessions").step, "tag");
+
+  chatMembers["-100:1"] = { status: "creator", user: { id: 1 } };
+  resetCalls();
+  await send(env, ctx, "夜猫子");
+
+  assert.equal(tagCalls.length, 0, "不该真的去设置");
+  assert.match(textsTo("1").join("\n"), /群主/);
+  assert.equal(db.count("group_tag_sessions"), 1, "会话保留，可以换群或放弃");
+  delete chatMembers["-100:1"];
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("Telegram 返回 CHAT_CREATOR_REQUIRED 时给出可读解释", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = { DB: db };
+  tagResult = { ok: false, description: "Bad Request: CHAT_CREATOR_REQUIRED", error_code: 400 };
+
+  const res = await applyMemberTag({ env, token: "T", chatId: "-100", userId: "1", tag: "夜猫子" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /CHAT_CREATOR_REQUIRED/);
+  assert.match(res.error, /普通成员/);
+  assert.equal(db.count("user_group_tags"), 0);
+  tagResult = { ok: true };
+  db.close();
+});
 
 test("定时清理：过期一天的群标签会话会被删掉", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
   const db = createTestDB();

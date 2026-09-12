@@ -17,7 +17,7 @@ import { logError } from "../core/logger.js";
 import { clearGuideSessions } from "../services/sessions.js";
 import {
   TAG_CLEAR_INPUT, TAG_MAX_LENGTH, applyMemberTag, fillGroupTitles, getAppliedTag,
-  getBotTagRights, listTagGroups, validateTagText
+  checkTagTarget, getBotTagRights, listTagGroups, validateTagText
 } from "../services/group-tags.js";
 
 /** 引导会话有效期（和其它流程一致：30 分钟） */
@@ -154,6 +154,16 @@ export async function handleTagGroupPick({ token, env, callback, chatId, message
     return;
   }
 
+  // 成员标签只对普通成员生效：群主 / 管理员会被 Telegram 直接拒（CHAT_CREATOR_REQUIRED）
+  const target = await checkTagTarget({ token, chatId: groupChatId, userId: session.user_id });
+  if (!target.ok) {
+    await answerCallback(token, callback.id, "⚠️ 这个群用不了，换一个试试", true);
+    await renderTagGroupPicker(token, env, chatId, messageId, session, {
+      warning: target.error
+    });
+    return;
+  }
+
   await saveTagSession(env, {
     chatId, userId: session.user_id, orderId: session.order_id, itemId: session.item_id,
     step: "tag", targetChat: groupChatId
@@ -220,6 +230,18 @@ export async function handleTagInput({ token, env, chatId, uctx, userText }) {
       token, chatId,
       "⚠️ 机器人现在没有那个群的「管理标签」权限，标签没能设置。\n" +
       "请让群管理员把机器人设为管理员并勾选『管理标签』，或回复 /cancel 换一个群。",
+      "HTML"
+    );
+    return true;
+  }
+
+  // 再确认一次目标的身份：群主 / 管理员拿不到成员标签（Telegram 会回 CHAT_CREATOR_REQUIRED）。
+  // 选群时已经查过一次，这里兜住「当时还没登录 / 身份刚变」的情况。
+  const target = await checkTagTarget({ token, chatId: session.target_chat, userId: session.user_id });
+  if (!target.ok) {
+    await sendMessage(
+      token, chatId,
+      `⚠️ ${target.error}\n\n回复 <code>/cancel</code> 放弃，或到「📜 我的订单」重新进入换一个群。`,
       "HTML"
     );
     return true;
