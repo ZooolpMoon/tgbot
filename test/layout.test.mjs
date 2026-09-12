@@ -28,6 +28,7 @@ import { getLogFilterKeyboard } from "../src/admin/logs.js";
 
 import { getShopAdminHomeKeyboard, getShopAdminItemsKeyboard, getShopAdminOrdersKeyboard } from "../src/shop/admin.js";
 import { getShopHomeKeyboard, getMyOrdersKeyboard } from "../src/shop/index.js";
+import { getTagGroupKeyboard } from "../src/shop/tags.js";
 import { buildItemEditKeyboard } from "../src/shop/edit.js";
 
 import { getGameCenterKeyboard } from "../src/games/index.js";
@@ -279,6 +280,15 @@ test("商城用户侧：8 件商品 / 5 条待处理订单都不超过 8 行", (
     id: i + 1, order_no: `S1ABCDEF23${i}`, status: "pending"
   }));
   assertCompact(getMyOrdersKeyboard(orders, 1, 1), { maxRows: 8, label: "我的订单" });
+});
+
+test("群标签选群面板：一页 10 个群 + 翻页 + 放弃不超过 8 行", () => {
+  const groups = Array.from({ length: 10 }, (_, i) => ({
+    chatId: `-10012345678${i}`, title: `一个名字比较长的群聊${i}`
+  }));
+  assertCompact(getTagGroupKeyboard(groups, 1, 2), { maxRows: 8, label: "选群面板" });
+  // 单页（没有翻页行）时更短
+  assertCompact(getTagGroupKeyboard(groups.slice(0, 4), 1, 1), { maxRows: 8, label: "选群面板（单页）" });
 });
 
 test("商城管理侧：商品列表与订单列表分页后仍然紧凑", () => {

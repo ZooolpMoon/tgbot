@@ -10,7 +10,7 @@ npm run deploy         # 部署（wrangler.toml）
 npm run deploy:prod    # 部署（wrangler.production.toml）
 npm run tail           # 实时看线上日志
 npm run check          # 语法 + 相对 import 路径自检
-npm test               # 238 个测试用例
+npm test               # 252 个测试用例
 npm run backup         # 导出线上 D1 到 backups/
 npm run backup:local   # 导出本地 D1
 npm run backup:config  # 把生产配置备份到私有仓库（需 .config-backup）
@@ -31,6 +31,7 @@ npm run backup:config  # 把生产配置备份到私有仓库（需 .config-back
 | `daily.test.mjs` | 定时任务清理与日报汇总 |
 | `time.test.mjs` | 时区换算：库里存 UTC、展示按 `APP_TIMEZONE`（默认北京时间） |
 | `command-menu.test.mjs` | 输入框菜单：按身份裁剪、多作用域挂载与失效清理、哈希版本比对 |
+| `group-tags.test.mjs` | 商城「自定义群组标签」：下单即完成、选群、标签校验、权限兜底、重新进入 |
 | `features.test.mjs` | 三级功能开关（全局 / 场景覆盖 / 恢复默认） |
 | `auto-delete.test.mjs` | 消息自动删除：类型默认值、两级设置、按类型取时长、面板读写 |
 | `bugfix.test.mjs` | 缺陷回归：管理员不可被封禁、引导会话互斥、HTML 转义、二次确认、出站消息 HTML 体检 |

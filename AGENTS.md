@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 238 个用例）
+2. `npm test` 通过（当前 252 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -125,6 +125,9 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - **菜单排版**：统一用 `src/utils/layout.js`（`grid` / `compactLabel` / `clampPage` / `pagerRow` / `validateKeyboard`），不要再各写一份 `grid()`。约定：单行 ≤ 2 个按钮、整个菜单 ≤ 8 行、按钮文案 ≤ 32 字、`callback_data` ≤ 64 字节。
   - 会随数据量增长的菜单（用户列表、任务列表、商品 / 订单列表）**必须分页**，并把键盘抽成纯函数（如 `getUserListKeyboard`），方便 `test/layout.test.mjs` 直接校验排版。
 - **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。
+- **新增引导式会话表必须登记**：新表要 (1) 读取时带 `updated_at >= datetime('now','-30 minutes')`，(2) 加进 `services/sessions.js` 的 `GUIDE_SESSION_TABLES`（否则会和别的流程抢消息），(3) 在 `services/daily.js` 里兜底清理。参考 `group_tag_sessions`。
+- **商城商品的发放方式**：`shop_items.delivery` 决定下单后谁来交付——`manual`（默认，管理员发货）或 `group_tag`（机器人自动发放）。加新的自动发放类型时，在 `shop/index.js` 的 `handleShopBuy` 里分支：订单直接写 `status='done'`、**不要**通知管理员发货，然后调用对应的引导流程；这类流程都必须是「可重新进入」的——用户已经付过钱，会话过期不能变成死路（在「我的订单」里给入口，参考 `shop/tags.js` 与 `getMyOrdersKeyboard`）。
+- **群组标签**（`services/group-tags.js` + `shop/tags.js`）：走 Telegram 的 `setChatMemberTag`，**机器人在那个群必须是管理员且有 `can_manage_tags`**；标签 0~16 字符、**不允许 emoji**（硬限制，服务端先校验再请求）。群名与权限检查结果缓存在 `bot_chats`（权限 1 小时），群列表来自 `user_scenes` 里的 group / supergroup。机器人已退出的群用 `getChat` 探到后隐藏，不要让用户点了才发现。
 - **时区：库里存 UTC，给人看的一律过 `formatAppTime()`**（`services/time.js`）：`CURRENT_TIMESTAMP` / `datetime('now')` 都是 UTC，比较、去重、到期判定也都按 UTC 做，别去改存储格式；只在展示时换算到 `APP_TIMEZONE`（默认 `Asia/Shanghai`，即北京时间 UTC+8）。新增任何显示 `created_at` / `updated_at` / `until_at` 的文案都要套一层，**不要再硬编码「UTC」或直接用 `toISOString()`**。
 - **定时任务要区分「日报时段」**：`runScheduledTasks` 的 `cron` 参数决定这次该干什么——只有每天一次的 `DAILY_SUMMARY_CRON`（`0 16 * * *` = 北京 00:00）推每日概况，每 2 分钟那条兜底 cron 只做清理与长延时删除；再用全局设置 `daily.last_summary_date` 兜底去重，保证**同一天只推一条**。v3.1.2 修过「概况一直弹」，新增定时推送时照这个模式来。
 - **改 Schema 时注意**：迁移里**不要**写会清空 `scene_settings` 里非 `global` 记录的语句——那会抹掉场景级功能开关（v2.1.0 踩过一次，已在 v2.2.0 修掉并有回归测试）。

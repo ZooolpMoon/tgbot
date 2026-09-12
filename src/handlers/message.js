@@ -32,6 +32,7 @@ import { handleKeywordAlert } from "../admin/guard.js";
 import { isGuardGuideActive, handleGuardGuideInput, cancelGuardGuide } from "../admin/guard-panel.js";
 import { isAdminGuideActive, handleAdminGuideInput, cancelAdminGuide } from "../admin/admins.js";
 import { can, getAdminRole, isBackstageRole } from "../services/admins.js";
+import { getTagSession, handleTagCancel, handleTagInput } from "../shop/tags.js";
 
 /** 处理 message / edited_message 更新 */
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
@@ -226,6 +227,19 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
         return;
       }
     } else if (await handleAdminGuideInput({ env, token, chatId, userText, adminId: userId })) {
+      return;
+    }
+  }
+
+  // ---------- 商城下单备注输入（私聊，任何用户）----------
+  // ---------- 自定义群组标签：选群后填标签（私聊，任何用户）----------
+  if (!isGroupCtx && (await getTagSession(env, chatId))) {
+    if (isCommandLike) {
+      if (/^\/(cancel|取消)$/i.test(command)) {
+        await handleTagCancel({ token, env, chatId });
+        return;
+      }
+    } else if (await handleTagInput({ token, env, chatId, uctx, userText })) {
       return;
     }
   }

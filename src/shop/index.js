@@ -15,6 +15,15 @@ import { getOrderNote, cancelOrderNote } from "./notes.js";
 import { categoryText } from "./categories.js";
 import { formatAppTime } from "../services/time.js";
 
+/** 自动发放类商品：下单即完成，由机器人自己把东西交付给用户（不需要管理员发货） */
+export const AUTO_DELIVERY = { GROUP_TAG: "group_tag" };
+
+/** 商品的发放方式（未知/空一律按人工发放处理） */
+export function deliveryOf(item) {
+  const value = String(item?.delivery || "").trim();
+  return value || "manual";
+}
+
 /**
  * 商城首页键盘（纯函数，便于排版测试）。
  * 8 件商品 = 4 行，加翻页 1 行、我的订单 1 行、关闭 1 行，最多 7 行。
@@ -88,7 +97,7 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
   }
 
   const item = await env.DB.prepare(
-    "SELECT id, name, description, icon, price, stock, category, enabled, per_user_limit FROM shop_items WHERE id = ?"
+    "SELECT id, name, description, icon, price, stock, category, enabled, per_user_limit, delivery FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   if (!item || item.enabled !== 1) {
@@ -104,6 +113,7 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
   const catText = categoryText(item.category);
   const note = await getOrderNote(env, chatId, item.id);
   const perUserLimit = Number(item.per_user_limit) || 0;
+  const autoTag = deliveryOf(item) === AUTO_DELIVERY.GROUP_TAG;
 
   const text =
     `${item.icon} <b>${escapeHtml(item.name)}</b>\n` +
@@ -112,6 +122,7 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
     `💰 <b>价格：</b> 🪙 ${item.price}\n` +
     `📦 <b>库存：</b> ${stockText}${perUserLimit > 0 ? `\n🙋 <b>限购：</b> 每人 ${perUserLimit} 件` : ""}\n` +
     `🪙 <b>我的积分：</b> ${pts}\n` +
+    (autoTag ? `🚚 <b>发放方式：</b> 购买后自动完成，接着选一个群设置你的标签\n` : "") +
     `🧾 <b>下单备注：</b> ${note ? escapeHtml(note) : "（未填写）"}\n\n` +
     `📝 <b>说明：</b>\n${escapeHtml(item.description) || "（无）"}\n`;
 
@@ -148,7 +159,7 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   if (!env.DB) return answerCallback(token, callback.id, "❌ 商城未启用", true);
 
   const item = await env.DB.prepare(
-    "SELECT id, name, icon, price, stock, category, enabled, per_user_limit FROM shop_items WHERE id = ?"
+    "SELECT id, name, icon, price, stock, category, enabled, per_user_limit, delivery FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   if (!item || item.enabled !== 1) {
@@ -193,6 +204,9 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   // 下单备注（用户在商品详情里填写过才存在）
   const note = await getOrderNote(env, chatId, item.id);
 
+  // 自动发放类商品（如「自定义群组标签」）：下单即完成，不需要管理员发货
+  const autoDelivery = deliveryOf(item) === AUTO_DELIVERY.GROUP_TAG;
+
   // 创建订单
   const orderNo = "S" + Date.now().toString(36).toUpperCase() + randomInt(1679616).toString(36).padStart(4, "0").toUpperCase();
 
@@ -200,8 +214,11 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   try {
     const inserted = await env.DB.prepare(`
       INSERT INTO shop_orders (order_no, user_key, user_id, chat_id, item_id, item_name, item_icon, price, status, remark)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-    `).bind(orderNo, userKey, userId, chatId, item.id, item.name, item.icon, item.price, note || "").run();
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      orderNo, userKey, userId, chatId, item.id, item.name, item.icon, item.price,
+      autoDelivery ? "done" : "pending", note || ""
+    ).run();
     orderId = Number(inserted?.meta?.last_row_id) || null;
   } catch (e) {
     // 订单创建失败时回滚：退回积分，并恢复已扣减的库存。
@@ -251,7 +268,9 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
     `🪙 <b>当前积分：</b> ${afterDeduct}\n` +
     (note ? `🧾 <b>备注：</b> ${escapeHtml(note)}\n` : ``) +
     `\n` +
-    `⏳ 请等待管理员处理（虚拟物品/服务由管理员人工确认发放）。`;
+    (autoDelivery
+      ? `🚚 本商品<b>无需发货，已自动完成</b>，接下来选一个群设置你的标签。`
+      : `⏳ 请等待管理员处理（虚拟物品/服务由管理员人工确认发放）。`);
 
   const keyboard = {
     inline_keyboard: [
@@ -261,6 +280,24 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   };
 
   await editMessageText(token, chatId, messageId, successText, keyboard, "HTML");
+
+  // 自动发放类：直接进引导流程（选群 → 填标签），不打扰管理员
+  if (autoDelivery && orderId) {
+    try {
+      const { startTagFlow } = await import("./tags.js");
+      await startTagFlow({
+        token, env, chatId, userId, orderId, itemId: item.id, messageId
+      });
+    } catch (e) {
+      logError("启动群标签设置流程失败:", e);
+      await sendMessage(
+        token, chatId,
+        "⚠️ 订单已完成，但设置流程启动失败了。请到「📜 我的订单」点「🏷️ 设置标签」重新进入。",
+        "HTML"
+      );
+    }
+    return;
+  }
 
   // 通知管理员（新订单）
   try {
@@ -289,6 +326,16 @@ export function getMyOrdersKeyboard(orders, safePage, totalPages) {
         {
           text: compactLabel(`❌ 取消 ${o.order_no} 并退款`, 30),
           callback_data: `shop_ucancel_${o.id}_${safePage}`
+        }
+      ]);
+      continue;
+    }
+    // 自动发放类商品（群标签）还没设置完：给一个回到设置流程的入口，钱不白花
+    if (o.status === "done" && o.delivery === AUTO_DELIVERY.GROUP_TAG && Number(o.tag_applied) === 0) {
+      inline_keyboard.push([
+        {
+          text: compactLabel(`🏷️ 设置标签 ${o.order_no}`, 30),
+          callback_data: `shop_tag_order_${o.id}`
         }
       ]);
     }
@@ -320,7 +367,12 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
   const safePage = clampPage(page, totalPages);
 
   const { results } = await env.DB.prepare(
-    "SELECT id, order_no, item_name, item_icon, price, status, created_at FROM shop_orders WHERE user_key = ? ORDER BY id DESC LIMIT ? OFFSET ?"
+    `SELECT o.id, o.order_no, o.item_name, o.item_icon, o.price, o.status, o.created_at,
+            COALESCE(i.delivery, 'manual') AS delivery,
+            (SELECT COUNT(*) FROM user_group_tags t WHERE t.order_id = o.id) AS tag_applied
+       FROM shop_orders o
+       LEFT JOIN shop_items i ON i.id = o.item_id
+      WHERE o.user_key = ? ORDER BY o.id DESC LIMIT ? OFFSET ?`
   ).bind(userKey, pageSize, pageOffset(safePage, pageSize)).all();
 
   const statusMap = {

@@ -74,6 +74,9 @@ import {
 } from "../admin/features.js";
 import { handleAutoDeleteCallback } from "../admin/auto-delete.js";
 import { beginOrderNote } from "../shop/notes.js";
+import {
+  getTagSession, handleTagCancel, handleTagGroupPick, handleTagOrderEntry, renderTagGroupPicker
+} from "../shop/tags.js";
 
 // ---- 服务 ----
 import { upsertUserInfo, isUserBlocked } from "../services/users.js";
@@ -274,6 +277,39 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     }
     await handleUserCancelOrder(token, env, callback, userKey, orderId);
     await renderMyOrders(token, env, chatId, userKey, msgId, page);
+    return;
+  }
+
+  // ---------- 自定义群组标签（购买后自动发放的引导流程）----------
+  if (data.startsWith("shop_tag_grp_")) {
+    const groupChatId = data.replace("shop_tag_grp_", "");
+    await handleTagGroupPick({ token, env, callback, chatId, messageId: msgId, groupChatId });
+    return;
+  }
+  if (data.startsWith("shop_tag_page_")) {
+    const page = parseInt(data.replace("shop_tag_page_", ""), 10) || 1;
+    const session = await getTagSession(env, chatId);
+    if (!session) {
+      await answerCallback(token, callback.id, "⌛️ 这次设置已经过期，请到「我的订单」重新进入", true);
+      return;
+    }
+    await answerCallback(token, callback.id, `第 ${page} 页`);
+    await renderTagGroupPicker(token, env, chatId, msgId, session, { page });
+    return;
+  }
+  if (data.startsWith("shop_tag_order_")) {
+    const orderId = parseInt(data.replace("shop_tag_order_", ""), 10);
+    if (!Number.isInteger(orderId)) {
+      await answerCallback(token, callback.id, "⚠️ 订单参数无效", true);
+      return;
+    }
+    await handleTagOrderEntry({
+      token, env, callback, chatId, userKey, userId: fromId, messageId: msgId, orderId
+    });
+    return;
+  }
+  if (data === "shop_tag_cancel") {
+    await handleTagCancel({ token, env, callback, chatId, messageId: msgId });
     return;
   }
 

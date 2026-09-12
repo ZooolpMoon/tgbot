@@ -85,6 +85,11 @@ export async function cleanupStaleData(env) {
     "DELETE FROM admin_manage_sessions WHERE updated_at <= datetime('now', '-1 day')"
   ).run();
 
+  // 群标签引导流程（选群 → 填标签）也是 30 分钟有效，这里兜底
+  const tagSessions = await env.DB.prepare(
+    "DELETE FROM group_tag_sessions WHERE updated_at <= datetime('now', '-1 day')"
+  ).run();
+
   // 群规处置：把已到期的临时禁言标记为 expired（返回明细，供定时任务发通知），
   // 并清理一天前仍未确认的处置记录
   const expiredList = await expirePunishments(env);
@@ -109,6 +114,7 @@ export async function cleanupStaleData(env) {
     kbSessions: kbSessions.meta.changes,
     guardSessions: guardSessions.meta.changes,
     adminManageSessions: adminManageSessions.meta.changes,
+    tagSessions: tagSessions.meta.changes,
     expiredPunishments: expiredList.length,
     stalePunishments: stalePunishments.meta.changes,
     staleAppeals: staleAppeals.meta.changes,

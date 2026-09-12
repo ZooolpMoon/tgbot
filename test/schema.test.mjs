@@ -11,7 +11,8 @@ const EXPECTED_TABLES = [
   "users", "user_scenes", "chat_history", "daily_stats", "daily_checkin", "points_log",
   "admin_sessions", "shop_items", "shop_orders", "shop_order_log",
   "shop_add_sessions", "shop_edit_sessions", "admin_logs", "broadcast_drafts",
-  "redeem_codes", "redeem_logs", "shop_order_drafts"
+  "redeem_codes", "redeem_logs", "shop_order_drafts",
+  "bot_chats", "group_tag_sessions", "user_group_tags"
 ];
 
 test("SCHEMA_SQL 覆盖全部预期的表", { skip: !hasSqlite && "需要 node:sqlite" }, () => {

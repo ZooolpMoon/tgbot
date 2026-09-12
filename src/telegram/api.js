@@ -209,6 +209,22 @@ export function getMe(token) {
   return postJSON(`${BASE(token)}/getMe`, {});
 }
 
+/** 查询会话信息（群名、类型等）；机器人已被移出的群会返回 ok:false */
+export function getChat(token, chatId) {
+  return postJSON(`${BASE(token)}/getChat`, { chat_id: chatId });
+}
+
+/**
+ * 设置群内普通成员的标签（Telegram Bot API 9.1+）。
+ * 机器人必须是该群管理员，并勾选「管理标签」（`can_manage_tags`）权限；
+ * 标签 0~16 字符、不允许 emoji；传空字符串表示清除标签。
+ */
+export function setChatMemberTag(token, chatId, userId, tag = "") {
+  return postJSON(`${BASE(token)}/setChatMemberTag`, {
+    chat_id: chatId, user_id: userId, tag: String(tag || "")
+  });
+}
+
 /**
  * 封禁 / 踢出成员。
  * @param {number} [untilDate] Unix 秒；0 表示永久，>0 表示到期自动解封

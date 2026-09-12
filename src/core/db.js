@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS shop_items (
   stock         INTEGER DEFAULT -1,
   category      TEXT    DEFAULT 'virtual',
   per_user_limit INTEGER DEFAULT 0,        -- 每人限购数量，0 = 不限
+  delivery      TEXT    DEFAULT 'manual',  -- manual = 管理员人工发放；group_tag = 购买后自动设置群组标签
   enabled       INTEGER DEFAULT 1,
   created_at    TEXT    DEFAULT CURRENT_TIMESTAMP,
   updated_at    TEXT    DEFAULT CURRENT_TIMESTAMP
@@ -398,6 +399,44 @@ CREATE TABLE IF NOT EXISTS group_rule_versions (
   created_at TEXT    DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_rule_versions ON group_rule_versions(chat_id, version DESC);
+
+-- ==========================================
+-- 🏷️ 群组标签（v3.2.0）
+--
+-- 商城卖「自定义群组标签」：用户买完自己选群 + 填标签，
+-- 机器人调 setChatMemberTag 直接设置（需要机器人在该群是管理员且有 can_manage_tags）。
+-- ==========================================
+
+-- 机器人见过的群：缓存群名与「能不能管标签」，避免每次渲染群列表都调 Telegram
+CREATE TABLE IF NOT EXISTS bot_chats (
+  chat_id    TEXT PRIMARY KEY,
+  title      TEXT    DEFAULT '',
+  tags_ok    INTEGER NOT NULL DEFAULT -1,   -- -1 未知 / 0 不行 / 1 可以
+  checked_at INTEGER NOT NULL DEFAULT 0,    -- 上次检查权限的 Unix 秒
+  updated_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 群标签引导流程（选群 → 填标签），30 分钟过期，定时任务兜底清理
+CREATE TABLE IF NOT EXISTS group_tag_sessions (
+  chat_id     TEXT PRIMARY KEY,
+  user_id     TEXT    NOT NULL,
+  order_id    INTEGER NOT NULL,
+  item_id     INTEGER NOT NULL,
+  step        TEXT    NOT NULL,              -- group = 等选群 / tag = 等标签文字
+  target_chat TEXT    DEFAULT '',
+  updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 机器人设置过的标签（当前值 + 审计；同一群同一人一条）
+CREATE TABLE IF NOT EXISTS user_group_tags (
+  chat_id    TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  tag        TEXT NOT NULL DEFAULT '',
+  order_id   INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (chat_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_group_tags_order ON user_group_tags(order_id);
 `;
 
 let schemaReady = false;
@@ -410,7 +449,7 @@ let schemaPromise = null;
  */
 // v2.9.0 移除「每日任务」后不再建 daily_task_defs / task_edit_sessions / daily_tasks
 // （老库里这三张表会保留但不再使用，需要清理可手动 DROP）
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 
@@ -438,7 +477,19 @@ const MIGRATIONS = [
   ,
   // v2.9.0：每日任务下线，清掉遗留的全局设置（如 task.seeded / task.all_bonus）；
   // 三张 daily_task* 表老库里保留但不再读写，需要彻底清干净可手动 DROP
-  `DELETE FROM scene_settings WHERE scene_key = 'global' AND name LIKE 'task.%'`
+  `DELETE FROM scene_settings WHERE scene_key = 'global' AND name LIKE 'task.%'`,
+
+  // v3.2.0：商品增加「发放方式」，内置一件「自定义群组标签」商品
+  "ALTER TABLE shop_items ADD COLUMN delivery TEXT DEFAULT 'manual'",
+  // 只在还没有 group_tag 商品时插一条：管理员删掉之后不会自己长回来
+  `INSERT INTO shop_items (name, description, icon, price, stock, category, per_user_limit, enabled, delivery)
+   SELECT '自定义群组标签',
+          '给你的群成员标签加一个专属自称号。' || char(10) || char(10) ||
+          '· 购买后选择任意「机器人所在的群」，再发送你想要的标签（1~16 字，不支持 emoji）' || char(10) ||
+          '· 机器人直接设置到你在那个群的成员标签，无需等待管理员发货' || char(10) ||
+          '· 重新购买可以修改；每个群只能有一个标签',
+          '🏷️', 500, -1, 'virtual', 0, 1, 'group_tag'
+   WHERE NOT EXISTS (SELECT 1 FROM shop_items WHERE delivery = 'group_tag')`
 ];
 
 /**
