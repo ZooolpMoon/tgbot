@@ -5,7 +5,7 @@
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { getDateKey } from "../../services/time.js";
 import { logPointChange } from "../../services/points.js";
-import { POINTS } from "../../config/constants.js";
+import { computeCheckinStreak, calcCheckinReward } from "../../services/checkin.js";
 
 export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx }) {
   if (!env.DB) {
@@ -22,38 +22,57 @@ export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx 
   `).bind(userKey, todayStr).run();
 
   if (insertRes.meta.changes === 0) {
-    const totalRes = await env.DB.prepare(
-      "SELECT COUNT(*) AS total FROM daily_checkin WHERE user_key = ?"
-    ).bind(userKey).first();
+    const [totalRes, streak] = await Promise.all([
+      env.DB.prepare("SELECT COUNT(*) AS total FROM daily_checkin WHERE user_key = ?").bind(userKey).first(),
+      computeCheckinStreak(env, userKey, todayStr)
+    ]);
     const totalDays = Number(totalRes?.total) || 0;
+    const nextReward = calcCheckinReward(streak + 1);
     await sendAutoDelete(
       token, chatId,
-      `📅 你今天（${todayStr}）已经签到过啦！\n累计签到：<b>${totalDays}</b> 天\n明天再来吧～`,
+      `📅 你今天（${todayStr}）已经签到过啦！\n` +
+      `🔥 连续签到：<b>${streak}</b> 天\n` +
+      `📊 累计签到：<b>${totalDays}</b> 天\n` +
+      `🎁 明天签到可得 <b>+${nextReward.total}</b> 积分，别断了哦～`,
       "HTML", isGroupCtx, ctx
     );
     return;
   }
 
+  const streak = await computeCheckinStreak(env, userKey, todayStr);
+  const reward = calcCheckinReward(streak);
+  const nextReward = calcCheckinReward(streak + 1);
+
   const updateRes = await env.DB.prepare(
     "UPDATE users SET points = points + ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ? RETURNING points"
-  ).bind(POINTS.CHECKIN_REWARD, userKey).first();
+  ).bind(reward.total, userKey).first();
 
   const newBalance = Number(updateRes?.points);
-  await logPointChange(env, userKey, POINTS.CHECKIN_REWARD, Number.isFinite(newBalance) ? newBalance : 0, `每日签到奖励 (${todayStr})`);
+  await logPointChange(
+    env, userKey, reward.total,
+    Number.isFinite(newBalance) ? newBalance : 0,
+    `签到奖励 连续${streak}天 (${todayStr})`
+  );
 
   const totalRes = await env.DB.prepare(
     "SELECT COUNT(*) AS total FROM daily_checkin WHERE user_key = ?"
   ).bind(userKey).first();
   const totalDays = Number(totalRes?.total) || 0;
 
+  const milestoneLine = reward.milestone > 0
+    ? `🎉 <b>连续满 ${streak} 天里程碑：</b> +${reward.milestone} 积分\n`
+    : ``;
+
   const msg =
     `✅ <b>签到成功！</b>\n` +
     `-------------------------\n` +
     `📅 <b>日期：</b> ${todayStr}（北京时间）\n` +
-    `🎁 <b>奖励：</b> +${POINTS.CHECKIN_REWARD} 积分\n` +
+    `🔥 <b>连续签到：</b> <b>${streak}</b> 天\n` +
+    `🎁 <b>本次奖励：</b> +${reward.total} 积分\n` +
+    milestoneLine +
     `🪙 <b>当前积分：</b> <b>${Number.isFinite(newBalance) ? newBalance : "?"}</b>\n` +
     `📊 <b>累计签到：</b> ${totalDays} 天\n\n` +
-    `明天记得再来哦～`;
+    `⏭️ 明天签到可得 <b>+${nextReward.total}</b> 积分，连续签到奖励会越来越高～`;
 
   await sendAutoDelete(token, chatId, msg, "HTML", isGroupCtx, ctx);
 }

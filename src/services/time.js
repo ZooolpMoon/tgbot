@@ -7,15 +7,38 @@ export function getAppTimeZone(env) {
   return tz || "Asia/Shanghai";
 }
 
-export function getDateKey(env) {
+export function getDateKey(env, date = new Date()) {
   const timeZone = getAppTimeZone(env);
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
-  }).formatToParts(new Date());
+  }).formatToParts(date);
   const v = {};
   for (const p of parts) if (p.type !== "literal") v[p.type] = p.value;
   return `${v.year}-${v.month}-${v.day}`;
+}
+
+/**
+ * 日期键（YYYY-MM-DD）按天数平移，纯字符串运算，不受时区影响。
+ * @param {string} dateKey 形如 2026-09-12
+ * @param {number} deltaDays 正数向后、负数向前
+ */
+export function shiftDateKey(dateKey, deltaDays) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || "").trim());
+  if (!m) return "";
+  const base = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const shifted = new Date(base + Math.trunc(deltaDays) * 86400000);
+  const y = shifted.getUTCFullYear();
+  const mo = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${y}-${mo}-${d}`;
+}
+
+/**
+ * 判断 a 是否是 b 的前一天（用于连续签到判定）。
+ */
+export function isPreviousDay(a, b) {
+  return Boolean(a) && shiftDateKey(a, 1) === b;
 }
