@@ -274,6 +274,15 @@ let schemaReady = false;
 let schemaPromise = null;
 
 /**
+ * Schema 版本号：每次新增表 / 字段 / 数据迁移都要 +1。
+ * Worker 冷启动时先读这个标记，已是最新就跳过建表与迁移，
+ * 避免每次冷启动都跑几十条语句（D1 对单次调用的查询数有限制）。
+ */
+export const SCHEMA_VERSION = 7;
+
+const SCHEMA_VERSION_KEY = "schema.version";
+
+/**
  * 增量迁移语句。
  * 老库升级时补字段，重复执行会报 "duplicate column name"，
  * 这里逐条执行并忽略错误，保证幂等。
@@ -334,10 +343,7 @@ export async function ensureSchema(env) {
   if (schemaReady) return;
 
   if (!schemaPromise) {
-    schemaPromise = env.DB.batch(
-      splitSchemaStatements(SCHEMA_SQL).map((stmt) => env.DB.prepare(stmt))
-    )
-      .then(() => runMigrations(env))
+    schemaPromise = bootstrapSchema(env)
       .then(() => {
         schemaReady = true;
       })
@@ -350,6 +356,42 @@ export async function ensureSchema(env) {
   return schemaPromise;
 }
 
+/** 读取已应用的 Schema 版本（表还不存在时视为 0） */
+async function readSchemaVersion(env) {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT value FROM scene_settings WHERE scene_key = 'global' AND name = ?"
+    ).bind(SCHEMA_VERSION_KEY).first();
+    const n = Number(row?.value);
+    return Number.isFinite(n) ? n : 0;
+  } catch (e) {
+    return 0; // 首次部署：连 scene_settings 都还没有
+  }
+}
+
+async function writeSchemaVersion(env, version) {
+  try {
+    await env.DB.prepare(`
+      INSERT INTO scene_settings (scene_key, name, value, updated_at)
+      VALUES ('global', ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(scene_key, name) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+    `).bind(SCHEMA_VERSION_KEY, String(version)).run();
+  } catch (e) {
+    console.warn("[DB] 写入 Schema 版本失败（不影响运行）:", String(e?.message || e));
+  }
+}
+
+async function bootstrapSchema(env) {
+  const applied = await readSchemaVersion(env);
+  if (applied >= SCHEMA_VERSION) return;
+
+  await env.DB.batch(
+    splitSchemaStatements(SCHEMA_SQL).map((stmt) => env.DB.prepare(stmt))
+  );
+  await runMigrations(env);
+  await writeSchemaVersion(env, SCHEMA_VERSION);
+}
+
 async function runMigrations(env) {
   for (const stmt of MIGRATIONS) {
     try {
@@ -358,7 +400,7 @@ async function runMigrations(env) {
       // 字段已存在（duplicate column name）等情况直接跳过
       const msg = String(e?.message || e || "");
       if (!/duplicate column|already exists/i.test(msg)) {
-        console.warn("[DB] 迁移语句执行失败（已忽略）:", stmt, msg);
+        console.warn("[DB] 迁移语句执行失败（已忽略）:", stmt.slice(0, 80), msg);
       }
     }
   }

@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTestDB, hasSqlite } from "../test-helpers/d1.mjs";
-import { SCHEMA_SQL } from "../src/core/db.js";
+import { SCHEMA_SQL, SCHEMA_VERSION } from "../src/core/db.js";
 import { SHOP, SHOP_CALLBACK, SHOP_EDIT_FIELDS } from "../src/config/constants.js";
 
 const EXPECTED_TABLES = [
@@ -104,4 +104,47 @@ test("商城已不再提供实物分类与发货动作", () => {
   assert.deepEqual(fields, ["name", "price", "stock", "limit", "category", "icon", "description"]);
   assert.equal(SHOP.STATUS_SHIPPED, undefined, "不应再定义 shipped 状态");
   assert.equal(SHOP_CALLBACK.ADMIN_SHIP_PREFIX, undefined, "不应再定义发货回调前缀");
+});
+
+test("ensureSchema 写入 Schema 版本，且已是最新时跳过建表", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB({ withSchema: false });
+
+  const first = await import(`../src/core/db.js?boot=${Date.now()}`);
+  await first.ensureSchema({ DB: db });
+
+  const version = db.get("SELECT value FROM scene_settings WHERE name = 'schema.version'")?.value;
+  assert.equal(Number(version), SCHEMA_VERSION, "应记录当前 Schema 版本");
+
+  // 故意删掉一张表：如果版本号生效，第二次 ensureSchema 不应该重新建它
+  db.exec("DROP TABLE daily_task_defs");
+  const second = await import(`../src/core/db.js?boot2=${Date.now()}`);
+  await second.ensureSchema({ DB: db });
+  const exists = db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='daily_task_defs'");
+  assert.equal(exists, null, "版本已是最新时应跳过建表");
+
+  // 版本落后时应重新建表
+  db.exec("UPDATE scene_settings SET value = '0' WHERE name = 'schema.version'");
+  const third = await import(`../src/core/db.js?boot3=${Date.now()}`);
+  await third.ensureSchema({ DB: db });
+  assert.ok(
+    db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='daily_task_defs'"),
+    "版本落后时应重新建表"
+  );
+  db.close();
+});
+
+test("冷启动时已是最新版本只查一次库", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB({ withSchema: false });
+  const boot = await import(`../src/core/db.js?count=${Date.now()}`);
+  await boot.ensureSchema({ DB: db });
+
+  let queries = 0;
+  const counting = {
+    prepare: (sql) => { queries++; return db.prepare(sql); },
+    batch: (stmts) => db.batch(stmts)
+  };
+  const boot2 = await import(`../src/core/db.js?count2=${Date.now()}`);
+  await boot2.ensureSchema({ DB: counting });
+  assert.equal(queries, 1, "版本已最新时应只读一次版本标记");
+  db.close();
 });

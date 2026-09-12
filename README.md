@@ -772,7 +772,7 @@ tgbot/
 npm run deploy:prod                    # 部署到 Cloudflare（用 wrangler.production.toml）
 npm run dev                            # 本地预览（用 .dev.vars）
 npm run check                          # 语法 + import 自检
-npm test                               # 跑测试（内存 SQLite，69 个用例）
+npm test                               # 跑测试（内存 SQLite，71 个用例）
 
 # 日志与版本
 npx wrangler tail                      # 实时日志
