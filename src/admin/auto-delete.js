@@ -20,8 +20,9 @@ import {
   AUTO_DELETE_GLOBAL_SCOPE, AUTO_DELETE_KINDS, AUTO_DELETE_PRESETS,
   autoDeleteKind, clearAutoDeleteOverride, formatAutoDeleteDelay,
   getAutoDeleteMap, getExplicitAutoDelete, resolveAutoDeleteScope,
-  setAutoDeleteSeconds
+  getAutoDeleteSources, setAutoDeleteSeconds
 } from "../services/auto-delete.js";
+import { describeSource } from "../services/config.js";
 
 /** 面板里的作用域标识：g = 全局默认，c = 本场景 */
 const SCOPES = ["g", "c"];
@@ -47,13 +48,10 @@ function scopeLabel(uctx, isGlobal) {
   return `🏠 本场景（${escapeHtml(uctx?.firstName || uctx?.userId || uctx?.chatId || "")}）`;
 }
 
-/** 某个类型的生效值文案 + 来源标记 */
-function valueTag(kind, effective, explicit, isGlobal) {
+/** 某个类型的生效值文案 + 来源标记（来源来自统一配置模型） */
+function valueTag(kind, effective, sources, scopeKey) {
   const sec = effective[kind.key] ?? kind.defaultSec;
-  const own = explicit[kind.key] !== undefined;
-  const from = own
-    ? (isGlobal ? "全局设置" : "本场景设置")
-    : (isGlobal ? "内置默认" : "跟随全局");
+  const from = describeSource(sources[kind.key] || null, { groupKey: scopeKey, sceneKey: scopeKey });
   return `${formatAutoDeleteDelay(sec)}（${from}）`;
 }
 
@@ -104,6 +102,7 @@ export async function renderAutoDeletePanel(token, env, chatId, messageId, uctx,
 
   const effective = await getAutoDeleteMap(env, scopeKey);
   const explicit = await getExplicitAutoDelete(env, scopeKey);
+  const sources = await getAutoDeleteSources(env, scopeKey);
 
   let text = `🗑️ <b>消息自动删除</b>\n`;
   text += `${LAYOUT.DIVIDER}\n`;
@@ -114,7 +113,7 @@ export async function renderAutoDeletePanel(token, env, chatId, messageId, uctx,
 
   for (const kind of AUTO_DELETE_KINDS) {
     const sec = effective[kind.key] ?? kind.defaultSec;
-    const tag = valueTag(kind, effective, explicit, isGlobal);
+    const tag = valueTag(kind, effective, sources, scopeKey);
     text += `${kind.icon} <b>${kind.label}</b> · ${sec > 0 ? `${formatAutoDeleteDelay(sec)}后删除` : "不删除"}\n`;
     text += `<i>${kind.desc}｜${tag}</i>\n`;
   }
@@ -140,12 +139,13 @@ export async function renderAutoDeleteKind(token, env, chatId, messageId, uctx, 
 
   const effective = await getAutoDeleteMap(env, scopeKey);
   const explicit = await getExplicitAutoDelete(env, scopeKey);
+  const sources = await getAutoDeleteSources(env, scopeKey);
   const sec = effective[kind.key] ?? kind.defaultSec;
 
   let text = `${kind.icon} <b>${kind.label} · 自动删除</b>\n`;
   text += `${LAYOUT.DIVIDER}\n`;
   text += `当前设置范围：${scopeLabel(uctx, isGlobal)}\n`;
-  text += `当前生效：<b>${sec > 0 ? `${formatAutoDeleteDelay(sec)}后删除` : "不删除"}</b>（${valueTag(kind, effective, explicit, isGlobal)}）\n`;
+  text += `当前生效：<b>${sec > 0 ? `${formatAutoDeleteDelay(sec)}后删除` : "不删除"}</b>（${valueTag(kind, effective, sources, scopeKey)}）\n`;
   text += `内置默认：${formatAutoDeleteDelay(kind.defaultSec)}\n`;
   text += `说明：${kind.desc}\n\n`;
   text += `选择保留时长（<b>0 = 不删除</b>）：`;

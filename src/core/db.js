@@ -77,6 +77,21 @@ CREATE TABLE IF NOT EXISTS points_log (
 );
 CREATE INDEX IF NOT EXISTS idx_points_log_key ON points_log(user_key, id DESC);
 
+-- 抽奖记录：source = free（每日免费）/ paid（花积分抽，可多次）
+-- 免费那次用「部分唯一索引」保证每人每天只能中一次
+CREATE TABLE IF NOT EXISTS lottery_draws (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_key   TEXT    NOT NULL,
+  date_str   TEXT    NOT NULL,
+  source     TEXT    NOT NULL,           -- free / paid
+  prize      INTEGER NOT NULL DEFAULT 0,
+  cost       INTEGER NOT NULL DEFAULT 0, -- 本次消耗（免费为 0）
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_lottery_user ON lottery_draws(user_key, date_str);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lottery_free
+  ON lottery_draws(user_key, date_str, source) WHERE source = 'free';
+
 -- ==========================================
 -- 👑 管理员会话
 -- ==========================================
@@ -234,6 +249,29 @@ CREATE TABLE IF NOT EXISTS scene_settings (
 );
 
 -- ==========================================
+-- 👑 管理员与角色（v3.0.0）
+-- owner = 环境变量 MY_TELEGRAM_ID（永远是最高权限，不写在这张表里）
+-- 这张表只存「额外授权的管理员」：admin = 除权限管理外全部；moderator = 只能群规执法
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS bot_admins (
+  user_id    TEXT PRIMARY KEY,
+  role       TEXT    NOT NULL DEFAULT 'admin',   -- admin / moderator
+  note       TEXT    DEFAULT '',
+  granted_by TEXT    DEFAULT '',
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 管理员面板的引导式输入状态（加管理员：输入 ID → 选角色 → 备注），30 分钟过期
+CREATE TABLE IF NOT EXISTS admin_manage_sessions (
+  chat_id    TEXT PRIMARY KEY,
+  step       TEXT    NOT NULL,
+  draft      TEXT    DEFAULT '',
+  updated_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================================
 -- 📚 知识库（RAG）
 -- scope_key = 'global' 为全局知识，其余按场景隔离（例如 group:<群ID>:user:<管理员ID>）
 -- ==========================================
@@ -360,7 +398,7 @@ let schemaPromise = null;
  */
 // v2.9.0 移除「每日任务」后不再建 daily_task_defs / task_edit_sessions / daily_tasks
 // （老库里这三张表会保留但不再使用，需要清理可手动 DROP）
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 15;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 

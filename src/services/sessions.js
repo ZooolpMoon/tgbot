@@ -19,7 +19,8 @@ export const GUIDE_SESSION_TABLES = [
   "shop_add_sessions",
   "shop_edit_sessions",
   "kb_sessions",
-  "guard_sessions"
+  "guard_sessions",
+  "admin_manage_sessions"
 ];
 
 /**

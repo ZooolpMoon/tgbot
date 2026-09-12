@@ -82,6 +82,55 @@ import { logError } from "../core/logger.js";
 import { handleGuardCallback } from "../admin/guard.js";
 import { handleAppealCallback } from "../admin/guard.js";
 import { handleGuardPanelCallback } from "../admin/guard-panel.js";
+import { handleAdminsCallback } from "../admin/admins.js";
+import { CAPABILITIES, can, getAdminRole, isBackstageRole } from "../services/admins.js";
+
+/**
+ * 回调前缀 → 需要的能力（v3.0.0 起的角色权限）。
+ * 顺序敏感：更长的前缀必须排在更短的前面（例如 admin_admins_dok_ 在 admin_admins_d_ 之前）。
+ * 返回 null 表示「任何已授权角色都能用」。
+ */
+const CALLBACK_CAPABILITIES = [
+  ["admin_admins", "manage_admins"],
+  ["admin_users", "manage_users"],
+  ["admin_groups_", "manage_users"],
+  ["admin_group_m_", "manage_users"],
+  ["admin_manage_user_", "manage_users"],
+  ["admin_detail_", "manage_users"],
+  ["admin_menu_pts_", "manage_users"],
+  ["admin_modpts_", "manage_users"],
+  ["admin_log_pts_", "manage_users"],
+  ["admin_menu_limit_", "manage_users"],
+  ["admin_modlimit_", "manage_users"],
+  ["admin_menu_rate_", "manage_users"],
+  ["admin_setrate_", "manage_users"],
+  ["admin_block_", "manage_users"],
+  ["admin_clearmem_", "manage_users"],
+  ["admin_deluser_confirm_", "manage_users"],
+  ["admin_deluser_do_", "manage_users"],
+  ["admin_banned_", "manage_users"],
+  ["admin_unban_", "manage_users"],
+  ["shop_admin_", "manage_shop"],
+  ["admin_kb", "manage_kb"],
+  ["admin_guard", "manage_guard"],
+  ["admin_feat", "manage_features"],
+  ["admin_autodel", "manage_autodelete"],
+  ["admin_codes_", "manage_codes"],
+  ["admin_code_toggle_", "manage_codes"],
+  ["admin_logs", "view_logs"],
+  ["admin_stats", "view_stats"],
+  ["admin_status", "view_stats"],
+  ["admin_broadcast_", "broadcast"]
+];
+
+/** 某个回调数据需要的能力（null = 任何已授权角色） */
+export function capabilityForCallback(data) {
+  const raw = String(data || "");
+  for (const [prefix, capability] of CALLBACK_CAPABILITIES) {
+    if (raw.startsWith(prefix)) return capability;
+  }
+  return null;
+}
 
 /**
  * 处理按钮回调（callback_query）。
@@ -94,6 +143,8 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   const sceneKey = uctx.sceneKey;
   const userKey = uctx.userKey;
   const data = callback?.data || "";
+  /** 当前用户角色（2.8 之前解析一次，供执法卡片与后台校验共用） */
+  let role = null;
 
   if (!callback?.message?.message_id) {
     if (callback?.id) {
@@ -247,29 +298,48 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   }
 
   // ==========================================
+  // 2.6 抽奖（任何用户，受 lottery 功能开关控制）
+  // ==========================================
+  if (data.startsWith("lottery_")) {
+    if (!(await isFeatureEnabled(env, sceneKey, "lottery"))) {
+      await answerCallback(token, callback.id, "⚠️ 本场景已关闭「每日抽奖」", true);
+      return;
+    }
+    const { handleLotteryCallback } = await import("./commands/lottery.js");
+    await handleLotteryCallback({ env, token, callback, chatId, userKey, messageId: msgId, data });
+    return;
+  }
+
+  // ==========================================
   // 2.8 群规执法确认卡片（本群管理员也能点，因此放在管理员校验之前）
   // ==========================================
+  // 走到这里才解析角色：游戏 / 商城 / 积分这些普通用户的按钮不会多查一次库
+  role = await getAdminRole(env, fromId, { ownerId: myId });
+
   if (data.startsWith(ADMIN_CALLBACK.GUARD_PREFIX)) {
-    await handleGuardCallback({ env, ctx, token, chatId, callback, data, myId, msgId });
+    await handleGuardCallback({ env, ctx, token, chatId, callback, data, myId, msgId, role });
     return;
   }
 
   // 申诉卡片（可能发到管理员私聊或群里的管理员）——同样放在管理员校验之前
   if (data.startsWith("appeal_")) {
-    await handleAppealCallback({ env, ctx, token, callback, data, myId, chatId, msgId });
+    await handleAppealCallback({ env, ctx, token, callback, data, myId, chatId, msgId, role });
     return;
   }
 
   // ==========================================
   // 3. 管理员权限校验
   // ==========================================
-  if (!myId || fromId !== myId) {
-    await answerCallback(token, callback.id, "❌ 权限不足：只有管理员可使用此菜单！", true);
+  // v3.0.0：按「角色 + 能力」判定，不再只认拥有者（role 在上面的执法卡片分支前已解析）
+  const needed = capabilityForCallback(data);
+  if (!role || (needed && !can(role, needed))) {
+    const hint = needed ? `该功能需要「${CAPABILITIES[needed]}」权限` : "需要管理员权限";
+    await answerCallback(token, callback.id, `❌ 权限不足：${hint}`, true);
     return;
   }
 
-  // 刷新管理员会话（30 分钟）
-  if (env.DB) {
+  // 刷新管理员会话（30 分钟）；执法员不进后台，不需要会话
+  if (env.DB && isBackstageRole(role)) {
     try {
       const expiresAt = Math.floor(Date.now() / 1000) + RULES.ADMIN_SESSION_SEC;
       await env.DB.prepare(
@@ -612,6 +682,21 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       await answerCallback(token, callback.id, "全局设置");
     }
 
+    // ---------- 👑 管理员与权限（仅拥有者）----------
+    else if (data === ADMIN_CALLBACK.ADMINS_HOME
+      || data.startsWith(ADMIN_CALLBACK.ADMINS_ADD)
+      || data.startsWith(ADMIN_CALLBACK.ADMINS_HELP)
+      || data.startsWith(ADMIN_CALLBACK.ADMINS_PAGE_PREFIX)
+      || data.startsWith(ADMIN_CALLBACK.ADMINS_USER_PREFIX)
+      || data.startsWith(ADMIN_CALLBACK.ADMINS_SET_PREFIX)
+      || data.startsWith(ADMIN_CALLBACK.ADMINS_DELOK_PREFIX)
+      || data.startsWith(ADMIN_CALLBACK.ADMINS_DEL_PREFIX)
+      || data.startsWith(ADMIN_CALLBACK.ADMINS_GUIDE_ROLE_PREFIX)) {
+      await handleAdminsCallback({
+        env, token, callback, chatId, msgId, data, adminId: fromId, uctx
+      });
+    }
+
     // ---------- 删除场景 ----------
     else if (data.startsWith(ADMIN_CALLBACK.DELUSER_DONE_PREFIX)) {
       await handleDeleteScene({
@@ -646,7 +731,7 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     else if (data === ADMIN_CALLBACK.MAIN_MENU) {
       // 群聊里不显示商城入口
       const showShop = !isGroupCtx;
-      await renderAdminMainMenu(token, chatId, msgId, showShop);
+      await renderAdminMainMenu(token, chatId, msgId, showShop, role);
       await answerCallback(token, callback.id, "返回主菜单");
     }
 

@@ -345,9 +345,10 @@ test("功能开关菜单：三级入口 + 开关两列排版", { skip: !hasSqlit
   // 全局开关页：两列、行数受控
   const global = await click("admin_feat_g");
   assert.ok(global.inline_keyboard.every((row) => row.length <= 2), "开关按钮应两列排布");
-  assert.ok(global.inline_keyboard.length <= 5, `开关页行数过多：${global.inline_keyboard.length}`);
+  // 开关数量会随功能增加（v3.0.0 加了转账 / 抽奖）：整体排版上限是 8 行
+  assert.ok(global.inline_keyboard.length <= 8, `开关页行数过多：${global.inline_keyboard.length}`);
   const toggles = global.inline_keyboard.flat().map((b) => b.callback_data).filter((d) => d.startsWith("admin_feat_t_"));
-  assert.ok(toggles.length >= 6, "六个开关都应可点击");
+  assert.ok(toggles.length >= 6, "所有开关都应可点击");
   assert.ok(toggles.every((d) => Buffer.byteLength(d, "utf8") <= 64));
 
   // 群聊场景列表：两列分页列表

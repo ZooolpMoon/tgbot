@@ -10,7 +10,7 @@ npm run deploy         # 部署（wrangler.toml）
 npm run deploy:prod    # 部署（wrangler.production.toml）
 npm run tail           # 实时看线上日志
 npm run check          # 语法 + 相对 import 路径自检
-npm test               # 193 个测试用例
+npm test               # 220 个测试用例
 npm run backup         # 导出线上 D1 到 backups/
 npm run backup:local   # 导出本地 D1
 npm run backup:config  # 把生产配置备份到私有仓库（需 .config-backup）
@@ -32,6 +32,9 @@ npm run backup:config  # 把生产配置备份到私有仓库（需 .config-back
 | `features.test.mjs` | 三级功能开关（全局 / 场景覆盖 / 恢复默认） |
 | `auto-delete.test.mjs` | 消息自动删除：类型默认值、两级设置、按类型取时长、面板读写 |
 | `bugfix.test.mjs` | 缺陷回归：管理员不可被封禁、引导会话互斥、HTML 转义、二次确认、出站消息 HTML 体检 |
+| `admins.test.mjs` | 角色与能力矩阵、命令 / 回调权限拦截、引导式加管理员、菜单与 /help 裁剪 |
+| `points-play.test.mjs` | 积分转账（成功与各种失败路径）与每日抽奖（免费限一次、付费扣分、奖池期望值） |
+| `ai-tools.test.mjs` | AI 工具解析、只读工具执行、一轮工具调用闭环、开关关闭时不注入工具说明 |
 | `history.test.mjs` | AI 上下文裁剪与预算 |
 | `redeem.test.mjs` | 兑换码生成、兑换、次数与过期 |
 | `shop.test.mjs` | 订单取消退款、库存回滚、下单备注 |

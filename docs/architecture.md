@@ -68,6 +68,12 @@ src/
 ├── admin/                   # 管理面板：用户/群组/封禁/详情/积分/限额/频率/知识库/群规/自动删除/日志/统计
 ├── services/                # 业务服务
 │   ├── users.js · points.js · quota.js · time.js · checkin.js · admin-log.js
+│   ├── admins.js            # 管理员与角色（owner / admin / moderator + 能力判定）
+│   ├── config.js            # 统一配置模型：作用域链 → 生效值 + 来源
+│   ├── cache.js             # isolate 级 TTL 缓存（按数据库实例隔离）
+│   ├── alerts.js            # 异常私聊告警（同类 5 分钟去重）
+│   ├── ai-tools.js          # AI 只读工具（积分 / 签到 / 排行 / 群规 / 知识库）
+│   ├── lottery.js           # 抽奖：每日免费 + 花积分抽
 │   ├── features.js          # 三级功能开关
 │   ├── auto-delete.js       # 消息自动删除设置（按类型两级配置）
 │   ├── settings.js          # 全局键值设置
@@ -121,6 +127,9 @@ docs/                        # 本目录
 | 积分与签到 | `points_log` | 积分流水：变动值、变动后余额、原因、时间 |
 | | `daily_stats` | 每场景每天的消息计数（额度控制） |
 | | `daily_checkin` | 签到记录（用户 + 日期） |
+| | `lottery_draws` | 抽奖记录（免费那次靠部分唯一索引保证每天一次） |
+| 权限 | `bot_admins` | 额外授权的管理员（角色 / 备注 / 授权人）；拥有者由环境变量决定 |
+| | `admin_manage_sessions` | 添加管理员的引导式输入状态（30 分钟过期） |
 | 商城 | `shop_items` | 商品：价格、库存、分类、限购、上下架 |
 | | `shop_orders` | 订单：订单号、用户、商品与价格快照、状态、备注 |
 | | `shop_order_log` | 订单操作日志 |

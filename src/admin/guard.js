@@ -28,6 +28,7 @@ import {
 } from "../services/guard.js";
 import { logAdminAction } from "../services/admin-log.js";
 import { logError } from "../core/logger.js";
+import { can } from "../services/admins.js";
 
 /** 目标会话是不是群（Telegram 的群 ID 是负数） */
 function isGroupChatId(chatId) {
@@ -246,7 +247,7 @@ export async function requestPunishmentFromCommand({
 /**
 * 确认卡片回调：guard_go_<id> / guard_no_<id> / guard_set_<id>_<action>
 */
-export async function handleGuardCallback({ env, ctx, token, chatId, callback, data, myId, msgId }) {
+export async function handleGuardCallback({ env, ctx, token, chatId, callback, data, myId, msgId, role = null }) {
   if (!env.DB) return;
 
   const parts = String(data).split("_");
@@ -272,11 +273,13 @@ export async function handleGuardCallback({ env, ctx, token, chatId, callback, d
   // 但真正要处置的群永远是 record.chat_id —— 权限检查与公告都必须用它。
   const groupChatId = String(record.chat_id);
 
-  // 只有发起人本人或机器人管理员能确认
+  // 只有发起人本人、拥有执法权限的管理员能确认
   const operatorId = String(callback.from?.id || "");
-  const allowed = operatorId === String(record.operator_id) || (myId && operatorId === String(myId));
+  const allowed = operatorId === String(record.operator_id)
+    || (myId && operatorId === String(myId))
+    || (role && can(role, "enforce"));
   if (!allowed) {
-    await answerCallback(token, callback.id, "❌ 只有发起该处置的管理员才能确认", true);
+    await answerCallback(token, callback.id, "❌ 只有发起人或有执法权限的管理员才能确认", true);
     return;
   }
 
@@ -483,7 +486,7 @@ export async function handleAppealRequest({ env, token, chatId, uctx, rawText, c
 /**
  * 申诉卡片回调：appeal_ok_<id> / appeal_no_<id>
  */
-export async function handleAppealCallback({ env, token, callback, data, myId, chatId, msgId, ctx = null }) {
+export async function handleAppealCallback({ env, token, callback, data, myId, chatId, msgId, ctx = null, role = null }) {
   if (!env.DB) return;
 
   const parts = String(data).split("_");
@@ -507,9 +510,10 @@ export async function handleAppealCallback({ env, token, callback, data, myId, c
   // 权限：机器人管理员，或原处置所在群的管理员
   const operatorId = String(callback.from?.id || "");
   const allowed = (myId && operatorId === String(myId))
+    || (role && can(role, "enforce"))
     || (await isGroupAdmin(token, appeal.chat_id, operatorId));
   if (!allowed) {
-    await answerCallback(token, callback.id, "❌ 只有管理员能处理申诉", true);
+    await answerCallback(token, callback.id, "❌ 只有管理员或有执法权限的角色能处理申诉", true);
     return;
   }
 

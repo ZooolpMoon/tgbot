@@ -10,8 +10,13 @@
 // ==========================================
 
 import { logError } from "../core/logger.js";
+import { cacheClear, cacheGet, cacheSet } from "./cache.js";
+import { buildScopeChain, loadScopedSettings } from "./config.js";
 
 export const GLOBAL_SCOPE = "global";
+/** 缓存命名空间与 TTL（写路径会主动清，TTL 只是兜底） */
+const CACHE_NS = "features";
+const CACHE_TTL_MS = 30 * 1000;
 
 export const FEATURES = [
   { key: "ai", label: "AI 对话", desc: "私聊 / 群聊里的 AI 回复" },
@@ -20,7 +25,10 @@ export const FEATURES = [
   { key: "game", label: "游戏大厅", desc: "骰子、老虎机、硬币、转盘" },
   { key: "checkin", label: "每日签到", desc: "连续签到奖励" },
   { key: "shop", label: "积分商城", desc: "商品浏览与兑换" },
-  { key: "redeem", label: "兑换码", desc: "用兑换码领积分" }
+  { key: "redeem", label: "兑换码", desc: "用兑换码领积分" },
+  { key: "transfer", label: "积分转账", desc: "用户之间互相转积分" },
+  { key: "lottery", label: "每日抽奖", desc: "免费抽奖与花积分抽奖" },
+  { key: "ai_tools", label: "AI 工具调用", desc: "让 AI 能查积分 / 签到 / 排行榜 / 群规 / 知识库（只读）" }
 ];
 
 const PREFIX = "feature.";
@@ -63,37 +71,29 @@ export async function getExplicitSettings(env, scopeKey) {
  * @param {string|null} sceneKey 不传则只看全局
  */
 export async function getFeatureMap(env, sceneKey = null) {
+  const cacheKey = sceneKey || GLOBAL_SCOPE;
+  const cached = cacheGet(CACHE_NS, cacheKey, env.DB);
+  if (cached) return cached;
+
   const map = {};
   for (const f of FEATURES) map[f.key] = true;
   if (!env.DB) return map;
 
-  const useScene = Boolean(sceneKey) && sceneKey !== GLOBAL_SCOPE;
-
-  // 一次查询取出两层设置
-  let rows = [];
-  try {
-    const stmt = useScene
-      ? env.DB.prepare("SELECT scene_key, name, value FROM scene_settings WHERE scene_key IN (?, ?)").bind(GLOBAL_SCOPE, sceneKey)
-      : env.DB.prepare("SELECT scene_key, name, value FROM scene_settings WHERE scene_key = ?").bind(GLOBAL_SCOPE);
-    rows = (await stmt.all()).results || [];
-  } catch (e) {
-    logError("读取功能开关失败：", e);
-    return map;
+  // 统一走配置模型：场景 → 全局（缺少哪层就用下一层）
+  const settings = await loadScopedSettings(env, buildScopeChain({ sceneKey }), PREFIX);
+  for (const [key, item] of settings) {
+    if (isFeatureKey(key)) map[key] = item.value !== "off";
   }
 
-  const apply = (scope) => {
-    for (const row of rows) {
-      if (String(row.scene_key) !== scope) continue;
-      const name = String(row.name || "");
-      if (!name.startsWith(PREFIX)) continue;
-      const key = name.slice(PREFIX.length);
-      if (isFeatureKey(key)) map[key] = String(row.value) !== "off";
-    }
-  };
+  return cacheSet(CACHE_NS, cacheKey, map, CACHE_TTL_MS, env.DB);
+}
 
-  apply(GLOBAL_SCOPE);
-  if (useScene) apply(sceneKey);
-  return map;
+/** 每个开关当前生效值来自哪一层（面板显示「来源」用） */
+export async function getFeatureSources(env, sceneKey = null) {
+  const settings = await loadScopedSettings(env, buildScopeChain({ sceneKey }), PREFIX);
+  const sources = {};
+  for (const [key, item] of settings) sources[key] = item.scope;
+  return sources;
 }
 
 /** 判断某个场景下某功能是否可用（未知开关一律视为可用） */
@@ -111,6 +111,7 @@ export async function setFeature(env, scopeKey, feature, enabled) {
     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(scene_key, name) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
   `).bind(scopeKey, `${PREFIX}${feature}`, enabled ? "on" : "off").run();
+  cacheClear(CACHE_NS);
   return true;
 }
 
@@ -120,6 +121,7 @@ export async function clearFeatureOverrides(env, scopeKey) {
   const res = await env.DB.prepare(
     "DELETE FROM scene_settings WHERE scene_key = ? AND name LIKE ?"
   ).bind(scopeKey, `${PREFIX}%`).run();
+  cacheClear(CACHE_NS);
   return Number(res.meta.changes) || 0;
 }
 
@@ -128,5 +130,6 @@ export async function clearFeatureOverride(env, scopeKey, feature) {
   if (!env.DB || !isFeatureKey(feature) || !scopeKey) return false;
   await env.DB.prepare("DELETE FROM scene_settings WHERE scene_key = ? AND name = ?")
     .bind(scopeKey, `${PREFIX}${feature}`).run();
+  cacheClear(CACHE_NS);
   return true;
 }

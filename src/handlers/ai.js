@@ -16,11 +16,12 @@ import { reserveDailyQuota, refundDailyQuota } from "../services/quota.js";
 import { tryDeductPoints, refundPoint, logPointChange } from "../services/points.js";
 import { resolveHistoryBudget, clampMessage, trimHistory } from "../services/history.js";
 import { isFeatureEnabled } from "../services/features.js";
+import { buildToolPrompt, buildToolResultText, parseToolCall, runTool } from "../services/ai-tools.js";
 import {
   searchKnowledge, buildKnowledgeContext, buildKnowledgeInstruction,
   resolveAnswerMode, KB_GLOBAL_SCOPE
 } from "../services/knowledge.js";
-import { logError, logWarn } from "../core/logger.js";
+import { logError, logInfo, logWarn } from "../core/logger.js";
 
 /**
  * AI 对话主流程。
@@ -116,6 +117,13 @@ export async function handleAIRequest({
     baseSystemPrompt += `\n【用户个性化要求】：${userConfig.customPrompt}`;
   }
 
+  // ---------- 🛠️ 工具调用说明（v3.0.0）----------
+  // 打开开关时告诉模型「可以查数据」，它需要时会输出一行 JSON，我们在下面解释执行
+  const toolsEnabled = await isFeatureEnabled(env, sceneKey, "ai_tools");
+  if (toolsEnabled) {
+    baseSystemPrompt += buildToolPrompt();
+  }
+
   // ---------- 知识库检索（RAG）----------
   // 群聊用「群级作用域」（整个群共享一份），私聊命中全局知识库；
   // 检索失败或没命中都不会影响正常对话。
@@ -167,7 +175,7 @@ export async function handleAIRequest({
     return;
   }
 
-  const { text: replyText, model: usedModel, fallback } = await runAIWithFallback(env, messages);
+  let { text: replyText, model: usedModel, fallback } = await runAIWithFallback(env, messages);
 
   if (!replyText) {
     await rollback(env, pointsCharged, quotaReserved, userKey, sceneKey, chargedDateStr || todayStr, previousLastMsgTime);
@@ -175,6 +183,26 @@ export async function handleAIRequest({
     return;
   }
   if (fallback) logWarn(`主模型不可用，已回退到 ${usedModel}`);
+
+  // ---------- 🛠️ 工具调用：只允许一轮 ----------
+  // 模型按约定输出 {"tool":...} 时，我们执行这个只读工具，把结果喂回去再要一次最终回答。
+  if (toolsEnabled) {
+    const call = parseToolCall(replyText);
+    if (call) {
+      const outcome = await runTool(env, call.name, call.args, { userKey, chatId, isGroupCtx });
+      logInfo(`AI 工具调用：${call.name}（${outcome.ok ? "成功" : `失败：${outcome.error}`}）`);
+      const followUp = [
+        ...messages,
+        { role: "assistant", content: replyText },
+        { role: "user", content: `${buildToolResultText(call, outcome)}\n请基于上面的数据用自然语言回答用户刚才的问题，不要再输出 JSON。` }
+      ];
+      const second = await runAIWithFallback(env, followUp);
+      if (second.text) {
+        replyText = second.text;
+        usedModel = second.model;
+      }
+    }
+  }
 
   // 记录积分流水（扣分）
   if (env.DB && pointsCharged) {

@@ -23,6 +23,8 @@ import { cmdGame } from "./game.js";
 import { cmdPoints } from "./points.js";
 import { cmdRank } from "./rank.js";
 import { cmdRedeem } from "./redeem.js";
+import { cmdTransfer } from "./transfer.js";
+import { cmdLottery } from "./lottery.js";
 import { cmdShop } from "./shop.js";
 import { cmdOrders } from "./orders.js";
 import { cmdCodeNew, cmdCodeList } from "./codes.js";
@@ -35,10 +37,12 @@ import {
 import { cmdGuard, cmdAppeal, cmdReport } from "./guard.js";
 import { cmdSyncMenu } from "./system.js";
 import { isGroupAdmin } from "../../services/guard.js";
+import { can, isBackstageRole } from "../../services/admins.js";
 import { cmdShopEdit } from "../../shop/edit.js";
 import { startAddItem, cancelAddItem } from "../../shop/add.js";
 import {
   cmdAdminRoot,
+  cmdAdmins,
   cmdUsersPrivate,
   cmdUsersGroup,
   cmdStats,
@@ -115,68 +119,80 @@ export const COMMANDS = [
     handle: cmdRedeem,
     privateHint: "🎟️ 兑换码请到<b>私聊</b>里使用，避免被群里其他人看到。"
   },
+  {
+    name: "/transfer", aliases: ["/pay", "/give"], feature: "transfer",
+    desc: "把积分转给其他用户", usage: "/transfer <用户ID|@用户名> <数量>", handle: cmdTransfer
+  },
+  {
+    name: "/lottery", aliases: ["/draw", "/choujiang"], feature: "lottery",
+    desc: "每日抽奖（每天 1 次免费，也可花积分抽）", handle: cmdLottery
+  },
 
   // ===== 管理员（需先 /admin 解锁）=====
   {
-    name: "/admin", scope: "admin", needsUnlock: false,
+    name: "/admin", scope: "admin", needsUnlock: false, capability: "view_stats",
     desc: "打开管理控制台", handle: cmdAdminRoot
   },
   {
-    name: "/users", aliases: ["/users_private"], scope: "admin",
+    name: "/admins", aliases: ["/admin_list"], scope: "admin", capability: "manage_admins",
+    desc: "管理员与权限管理（仅拥有者）", handle: cmdAdmins
+  },
+  {
+    name: "/users", aliases: ["/users_private"], scope: "admin", capability: "manage_users",
     desc: "私聊场景列表", handle: cmdUsersPrivate
   },
   {
-    name: "/users_group", scope: "admin",
+    name: "/users_group", scope: "admin", capability: "manage_users",
     desc: "群聊场景列表", handle: cmdUsersGroup
   },
   {
-    name: "/stats", scope: "admin",
+    name: "/stats", scope: "admin", capability: "view_stats",
     desc: "系统使用统计", handle: cmdStats
   },
   {
-    name: "/addpoints", scope: "admin",
+    name: "/addpoints", scope: "admin", capability: "manage_users",
     desc: "增减用户全局积分", usage: "/addpoints <场景ID> <数量>", handle: cmdAddPoints
   },
   {
-    name: "/clearmem", aliases: ["/clearmemory"], scope: "admin",
+    name: "/clearmem", aliases: ["/clearmemory"], scope: "admin", capability: "manage_users",
     desc: "清除指定场景 / 群组 / 群成员的 AI 记忆", usage: "/clearmem <群ID> [用户ID]", handle: cmdClearMem
   },
   {
-    name: "/kb", aliases: ["/knowledge"], scope: "admin",
+    name: "/kb", aliases: ["/knowledge"], scope: "admin", capability: "manage_kb",
     desc: "知识库（上传资料 / 让 AI 依据资料回答）", handle: cmdKb
   },
   {
-    name: "/ban", scope: "admin",
+    name: "/ban", scope: "admin", capability: "enforce",
     groupAdmin: true, feature: "guard",
     desc: "封禁用户（群里：@某人 + 理由，需确认）", usage: "/ban <用户ID|@某人> [理由]", handle: cmdBan
   },
   {
-    name: "/unban", scope: "admin",
+    name: "/unban", scope: "admin", capability: "enforce",
     groupAdmin: true, feature: "guard",
     desc: "解除封禁（机器人 + 群）", usage: "/unban <用户ID|@某人>", handle: cmdUnban
   },
   {
-    name: "/kick", scope: "admin",
+    name: "/kick", scope: "admin", capability: "enforce",
     groupAdmin: true, feature: "guard",
     desc: "踢出群组（可重新加入，需理由）", usage: "/kick <@某人> <理由>", handle: cmdKick
   },
   {
-    name: "/groupban", aliases: ["/gban"], scope: "admin",
+    name: "/groupban", aliases: ["/gban"], scope: "admin", capability: "enforce",
     groupAdmin: true, feature: "guard",
     desc: "群内封禁（不可重新加入，需理由）", usage: "/groupban <@某人> <理由>", handle: cmdGroupBan
   },
   {
-    name: "/mute", scope: "admin",
+    name: "/mute", scope: "admin", capability: "enforce",
     groupAdmin: true, feature: "guard",
     desc: "群内禁言（支持时长，需理由）", usage: "/mute <@某人> [时长] <理由>", handle: cmdMute
   },
   {
-    name: "/unmute", scope: "admin",
+    name: "/unmute", scope: "admin", capability: "enforce",
     groupAdmin: true, feature: "guard",
     desc: "解除群内禁言", usage: "/unmute <@某人>", handle: cmdUnmute
   },
   {
-    name: "/rules", scope: "admin",
+    name: "/rules", scope: "admin", capability: "enforce",
     groupAdmin: true, feature: "guard",
     desc: "查看本群群规与可识别的违规类型", handle: cmdRules
   },
@@ -186,7 +202,7 @@ export const COMMANDS = [
     groupHint: "📣 举报请在<b>群里</b>使用：先回复违规消息，再发 <code>/report 发广告</code>。"
   },
   {
-    name: "/guard", scope: "admin",
+    name: "/guard", scope: "admin", capability: "manage_guard",
     desc: "群规执法面板（群里：编辑群规 / 默认处置 / 处置记录）", handle: cmdGuard
   },
   {
@@ -195,33 +211,33 @@ export const COMMANDS = [
     privateHint: "🙋 申诉请私聊机器人，避免在群里公开。"
   },
   {
-    name: "/setrules", scope: "admin",
+    name: "/setrules", scope: "admin", capability: "manage_guard",
     desc: "设置本群群规（执法时用它校验理由）", usage: "/setrules <群规正文>", handle: cmdSetRules
   },
   {
-    name: "/syncmenu", scope: "admin",
+    name: "/syncmenu", scope: "admin", capability: "manage_features",
     desc: "把指令同步到输入框菜单（/ 弹出列表）", handle: cmdSyncMenu
   },
   {
-    name: "/code_new", scope: "admin",
+    name: "/code_new", scope: "admin", capability: "manage_codes",
     desc: "生成兑换码", usage: "/code_new <积分> [次数] [有效天数]", handle: cmdCodeNew
   },
   {
-    name: "/code_list", aliases: ["/codes"], scope: "admin",
+    name: "/code_list", aliases: ["/codes"], scope: "admin", capability: "manage_codes",
     desc: "兑换码列表与启停", handle: cmdCodeList
   },
   {
-    name: "/broadcast", aliases: ["/announce"], scope: "admin", privateOnly: true,
+    name: "/broadcast", aliases: ["/announce"], scope: "admin", privateOnly: true, capability: "broadcast",
     desc: "群发给所有私聊用户（仅私聊）", usage: "/broadcast <内容>", handle: cmdBroadcast,
     privateHint: "📢 群发消息仅支持<b>私聊</b>使用。"
   },
   {
-    name: "/shop_admin", scope: "admin", privateOnly: true, feature: "shop",
+    name: "/shop_admin", scope: "admin", privateOnly: true, feature: "shop", capability: "manage_shop",
     desc: "商城管理（仅私聊）", handle: renderShopAdmin,
     privateHint: "🛒 商城管理仅支持<b>私聊</b>使用。"
   },
   {
-    name: "/shop_add", scope: "admin", privateOnly: true, feature: "shop",
+    name: "/shop_add", scope: "admin", privateOnly: true, feature: "shop", capability: "manage_shop",
     desc: "引导式添加商品（仅私聊）", handle: async (ctx) => {
       const arg = argText(ctx.rawText, "/shop_add").toLowerCase();
       if (arg === "cancel" || arg === "取消") await cancelAddItem(ctx.token, ctx.env, ctx.chatId);
@@ -231,6 +247,7 @@ export const COMMANDS = [
   },
   {
     name: "/shop_edit", aliases: ["/edititem"], scope: "admin", privateOnly: true, feature: "shop",
+    capability: "manage_shop",
     desc: "引导式编辑商品（仅私聊）", usage: "/shop_edit <商品ID>", handle: cmdShopEdit,
     privateHint: "🛒 商品编辑仅支持<b>私聊</b>使用。"
   }
@@ -265,22 +282,25 @@ export async function dispatchCommand(text, ctx) {
   const cmd = resolveCommand(text);
   if (!cmd) return false;
 
-  const { env, ctx: workerCtx, token, chatId, sceneKey, isGroupCtx, isMaster, uctx } = ctx;
+  const { env, ctx: workerCtx, token, chatId, sceneKey, isGroupCtx, isMaster, uctx, role } = ctx;
 
   // 1) 管理员权限
-  // 带 groupAdmin 标记的指令，本群管理员（creator / administrator）也能用，
-  // 否则「群里处置」这个能力就只剩机器人管理员一个人能用了。
+  // 角色（owner / admin / moderator）按「能力」判定；带 groupAdmin 标记的指令，
+  // 本群管理员（creator / administrator）也能用，否则群里处置只剩机器人管理员能干。
   if (cmd.scope === "admin") {
-    const localGroupAdmin = !isMaster && cmd.groupAdmin && isGroupCtx && env?.DB
+    const localGroupAdmin = cmd.groupAdmin && isGroupCtx && env?.DB && uctx?.userId
       ? await isGroupAdmin(token, chatId, uctx?.userId)
       : false;
+    // capability 为空表示「任何已授权角色都能用」（例如 /admin 打开控制台）
+    const botAdmin = Boolean(role) && (cmd.capability ? can(role, cmd.capability) : true);
 
-    if (!isMaster && !localGroupAdmin) {
+    if (!botAdmin && !localGroupAdmin) {
       await sendAutoDelete(token, chatId, ERR.PERMISSION_DENIED, null, isGroupCtx, workerCtx);
       return true;
     }
-    // 解锁只针对机器人管理员；本群管理员没有 /admin 会话，不需要（也无法）解锁
-    if (isMaster && cmd.needsUnlock !== false && !(await checkAdminUnlocked(env, isMaster, chatId))) {
+    // 解锁只针对「后台角色」（owner / admin）；执法员、本群管理员没有 /admin 会话
+    const needsSession = isBackstageRole(role) && botAdmin && cmd.needsUnlock !== false;
+    if (needsSession && !(await checkAdminUnlocked(env, chatId))) {
       await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, workerCtx);
       return true;
     }
@@ -319,9 +339,11 @@ export async function dispatchCommand(text, ctx) {
  * 由命令表生成 /help 文案。
  * 普通用户看不到管理指令，群聊里看不到「仅私聊」指令。
  */
-export function buildHelpText({ isMaster, isGroupCtx }) {
+export function buildHelpText({ isMaster, isGroupCtx, role: roleArg }) {
+  // 兼容旧调用：没有 role 时按 owner / 普通用户推断
+  const role = roleArg ?? (isMaster ? "owner" : null);
   const visible = COMMANDS.filter((c) => {
-    if (c.scope === "admin") return isMaster;
+    if (c.scope === "admin") return Boolean(role) && (c.capability ? can(role, c.capability) : true);
     if (c.privateOnly) return !isGroupCtx;
     if (c.groupOnly) return isGroupCtx;
     return true;
@@ -343,8 +365,8 @@ export function buildHelpText({ isMaster, isGroupCtx }) {
   text += `👤 <b>普通指令</b>\n`;
   text += userCmds.map(line).join("\n") + "\n";
 
-  if (isMaster) {
-    text += `\n👑 <b>管理员指令（仅你可见，需先 /admin）</b>\n`;
+  if (role && adminCmds.length > 0) {
+    text += `\n👑 <b>管理员指令（仅你可见，大多数需先 /admin 解锁）</b>\n`;
     text += adminCmds.map(line).join("\n") + "\n";
   } else {
     text += `\n👑 <b>管理员指令</b>\n• <i>仅管理员可用，如需使用请联系管理员</i>\n`;

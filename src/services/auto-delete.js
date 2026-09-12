@@ -15,6 +15,12 @@
 
 import { RULES } from "../config/constants.js";
 import { logError } from "../core/logger.js";
+import { cacheClear, cacheGet, cacheSet } from "./cache.js";
+import { buildScopeChain, loadScopedSettings } from "./config.js";
+
+/** 缓存命名空间与 TTL（写路径主动清，TTL 兜底） */
+const CACHE_NS = "autodelete";
+const CACHE_TTL_MS = 30 * 1000;
 
 export const AUTO_DELETE_PREFIX = "autodelete.";
 export const AUTO_DELETE_GLOBAL_SCOPE = "global";
@@ -139,36 +145,28 @@ export async function getAutoDeleteMap(env, sceneKey = null) {
   if (!env?.DB) return map;
 
   const scope = resolveAutoDeleteScope(sceneKey);
-  const useScene = Boolean(scope) && scope !== AUTO_DELETE_GLOBAL_SCOPE;
+  const cacheKey = scope || AUTO_DELETE_GLOBAL_SCOPE;
+  const cached = cacheGet(CACHE_NS, cacheKey, env.DB);
+  if (cached) return cached;
 
-  let rows = [];
-  try {
-    const stmt = useScene
-      ? env.DB.prepare(
-        "SELECT scene_key, name, value FROM scene_settings WHERE scene_key IN (?, ?) AND name LIKE ?"
-      ).bind(AUTO_DELETE_GLOBAL_SCOPE, scope, `${AUTO_DELETE_PREFIX}%`)
-      : env.DB.prepare(
-        "SELECT scene_key, name, value FROM scene_settings WHERE scene_key = ? AND name LIKE ?"
-      ).bind(AUTO_DELETE_GLOBAL_SCOPE, `${AUTO_DELETE_PREFIX}%`);
-    rows = (await stmt.all()).results || [];
-  } catch (e) {
-    logError("读取自动删除设置失败：", e);
-    return map;
+  // 统一走配置模型：群 → 全局
+  const settings = await loadScopedSettings(env, buildScopeChain({ sceneKey: scope }), AUTO_DELETE_PREFIX);
+  for (const [key, item] of settings) {
+    if (!isAutoDeleteKind(key)) continue;
+    const sec = parseAutoDeleteValue(item.value);
+    if (sec !== null) map[key] = sec;
   }
 
-  const apply = (scope) => {
-    for (const row of rows) {
-      if (String(row.scene_key) !== scope) continue;
-      const key = String(row.name || "").slice(AUTO_DELETE_PREFIX.length);
-      if (!isAutoDeleteKind(key)) continue;
-      const sec = parseAutoDeleteValue(row.value);
-      if (sec !== null) map[key] = sec;
-    }
-  };
+  return cacheSet(CACHE_NS, cacheKey, map, CACHE_TTL_MS, env.DB);
+}
 
-  apply(AUTO_DELETE_GLOBAL_SCOPE);
-  if (useScene) apply(scope);
-  return map;
+/** 每个类型当前生效值来自哪一层（面板显示「来源」用） */
+export async function getAutoDeleteSources(env, sceneKey = null) {
+  const scope = resolveAutoDeleteScope(sceneKey);
+  const settings = await loadScopedSettings(env, buildScopeChain({ sceneKey: scope }), AUTO_DELETE_PREFIX);
+  const sources = {};
+  for (const [key, item] of settings) sources[key] = item.scope;
+  return sources;
 }
 
 /** 某个场景下某类消息的保留秒数（0 = 不删除） */
@@ -194,6 +192,7 @@ export async function setAutoDeleteSeconds(env, scopeKey, kind, seconds) {
     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(scene_key, name) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
   `).bind(scope, `${AUTO_DELETE_PREFIX}${kind}`, String(sec)).run();
+  cacheClear(CACHE_NS);
   return true;
 }
 
@@ -205,9 +204,11 @@ export async function clearAutoDeleteOverride(env, scopeKey, kind = null) {
   if (kind) {
     await env.DB.prepare("DELETE FROM scene_settings WHERE scene_key = ? AND name = ?")
       .bind(scope, `${AUTO_DELETE_PREFIX}${kind}`).run();
+    cacheClear(CACHE_NS);
     return true;
   }
   await env.DB.prepare("DELETE FROM scene_settings WHERE scene_key = ? AND name LIKE ?")
     .bind(scope, `${AUTO_DELETE_PREFIX}%`).run();
+  cacheClear(CACHE_NS);
   return true;
 }

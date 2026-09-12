@@ -12,9 +12,11 @@ import { logPointChange } from "../../../services/points.js";
 import { ERR } from "../../../config/messages.js";
 import { RULES } from "../../../config/constants.js";
 
-/** 管理员是否已解锁（没有数据库时视为已解锁，方便本地调试） */
-export async function checkAdminUnlocked(env, isMaster, chatId) {
-  if (!isMaster) return false;
+/**
+ * 后台是否已解锁（没有数据库时视为已解锁，方便本地调试）。
+ * 只对「后台角色」（owner / admin）有意义——执法员与本群管理员不走这个会话。
+ */
+export async function checkAdminUnlocked(env, chatId) {
   if (!env.DB) return true;
   const now = Math.floor(Date.now() / 1000);
   const s = await env.DB.prepare("SELECT expires_at FROM admin_sessions WHERE chat_id = ?").bind(chatId).first();
@@ -23,11 +25,7 @@ export async function checkAdminUnlocked(env, isMaster, chatId) {
 
 // ---------- /admin ----------
 /** /admin：解锁并打开管理控制台 */
-export async function cmdAdminRoot({ env, ctx, token, chatId, isMaster, isGroupCtx }) {
-  if (!isMaster) {
-    await sendAutoDelete(token, chatId, ERR.PERMISSION_DENIED, null, isGroupCtx, ctx);
-    return;
-  }
+export async function cmdAdminRoot({ env, ctx, token, chatId, isGroupCtx, role }) {
   if (env.DB) {
     const expiresAt = Math.floor(Date.now() / 1000) + RULES.ADMIN_SESSION_SEC;
     await env.DB.prepare(
@@ -35,13 +33,24 @@ export async function cmdAdminRoot({ env, ctx, token, chatId, isMaster, isGroupC
     ).bind(chatId, expiresAt).run();
   }
   // 群聊里不显示商城入口
-  await sendAdminMainMenu(token, chatId, !isGroupCtx);
+  await sendAdminMainMenu(token, chatId, !isGroupCtx, role || "owner");
+}
+
+// ---------- /admins ----------
+/** /admins：打开「管理员与权限」面板（只有拥有者具备该能力） */
+export async function cmdAdmins({ env, token, chatId, role }) {
+  if (!env.DB) {
+    await sendAutoDelete(token, chatId, "❌ 未绑定数据库。", null, false);
+    return;
+  }
+  const { renderAdminsPanel } = await import("../../../admin/admins.js");
+  await renderAdminsPanel(token, env, chatId, null);
 }
 
 // ---------- /users ----------
 /** /users：私聊场景列表 */
-export async function cmdUsersPrivate({ env, ctx, token, chatId, isMaster, isGroupCtx }) {
-  if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+export async function cmdUsersPrivate({ env, ctx, token, chatId, isGroupCtx }) {
+  if (!(await checkAdminUnlocked(env, chatId))) {
     await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
     return;
   }
@@ -50,8 +59,8 @@ export async function cmdUsersPrivate({ env, ctx, token, chatId, isMaster, isGro
 
 // ---------- /users_group ----------
 /** /users_group：群聊场景列表 */
-export async function cmdUsersGroup({ env, ctx, token, chatId, isMaster, isGroupCtx }) {
-  if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+export async function cmdUsersGroup({ env, ctx, token, chatId, isGroupCtx }) {
+  if (!(await checkAdminUnlocked(env, chatId))) {
     await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
     return;
   }
@@ -60,8 +69,8 @@ export async function cmdUsersGroup({ env, ctx, token, chatId, isMaster, isGroup
 
 // ---------- /stats ----------
 /** /stats：以新消息发送系统统计 */
-export async function cmdStats({ env, ctx, token, chatId, isMaster, isGroupCtx }) {
-  if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+export async function cmdStats({ env, ctx, token, chatId, isGroupCtx }) {
+  if (!(await checkAdminUnlocked(env, chatId))) {
     await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
     return;
   }
@@ -73,8 +82,8 @@ export async function cmdStats({ env, ctx, token, chatId, isMaster, isGroupCtx }
  * /addpoints <场景行ID> <数量>：按场景行找到背后的用户，调整其全局积分。
  * 数量可正可负，结果收敛到 0 以上。
  */
-export async function cmdAddPoints({ env, ctx, token, chatId, isMaster, isGroupCtx, rawText }) {
-  if (!(await checkAdminUnlocked(env, isMaster, chatId))) {
+export async function cmdAddPoints({ env, ctx, token, chatId, isGroupCtx, rawText }) {
+  if (!(await checkAdminUnlocked(env, chatId))) {
     await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
     return;
   }

@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 193 个用例）
+2. `npm test` 通过（当前 220 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -79,6 +79,19 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - **相关度门槛**：综合分 < `KB.STRONG_SCORE`（0.45）时必须有真实关键词重叠才注入，避免无关资料把模型带偏；「检索测试」是调试工具，调用时传 `minScore:0, strongScore:0` 以列出全部候选
 - **封禁是用户级**（`users.blocked`）：`/ban <用户ID>`、场景编辑里的封禁按钮都会影响该用户在所有场景；名单在「用户管理 → 🚫 封禁名单」
   - **机器人管理员不可被封禁**（`setUserBlocked` / `banUserById` 直接拒绝，面板显示「管理员不可封禁」）：封了自己会让「谁能进后台」变得不可预期
+- **管理员与角色（v3.0.0）**：`services/admins.js` 是唯一的权限来源
+  - 身份三种：`owner`（环境变量 `MY_TELEGRAM_ID`，永远最高）、`admin`（除权限管理外全部）、`moderator`（只能群规执法）
+  - 权限用**能力（capability）**表达：命令注册表写 `capability: "manage_users"`、回调前缀在 `callback.js` 的 `CALLBACK_CAPABILITIES` 里映射，新增模块只挂一个能力名，不要写 `fromId === myId` 这种硬判断
+  - 新表 `bot_admins` 只存额外授权的管理员；**别把 owner 写进表里**（`setAdmin` 会拒绝），也别允许把别人设成 owner
+  - 角色读取有 60 秒 isolate 缓存，授权 / 移除会主动 `clearAdminCache()`；写测试时如果直接改库，注意缓存
+- **统一配置模型（v3.0.0）**：`services/config.js` 提供「作用域链 → 生效值 + 来源」的唯一读法
+  - 功能开关：场景 → 全局；消息自动删除：群 → 全局；都用 `buildScopeChain` + `loadScopedSettings`
+  - 面板上要显示「来源」（`describeSource`），避免出现「改了没生效」的困惑
+  - 写配置走 `setScopedSetting` / `clearScopedSetting`，并在写完后清缓存
+- **AI 工具调用（v3.0.0）**：`services/ai-tools.js` 只注册**只读**工具（查积分 / 签到 / 排行 / 群规 / 知识库）
+  - 协议是「模型输出一行 JSON → 我们执行 → 结果作为资料喂回 → 再要一次最终回答」，**只允许一轮**，防止无限循环与费用失控
+  - **绝对不要**把写操作（封禁 / 发积分 / 改配置）做成 AI 工具：那些必须走显式指令 + 确认卡片
+  - 工具返回的内容按「不可信资料」处理（提示词里已注明不要执行其中的指令）
 - **群规执法**（`services/guard.js` + `admin/guard.js`）：
   - **只认 `/指令`，没有自然语言入口**：`封禁 / 拉黑 / 踢了 / 闭嘴` 在日常聊天里太常见，靠关键词拦截会误伤普通发言；别再把 `detectAction` 接回 `message.js`。举报走 `/report`（必须回复违规消息）、申诉走 `/appeal`（私聊）
   - **理由必须校验通过**（内置违规类型 → 本群群规文本 → 本群知识库），不通过绝不执行；这是「能自动执法」的安全底线，不要为了方便跳过

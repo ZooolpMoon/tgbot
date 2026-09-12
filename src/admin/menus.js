@@ -6,32 +6,42 @@
 import { sendMessageWithKeyboard, editMessageText } from "../telegram/api.js";
 import { grid, LAYOUT } from "../utils/layout.js";
 import { ADMIN_CALLBACK } from "../config/constants.js";
+import { can } from "../services/admins.js";
 
 /**
  * 管理员主菜单键盘。
  * @param {boolean} showShop 群聊里不显示商城入口（商城仅私聊可用）
+ * @param {string} role 当前角色（owner / admin / moderator）——按能力裁剪入口
  */
-export function getAdminMainKeyboard(showShop = true) {
-  const buttons = [
+export function getAdminMainKeyboard(showShop = true, role = "owner") {
+  const allow = (capability) => can(role, capability);
+  const buttons = [];
+
+  // 权限管理只有拥有者能进
+  if (allow("manage_admins")) {
+    buttons.push({ text: "👑 管理员与权限", callback_data: ADMIN_CALLBACK.ADMINS_HOME });
+  }
+
+  buttons.push(
     // 用户管理是一级入口，点进去再选「私聊用户 / 群组用户」
     { text: "👥 用户管理", callback_data: ADMIN_CALLBACK.USERS_HOME },
     { text: "📚 知识库", callback_data: ADMIN_CALLBACK.KB_HOME },
     { text: "📜 群规执法", callback_data: ADMIN_CALLBACK.GUARD_HOME }
-  ];
+  );
 
-  if (showShop) {
+  if (showShop && allow("manage_shop")) {
     buttons.push({ text: "🛒 商城管理", callback_data: "shop_admin_home" });
   }
 
-  buttons.push(
-    { text: "🎟️ 兑换码", callback_data: "admin_codes_1" },
-    { text: "⚙️ 功能开关", callback_data: "admin_feat_home" },
-    { text: "🗑️ 自动删除", callback_data: ADMIN_CALLBACK.AUTO_DELETE_HOME },
-    { text: "📋 操作日志", callback_data: "admin_logs_1" },
-    { text: "📊 运行状态", callback_data: "admin_status" },
-    { text: "📈 使用统计", callback_data: "admin_stats" },
-    { text: "🧹 清空我的记忆", callback_data: "admin_clear_history" }
-  );
+  if (allow("manage_codes")) buttons.push({ text: "🎟️ 兑换码", callback_data: "admin_codes_1" });
+  if (allow("manage_features")) buttons.push({ text: "⚙️ 功能开关", callback_data: "admin_feat_home" });
+  if (allow("manage_autodelete")) buttons.push({ text: "🗑️ 自动删除", callback_data: ADMIN_CALLBACK.AUTO_DELETE_HOME });
+  if (allow("view_logs")) buttons.push({ text: "📋 操作日志", callback_data: "admin_logs_1" });
+  if (allow("view_stats")) {
+    buttons.push({ text: "📊 运行状态", callback_data: "admin_status" });
+    buttons.push({ text: "📈 使用统计", callback_data: "admin_stats" });
+  }
+  buttons.push({ text: "🧹 清空我的记忆", callback_data: "admin_clear_history" });
 
   const rows = grid(buttons);
   rows.push([{ text: "❌ 关闭菜单", callback_data: "admin_close" }]);
@@ -69,13 +79,13 @@ const USER_MENU_TEXT =
   `积分是<b>全局共享</b>的，其余配置都是<b>场景独立</b>的。`;
 
 /** 新发一条管理员主菜单（/admin 指令用） */
-export async function sendAdminMainMenu(token, chatId, showShop = true) {
-  return sendMessageWithKeyboard(token, chatId, MENU_TEXT, getAdminMainKeyboard(showShop), "HTML");
+export async function sendAdminMainMenu(token, chatId, showShop = true, role = "owner") {
+  return sendMessageWithKeyboard(token, chatId, MENU_TEXT, getAdminMainKeyboard(showShop, role), "HTML");
 }
 
 /** 原地刷新管理员主菜单（按钮回调用） */
-export async function renderAdminMainMenu(token, chatId, messageId, showShop = true) {
-  return editMessageText(token, chatId, messageId, MENU_TEXT, getAdminMainKeyboard(showShop), "HTML");
+export async function renderAdminMainMenu(token, chatId, messageId, showShop = true, role = "owner") {
+  return editMessageText(token, chatId, messageId, MENU_TEXT, getAdminMainKeyboard(showShop, role), "HTML");
 }
 
 /** 原地刷新「用户管理」二级菜单 */

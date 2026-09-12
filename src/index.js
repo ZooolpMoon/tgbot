@@ -11,6 +11,7 @@ import { logError } from "./core/logger.js";
 import { ensureSchema } from "./core/db.js";
 import { runScheduledTasks } from "./services/daily.js";
 import { syncCommandMenuOnce } from "./services/command-menu.js";
+import { alertAdmin } from "./services/alerts.js";
 
 export default {
   /**
@@ -60,6 +61,8 @@ export default {
       return new Response("OK", { status: 200 });
     } catch (e) {
       logError("Worker 运行异常:", e);
+      // 顺手私聊管理员（同类错误 5 分钟只提醒一次，失败静默）
+      if (ctx?.waitUntil) ctx.waitUntil(alertAdmin(env, token, { title: "Worker 运行异常", detail: e?.message || String(e) }));
       return new Response("OK", { status: 200 });
     }
   },
@@ -74,6 +77,7 @@ export default {
       else await task;
     } catch (e) {
       logError("定时任务运行异常:", e);
+      await alertAdmin(env, env.BOT_TOKEN, { title: "定时任务异常", detail: e?.message || String(e) });
     }
   }
 };

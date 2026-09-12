@@ -15,8 +15,9 @@ import { ADMIN_CALLBACK } from "../config/constants.js";
 import { grid, compactLabel, clampPage, totalPagesOf, pageOffset, pagerRow, LAYOUT } from "../utils/layout.js";
 import {
   GLOBAL_SCOPE, FEATURES, getFeatureMap, getExplicitSettings,
-  setFeature, clearFeatureOverrides
+  getFeatureSources, setFeature, clearFeatureOverrides
 } from "../services/features.js";
+import { describeSource } from "../services/config.js";
 import { logAdminAction } from "../services/admin-log.js";
 
 const SCENES_PER_PAGE = 8;
@@ -117,6 +118,7 @@ async function renderScenePicker(token, env, chatId, messageId, kind, page = 1) 
 async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title, rowId = null }) {
   const effective = await getFeatureMap(env, scopeKey);
   const explicit = await getExplicitSettings(env, scopeKey);
+  const sources = await getFeatureSources(env, scopeKey);
   const isGlobal = scopeKey === GLOBAL_SCOPE;
 
   let text = `⚙️ <b>${title}</b>\n`;
@@ -127,7 +129,8 @@ async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title
 
   for (const f of FEATURES) {
     const on = effective[f.key] !== false;
-    const tag = explicit[f.key] === undefined ? (isGlobal ? "" : "（跟随全局）") : "（本场景已设置）";
+    // 来源统一用配置模型描述：本场景 / 本群 / 全局 / 内置默认
+    const tag = `（${describeSource(sources[f.key] || null, { sceneKey: scopeKey })}）`;
     text += `${on ? "✅" : "🚫"} <b>${f.label}</b>${tag}\n`;
   }
 

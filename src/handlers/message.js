@@ -30,6 +30,8 @@ import {
 } from "../admin/knowledge.js";
 import { handleKeywordAlert } from "../admin/guard.js";
 import { isGuardGuideActive, handleGuardGuideInput, cancelGuardGuide } from "../admin/guard-panel.js";
+import { isAdminGuideActive, handleAdminGuideInput, cancelAdminGuide } from "../admin/admins.js";
+import { can, getAdminRole, isBackstageRole } from "../services/admins.js";
 
 /** 处理 message / edited_message 更新 */
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
@@ -63,6 +65,12 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
 
   if (!userText) return;
 
+  // ---------- 身份与角色 ----------
+  // owner = 环境变量里的 MY_TELEGRAM_ID；admin / moderator 来自 bot_admins 表
+  // （读取带 60 秒 isolate 缓存，不会每条消息都查库）
+  const isMaster = Boolean(myId && userId === myId);
+  const role = await getAdminRole(env, userId, { ownerId: myId });
+
   // ---------- 群聊里：只处理 @BOT 或 /指令 ----------
   const botUsername = env.BOT_USERNAME ? env.BOT_USERNAME.replace(/^@/, "").trim().toLowerCase() : null;
   let isMentioned = false;
@@ -90,11 +98,12 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
 
     // 管理员正在填「知识库 / 群规」引导表单时，群里不 @ 也要放行（否则粘贴正文会被静默丢掉）
     if (!isMentioned && !isCommandLike) {
-      const isBotAdmin = Boolean(myId && userId === myId);
-      const adminGuideActive = isBotAdmin
+      const canManageAdmins = Boolean(role) && can(role, "manage_admins");
+      const adminGuideActive = (isMaster || canManageAdmins)
         && (
           (await isKnowledgeGuideActive(env, chatId))
           || (await isGuardGuideActive(env, chatId))
+          || (await isAdminGuideActive(env, chatId))
         );
       if (!adminGuideActive) {
         // 静默预警：普通群聊发言（没 @机器人）同样可能违规，
@@ -142,7 +151,6 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
 
   if (env.DB) await upsertUserInfo(env, uctx);
 
-  const isMaster = Boolean(myId && userId === myId);
   const userConfig = await loadUserConfig(env, userKey, sceneKey);
 
   // ---------- 封禁校验（管理员不受限）----------
@@ -171,7 +179,7 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
 
   const baseCtx = {
     env, ctx: sceneCtx, token, chatId, userKey, sceneKey,
-    uctx, userConfig, isGroupCtx, isMaster,
+    uctx, userConfig, isGroupCtx, isMaster, role,
     firstName, username, rawText: userText, command, botMention,
     myId,
     // 原始消息与未清洗文本：群规执法要拿实体偏移和 @提及
@@ -205,6 +213,18 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
         return;
       }
     } else if (await handleGuardGuideInput({ env, token, chatId, userText, uctx, adminId: userId })) {
+      return;
+    }
+  }
+
+  // ---------- 👑 管理员与权限：添加管理员的引导式输入（私聊与群聊都支持）----------
+  if (can(role, "manage_admins") && (await isAdminGuideActive(env, chatId))) {
+    if (isCommandLike) {
+      if (/^\/(cancel|取消)$/i.test(command)) {
+        await cancelAdminGuide({ env, token, chatId });
+        return;
+      }
+    } else if (await handleAdminGuideInput({ env, token, chatId, userText, adminId: userId })) {
       return;
     }
   }

@@ -47,6 +47,35 @@ export const POINTS = {
 };
 
 // ==========================================
+// 🎁 积分玩法（v3.0.0：转账 + 抽奖）
+// ==========================================
+
+export const TRANSFER = {
+  // 单笔下限
+  MIN: 1,
+  // 单笔上限（防止手抖把全部身家打错人）
+  MAX: 1000000
+};
+
+export const LOTTERY = {
+  // 每天免费抽奖次数
+  FREE_PER_DAY: 1,
+  // 付费抽奖单次消耗
+  PAID_COST: 10,
+  // 奖池：权重越高越容易中；期望值刻意略低于 PAID_COST（约 9.4），避免刷分
+  PRIZES: [
+    { points: 1, weight: 30 },
+    { points: 2, weight: 25 },
+    { points: 3, weight: 18 },
+    { points: 5, weight: 12 },
+    { points: 8, weight: 8 },
+    { points: 12, weight: 4 },
+    { points: 20, weight: 2 },
+    { points: 50, weight: 1 }
+  ]
+};
+
+// ==========================================
 // 📏 运行规则（时长、历史上下文预算）
 // ==========================================
 
@@ -183,6 +212,17 @@ export const ADMIN_CALLBACK = {
   FEATURES_SCENE_PREFIX: "admin_feat_s_",
   FEATURES_RESET_PREFIX: "admin_feat_r_",
   FEATURE_TOGGLE_PREFIX: "admin_feat_t_",
+
+  // ---------- 👑 管理员与权限 ----------
+  ADMINS_HOME: "admin_admins",
+  ADMINS_ADD: "admin_admins_add",
+  ADMINS_HELP: "admin_admins_help",
+  ADMINS_PAGE_PREFIX: "admin_admins_p_",
+  ADMINS_USER_PREFIX: "admin_admins_u_",
+  ADMINS_SET_PREFIX: "admin_admins_s_",
+  ADMINS_DEL_PREFIX: "admin_admins_d_",
+  ADMINS_DELOK_PREFIX: "admin_admins_dok_",
+  ADMINS_GUIDE_ROLE_PREFIX: "admin_admins_gr_",
 
   // ---------- 🗑️ 消息自动删除 ----------
   // 首页 admin_autodel；o_ = 切换范围；k_ = 某一类；s_ = 写入时长
