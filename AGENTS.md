@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 71 个用例）
+2. `npm test` 通过（当前 79 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -69,7 +69,9 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - `src/admin/`：管理面板 UI
   - `src/shop/`、`src/games/`：业务模块
 - **加命令**：在 `src/handlers/commands/registry.js` 的 `COMMANDS` 加一条即可（权限、别名、仅私聊、功能开关、`/help` 文案都由注册表处理），不要再去 `message.js` 里加 `if`。
-- **加功能开关**：在 `src/services/features.js` 的 `FEATURES` 里加一项；开关**只作用于全局**（v2.1.0 起不再有场景级覆盖）。
+- **加功能开关**：在 `src/services/features.js` 的 `FEATURES` 里加一项即可。开关是**三级**的（全局 → 群聊场景 / 私聊场景覆盖），入口在 `src/admin/features.js`；新增开关不用改管理端代码。
+- **菜单排版约定**：按钮按**两列网格**排（`src/admin/menus.js` 的 `grid()` 是参考实现），单行不超过 2 个按钮、整个菜单不超过 ~8 行；`callback_data` 必须 ≤ 64 字节。`npm test` 里的 `test/layout.test.mjs` 会检查这些约束。
+- **改 Schema 时注意**：迁移里**不要**写会清空 `scene_settings` 里非 `global` 记录的语句——那会抹掉场景级功能开关（v2.1.0 踩过一次，已在 v2.2.0 修掉并有回归测试）。
 - **改 Schema**：
   1. 在 `SCHEMA_SQL` 里加表/索引（`CREATE TABLE IF NOT EXISTS`）
   2. 结构或数据迁移写进 `MIGRATIONS` 数组（必须幂等）

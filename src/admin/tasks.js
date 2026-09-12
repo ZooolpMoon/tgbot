@@ -65,13 +65,14 @@ export async function renderTaskAdmin(token, env, chatId, messageId = null) {
   const { text, defs } = await taskListText(env);
 
   const inline_keyboard = [];
-  for (const d of defs) {
-    inline_keyboard.push([
-      {
-        text: `${Number(d.enabled) === 1 ? "✅" : "🚫"} ${d.label} · +${d.points}`,
+  // 两列网格，避免任务多时菜单变成一条长龙
+  for (let i = 0; i < defs.length; i += 2) {
+    inline_keyboard.push(
+      defs.slice(i, i + 2).map((d) => ({
+        text: `${Number(d.enabled) === 1 ? "✅" : "🚫"} ${d.label.length > 10 ? d.label.slice(0, 9) + "…" : d.label} +${d.points}`,
         callback_data: `${ADMIN_CALLBACK.TASK_DETAIL_PREFIX}${d.id}`
-      }
-    ]);
+      }))
+    );
   }
   inline_keyboard.push([{ text: "➕ 添加任务", callback_data: ADMIN_CALLBACK.TASK_ADD }]);
   inline_keyboard.push([{ text: "🏆 修改全勤奖", callback_data: ADMIN_CALLBACK.TASK_BONUS }]);

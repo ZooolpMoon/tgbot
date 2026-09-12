@@ -50,5 +50,5 @@ export async function cmdRedeem({ env, ctx, token, chatId, userKey, isGroupCtx, 
   );
 
   // 触发「使用一次兑换码」类任务
-  await completeTask(env, userKey, "redeem", { chatId, token });
+  await completeTask(env, userKey, "redeem", { sceneKey: `private:${chatId}`, chatId, token });
 }

@@ -151,10 +151,10 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   }
 
   // ---------- 非指令 → AI 对话 ----------
-  if (!(await isFeatureEnabled(env, "ai"))) {
+  if (!(await isFeatureEnabled(env, sceneKey, "ai"))) {
     await sendAutoDelete(
       token, chatId,
-      `⚠️ 管理员已关闭「${featureLabel("ai")}」。`,
+      `⚠️ 本场景已关闭「${featureLabel("ai")}」，如需使用请联系管理员。`,
       null, isGroupCtx, ctx
     );
     return;

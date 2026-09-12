@@ -52,7 +52,9 @@ import { renderPointsLog } from "./commands/points.js";
 import { renderRank, closeRank } from "./commands/rank.js";
 import { startBroadcast, cancelBroadcast } from "./commands/broadcast.js";
 import { renderCodeList, handleCodeToggle } from "./commands/codes.js";
-import { renderFeatureMenu, handleFeatureToggle } from "../admin/features.js";
+import {
+  renderFeatureHome, renderFeatureScope, handleFeatureToggle, handleFeatureReset
+} from "../admin/features.js";
 import {
   renderTaskAdmin, renderTaskDetail, startTaskAdd, startTaskBonusEdit, handleTaskTriggerPick,
   startTaskFieldEdit, handleTaskToggle, handleTaskDelete, handleTaskDeleteConfirm
@@ -110,8 +112,8 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // 1. 游戏（任何用户）
   // ==========================================
   if (data.startsWith("game_")) {
-    if (!(await isFeatureEnabled(env, "game"))) {
-      await answerCallback(token, callback.id, "⚠️ 管理员已关闭「游戏大厅」", true);
+    if (!(await isFeatureEnabled(env, sceneKey, "game"))) {
+      await answerCallback(token, callback.id, "⚠️ 本场景已关闭「游戏大厅」", true);
       return;
     }
     await handleGameCallbacks(token, env, callback, chatId, userKey, msgId, fromId, data, sceneKey);
@@ -121,8 +123,8 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // ==========================================
   // 2. 商城（用户侧，任何用户）
   // ==========================================
-  if (data.startsWith("shop_") && !(await isFeatureEnabled(env, "shop"))) {
-    await answerCallback(token, callback.id, "⚠️ 管理员已关闭「积分商城」", true);
+  if (data.startsWith("shop_") && !(await isFeatureEnabled(env, sceneKey, "shop"))) {
+    await answerCallback(token, callback.id, "⚠️ 本场景已关闭「积分商城」", true);
     return;
   }
   if (data === "shop_home") {
@@ -436,12 +438,32 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     }
 
     // ---------- 功能开关 ----------
+    else if (data === ADMIN_CALLBACK.FEATURES_HOME) {
+      await renderFeatureHome(token, env, chatId, msgId);
+      await answerCallback(token, callback.id, "功能开关");
+    }
     else if (data.startsWith(ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX)) {
       await handleFeatureToggle({ env, token, callback, chatId, msgId, data, adminId: fromId });
     }
+    else if (data.startsWith(ADMIN_CALLBACK.FEATURES_RESET_PREFIX)) {
+      await handleFeatureReset({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.FEATURES_GROUP_PREFIX)) {
+      await renderFeatureScope(token, env, chatId, msgId, `gl${parseInt(data.replace(ADMIN_CALLBACK.FEATURES_GROUP_PREFIX, ""), 10) || 1}`);
+      await answerCallback(token, callback.id, "群聊场景");
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.FEATURES_PRIVATE_PREFIX)) {
+      await renderFeatureScope(token, env, chatId, msgId, `pl${parseInt(data.replace(ADMIN_CALLBACK.FEATURES_PRIVATE_PREFIX, ""), 10) || 1}`);
+      await answerCallback(token, callback.id, "私聊场景");
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.FEATURES_SCENE_PREFIX)) {
+      const rowId = parseInt(data.replace(ADMIN_CALLBACK.FEATURES_SCENE_PREFIX, ""), 10);
+      await renderFeatureScope(token, env, chatId, msgId, `s${rowId}`);
+      await answerCallback(token, callback.id, `场景 #${rowId} 功能开关`);
+    }
     else if (data === ADMIN_CALLBACK.FEATURES_GLOBAL) {
-      await renderFeatureMenu(token, env, chatId, msgId);
-      await answerCallback(token, callback.id, "全局功能开关");
+      await renderFeatureScope(token, env, chatId, msgId, "g");
+      await answerCallback(token, callback.id, "全局设置");
     }
 
     // ---------- 每日任务管理 ----------

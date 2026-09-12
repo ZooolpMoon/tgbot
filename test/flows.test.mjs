@@ -8,7 +8,7 @@ import { createTestDB, hasSqlite, seedUser, seedItem } from "../test-helpers/d1.
 import { createRedeemCode } from "../src/services/redeem.js";
 import { getOrderNote } from "../src/shop/notes.js";
 import { getUserPoints } from "../src/services/users.js";
-import { setFeature } from "../src/services/features.js";
+import { setFeature, GLOBAL_SCOPE } from "../src/services/features.js";
 
 // ---- Telegram API 桩 ----
 const apiCalls = [];
@@ -30,6 +30,8 @@ const { handleCallback } = await import("../src/handlers/callback.js");
 const sentTexts = () => apiCalls.filter((c) => c.body?.text).map((c) => String(c.body.text));
 const lastText = () => sentTexts().at(-1) || "";
 const findText = (needle) => sentTexts().some((t) => t.includes(needle));
+const lastKeyboard = () =>
+  [...apiCalls].reverse().find((c) => c.body?.reply_markup)?.body.reply_markup || null;
 const resetCalls = () => { apiCalls.length = 0; };
 
 function makeEnv(db, extra = {}) {
@@ -256,12 +258,12 @@ test("商品限购：达到上限后拒绝，取消订单后名额释放", { ski
   db.close();
 });
 
-test("功能开关：关闭游戏后点击游戏按钮被拒绝", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+test("功能开关：全局关闭游戏后点击游戏按钮被拒绝", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
   const db = createTestDB();
   seedUser(db, "user:1", 100);
   const env = makeEnv(db);
   const ctx = makeCtx();
-  await setFeature(env, "game", false);
+  await setFeature(env, GLOBAL_SCOPE, "game", false);
 
   resetCalls();
   await handleCallback({
@@ -277,6 +279,33 @@ test("功能开关：关闭游戏后点击游戏按钮被拒绝", { skip: !hasSq
   await Promise.all(ctx.pending);
 
   assert.ok(findText("已关闭"), lastText().slice(0, 60));
+  db.close();
+});
+
+test("功能开关：场景覆盖优先于全局（本群单独打开）", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:1", 100);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+
+  await setFeature(env, GLOBAL_SCOPE, "game", false);
+  await setFeature(env, "private:1", "game", true); // 当前私聊场景单独打开
+
+  resetCalls();
+  await handleCallback({
+    env, ctx, token: "TEST_TOKEN", myId: "999", uctx: uctx(),
+    payload: {
+      callback_query: {
+        id: "game2", data: "game_dice_main",
+        message: { message_id: 6, chat: { id: 1, type: "private" } },
+        from: { id: 1, username: "tester", first_name: "测试用户" }
+      }
+    }
+  });
+  await Promise.all(ctx.pending);
+
+  assert.ok(findText("骰子猜大小"), lastText().slice(0, 40));
+  assert.ok(!findText("已关闭"), "本场景开启后不应被拦");
   db.close();
 });
 
@@ -378,5 +407,52 @@ test("每日任务引导式修改：改奖励并生效", { skip: !hasSqlite && "
   assert.equal(db.get("SELECT points FROM daily_task_defs WHERE id = 1").points, 12);
   assert.ok(findText("修改成功"));
   assert.equal(db.count("task_edit_sessions"), 0);
+  db.close();
+});
+
+test("功能开关菜单：三级入口 + 开关两列排版", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  const nowSec = Math.floor(Date.now() / 1000);
+  db.exec(`INSERT INTO admin_sessions (chat_id, expires_at) VALUES ('1', ${nowSec + 600})`);
+  const adminUctx = uctx({ userId: "999", userKey: "user:999" });
+
+  const click = async (data) => {
+    resetCalls();
+    await handleCallback({
+      env, ctx, token: "TEST_TOKEN", myId: "999", uctx: adminUctx,
+      payload: {
+        callback_query: {
+          id: "cb", data,
+          message: { message_id: 9, chat: { id: 1, type: "private" } },
+          from: { id: 999, username: "admin", first_name: "管理员" }
+        }
+      }
+    });
+    await Promise.all(ctx.pending);
+    return lastKeyboard();
+  };
+
+  // 首页：全局 / 群聊场景 / 私聊场景
+  const home = await click("admin_feat_home");
+  const homeFlat = home.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(homeFlat.includes("admin_feat_g"), "应有全局设置入口");
+  assert.ok(homeFlat.includes("admin_feat_gl_1"), "应有群聊场景入口");
+  assert.ok(homeFlat.includes("admin_feat_pl_1"), "应有私聊场景入口");
+  assert.ok(home.inline_keyboard.length <= 3, "首页不应超过 3 行");
+
+  // 全局开关页：两列、行数受控
+  const global = await click("admin_feat_g");
+  assert.ok(global.inline_keyboard.every((row) => row.length <= 2), "开关按钮应两列排布");
+  assert.ok(global.inline_keyboard.length <= 5, `开关页行数过多：${global.inline_keyboard.length}`);
+  const toggles = global.inline_keyboard.flat().map((b) => b.callback_data).filter((d) => d.startsWith("admin_feat_t_"));
+  assert.ok(toggles.length >= 6, "六个开关都应可点击");
+  assert.ok(toggles.every((d) => Buffer.byteLength(d, "utf8") <= 64));
+
+  // 群聊场景列表：两列分页列表
+  const groups = await click("admin_feat_gl_1");
+  assert.ok(groups.inline_keyboard.every((row) => row.length <= 2), "场景列表应两列排布");
   db.close();
 });

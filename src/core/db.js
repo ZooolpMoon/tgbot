@@ -278,7 +278,7 @@ let schemaPromise = null;
  * Worker 冷启动时先读这个标记，已是最新就跳过建表与迁移，
  * 避免每次冷启动都跑几十条语句（D1 对单次调用的查询数有限制）。
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 
@@ -319,8 +319,9 @@ const MIGRATIONS = [
    WHERE task IN ('checkin', 'chat', 'game', 'shop', 'redeem')
      AND EXISTS (SELECT 1 FROM daily_task_defs d WHERE d.trigger = daily_tasks.task)`,
 
-  // v2.1.0：功能开关收敛为全局，清掉 2.0.0 残留的场景级开关
-  "DELETE FROM scene_settings WHERE scene_key <> 'global'"
+  // 注意：v2.2.0 恢复了「场景级功能开关」，所以这里 **不要** 删除非 global 的记录
+  // （v2.1.0 曾加过一条 DELETE，已移除；否则场景开关会在每次冷启动被清空）
+  `UPDATE scene_settings SET value = 'on' WHERE value NOT IN ('on', 'off') AND name LIKE 'feature.%'`
 ];
 
 function splitSchemaStatements(sql) {

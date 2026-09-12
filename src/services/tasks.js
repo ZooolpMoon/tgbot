@@ -10,6 +10,7 @@ import { TASK_TRIGGERS, TRIGGER_KEYS, triggerDef, triggerLabel, DEFAULT_TASK_BON
 import { getDateKey } from "./time.js";
 import { getSetting, setSetting } from "./settings.js";
 import { adjustPoints, logPointChange } from "./points.js";
+import { isFeatureEnabled } from "./features.js";
 import { sendMessage } from "../telegram/api.js";
 import { logError } from "../core/logger.js";
 
@@ -103,10 +104,16 @@ export async function getTodayTasks(env, userKey) {
  * 重复调用同一天只会发奖一次（主键 + INSERT OR IGNORE）。
  *
  * @param {string} trigger checkin / chat / game / shop / redeem
- * @param {{chatId?: string, token?: string}} [opts] 全部完成时发祝贺消息用
+ * @param {{sceneKey?: string, chatId?: string, token?: string}} [opts]
+ *        sceneKey 用于判断该场景是否关掉了「每日任务」；chatId/token 用于发祝贺消息
  */
-export async function completeTask(env, userKey, trigger, { chatId = null, token = null } = {}) {
+export async function completeTask(env, userKey, trigger, { sceneKey = null, chatId = null, token = null } = {}) {
   if (!env.DB || !userKey || !TRIGGER_KEYS.includes(trigger)) return { completed: false };
+
+  // 该场景关掉了每日任务就不再累计
+  if (sceneKey && !(await isFeatureEnabled(env, sceneKey, "tasks"))) {
+    return { completed: false, disabled: true };
+  }
 
   const defs = (await getEnabledTaskDefs(env)).filter((d) => String(d.trigger) === trigger);
   if (defs.length === 0) return { completed: false };

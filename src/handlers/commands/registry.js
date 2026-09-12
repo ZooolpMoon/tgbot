@@ -216,11 +216,11 @@ export async function dispatchCommand(text, ctx) {
     return true;
   }
 
-  // 3) 功能开关（v2.1.0 起只受全局开关控制）
-  if (cmd.feature && !(await isFeatureEnabled(env, cmd.feature))) {
+  // 3) 功能开关（场景覆盖 → 全局设置 → 默认开启）
+  if (cmd.feature && !(await isFeatureEnabled(env, sceneKey, cmd.feature))) {
     await sendAutoDelete(
       token, chatId,
-      `⚠️ 管理员已关闭「${featureLabel(cmd.feature)}」。`,
+      `⚠️ 本场景已关闭「${featureLabel(cmd.feature)}」，如需使用请联系管理员。`,
       null, isGroupCtx, workerCtx
     );
     return true;

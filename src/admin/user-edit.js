@@ -51,7 +51,7 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
     : `💬 私聊用户`;
 
   const text =
-    `🛠️ <b>场景编辑面板</b>\n` +
+    `🛠️ <b>场景管理菜单</b>\n` +
     `-------------------------\n` +
     `🔢 <b>场景行 ID:</b> <code>${scene.id}</code>\n` +
     `🧩 <b>场景键:</b> <code>${escapeHtml(scene.scene_key)}</code>\n` +
@@ -67,7 +67,7 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
     `🌐 <b>语言偏好:</b> ${scene.lang || "zh"}\n` +
     `📝 <b>自定义 prompt:</b> ${escapeHtml(scene.custom_prompt) || "无"}\n` +
     `🕒 <b>最后更新:</b> ${scene.updated_at || "未知"}\n\n` +
-    `<b>请选择您要进行的管理操作：</b>`;
+    `<b>请选择操作：</b>`;
 
   const backTarget = (scene.chat_type === "group" || scene.chat_type === "supergroup")
     ? "admin_users_group_1"
@@ -76,22 +76,23 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: "🪙 快速增减积分（全局）", callback_data: `admin_menu_pts_${scene.id}` },
-        { text: "📜 查看积分流水", callback_data: `admin_log_pts_${scene.id}_1` }
+        { text: "🪙 积分", callback_data: `admin_menu_pts_${scene.id}` },
+        { text: "📜 流水", callback_data: `admin_log_pts_${scene.id}_1` }
       ],
       [
-        { text: "📅 管理本场景限额", callback_data: `admin_menu_limit_${scene.id}` },
-        { text: "⏱️ 管理本场景频率", callback_data: `admin_menu_rate_${scene.id}` }
+        { text: "📅 限额", callback_data: `admin_menu_limit_${scene.id}` },
+        { text: "⏱️ 频率", callback_data: `admin_menu_rate_${scene.id}` }
       ],
       [
+        { text: "⚙️ 功能开关", callback_data: `admin_feat_s_${scene.id}` },
         {
-          text: blocked ? "✅ 解封此用户" : "🚫 封禁此用户",
+          text: blocked ? "✅ 解封" : "🚫 封禁",
           callback_data: `admin_block_${scene.id}`
-        },
-        { text: "🧹 清空此场景记忆", callback_data: `admin_clearmem_${scene.id}` }
+        }
       ],
       [
-        { text: "🗑️ 删除此场景（积分保留）", callback_data: `admin_deluser_confirm_${scene.id}` }
+        { text: "🧹 清空记忆", callback_data: `admin_clearmem_${scene.id}` },
+        { text: "🗑️ 删除场景", callback_data: `admin_deluser_confirm_${scene.id}` }
       ],
       [{ text: "🔙 返回场景列表", callback_data: backTarget }]
     ]

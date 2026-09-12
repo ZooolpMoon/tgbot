@@ -10,7 +10,7 @@ export async function renderUserListMenu(token, env, chatId, messageId, page = 1
     return messageId ? editMessageText(token, chatId, messageId, t) : sendMessage(token, chatId, t);
   }
 
-  const pageSize = 5;
+  const pageSize = 8;
   const offset = (page - 1) * pageSize;
   const isPrivate = listType === "private";
   const where = isPrivate ? "WHERE s.chat_type = 'private'" : "WHERE s.chat_type IN ('group','supergroup')";
@@ -38,15 +38,18 @@ export async function renderUserListMenu(token, env, chatId, messageId, page = 1
 
   if (results && results.length > 0) {
     if (isPrivate) {
-      results.forEach(u => {
-        const name = u.first_name || u.user_id;
-        const tag = u.username ? ` (${u.username})` : "";
-        const pts = Number.isFinite(Number(u.points)) ? Number(u.points) : 0;
-        inline_keyboard.push([{
-          text: `#${u.id} 👤 ${name}${tag} | 🪙 ${pts}`,
-          callback_data: `admin_manage_user_${u.id}`
-        }]);
-      });
+      // 两列网格：一行两个用户，避免长列表拉成长条
+      for (let i = 0; i < results.length; i += 2) {
+        inline_keyboard.push(results.slice(i, i + 2).map((u) => {
+          const name = String(u.first_name || u.user_id || "未命名");
+          const shortName = name.length > 8 ? name.slice(0, 7) + "…" : name;
+          const pts = Number.isFinite(Number(u.points)) ? Number(u.points) : 0;
+          return {
+            text: `#${u.id} ${shortName} · 🪙${pts}`,
+            callback_data: `admin_manage_user_${u.id}`
+          };
+        }));
+      }
     } else {
       const groups = new Map();
       results.forEach(u => {

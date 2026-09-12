@@ -89,6 +89,7 @@ export async function renderCodeList(token, env, chatId, messageId = null, page 
   text += `-------------------------\n\n`;
 
   const inline_keyboard = [];
+  const pendingToggles = [];
 
   if (rows.length === 0) {
     text += `<i>还没有兑换码。用 /code_new &lt;积分&gt; [次数] [有效天数] 生成一个。</i>\n`;
@@ -100,13 +101,16 @@ export async function renderCodeList(token, env, chatId, messageId = null, page 
       text += `🎟️ <code>${escapeHtml(row.code)}</code>\n`;
       text += `    🎁 ${row.points} 分 · 🔢 ${quota} · ${state}${row.expires_at ? ` · 📅 ${row.expires_at}` : ""}\n\n`;
 
-      inline_keyboard.push([
-        {
-          text: Number(row.enabled) === 1 ? `🚫 停用 ${row.code}` : `✅ 启用 ${row.code}`,
-          callback_data: `${ADMIN_CALLBACK.CODE_TOGGLE_PREFIX}${row.id}`
-        }
-      ]);
+      pendingToggles.push({
+        text: `${Number(row.enabled) === 1 ? "🚫" : "✅"} …${String(row.code).slice(-6)}`,
+        callback_data: `${ADMIN_CALLBACK.CODE_TOGGLE_PREFIX}${row.id}`
+      });
     }
+  }
+
+  // 两列网格：一排两个开关按钮
+  for (let i = 0; i < pendingToggles.length; i += 2) {
+    inline_keyboard.push(pendingToggles.slice(i, i + 2));
   }
 
   const navRow = [];
