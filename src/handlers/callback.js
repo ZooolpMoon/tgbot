@@ -24,7 +24,7 @@ import {
   handleToggleBlock,
   handleClearSceneMemory
 } from "../admin/user-edit.js";
-import { renderAdminMainMenu } from "../admin/menus.js";
+import { renderAdminMainMenu, renderUserManageMenu } from "../admin/menus.js";
 import { renderAdminStats } from "../admin/stats.js";
 import { renderAdminLogs } from "../admin/logs.js";
 import { renderUserPtsMenu, handleModPoints } from "../admin/user-points.js";
@@ -362,8 +362,14 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // 5. 其他管理员回调
   // ==========================================
   try {
+    // ---------- 用户管理（一级点进来，二级再选私聊 / 群组）----------
+    if (data === ADMIN_CALLBACK.USERS_HOME) {
+      await renderUserManageMenu(token, chatId, msgId);
+      await answerCallback(token, callback.id, "用户管理");
+    }
+
     // ---------- 用户列表 ----------
-    if (data.startsWith(ADMIN_CALLBACK.USERS_PRIVATE_PREFIX)) {
+    else if (data.startsWith(ADMIN_CALLBACK.USERS_PRIVATE_PREFIX)) {
       const page = parseInt(data.replace(ADMIN_CALLBACK.USERS_PRIVATE_PREFIX, ""), 10) || 1;
       await renderUserListMenu(token, env, chatId, msgId, page, "private");
       await answerCallback(token, callback.id, `已加载私聊场景第 ${page} 页`);

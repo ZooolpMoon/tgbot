@@ -4,6 +4,7 @@
 
 import { editMessageText, sendMessage, sendMessageWithKeyboard } from "../telegram/api.js";
 import { grid, compactLabel, clampPage, totalPagesOf, pageOffset, pagerRow, pageInfoText, LAYOUT } from "../utils/layout.js";
+import { ADMIN_CALLBACK } from "../config/constants.js";
 
 const PAGE_SIZE = 8;
 
@@ -34,7 +35,8 @@ export function getUserListKeyboard(rows, safePage, totalPages, isPrivate) {
   const pagePrefix = isPrivate ? "admin_users_private_" : "admin_users_group_";
   const navRow = pagerRow({ page: safePage, totalPages, prefix: pagePrefix });
   if (navRow) inline_keyboard.push(navRow);
-  inline_keyboard.push([{ text: "🔙 返回主菜单", callback_data: "admin_main_menu" }]);
+  // 返回到一级「用户管理」菜单，而不是直接跳回主菜单
+  inline_keyboard.push([{ text: "🔙 返回用户管理", callback_data: ADMIN_CALLBACK.USERS_HOME }]);
 
   return { inline_keyboard };
 }

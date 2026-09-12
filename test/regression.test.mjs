@@ -266,3 +266,44 @@ test("管理员加积分会被夹断在 0 ~ 1000000 之间并写流水", { skip:
   assert.equal(db.get("SELECT points FROM users WHERE user_key = 'user:1'").points, 0, "应夹断在 0");
   db.close();
 });
+
+// ---------- 7. 用户管理二级菜单 ----------
+
+test("点击「用户管理」进入二级菜单：私聊用户 / 群组用户", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  db.exec(`INSERT INTO admin_sessions (chat_id, expires_at) VALUES ('1', ${Math.floor(Date.now() / 1000) + 600})`);
+
+  await handleCallback({
+    env, ctx, token: "TEST_TOKEN", myId: "999",
+    uctx: {
+      chatId: "1", userId: "999", chatType: "private",
+      userKey: "user:999", sceneKey: "private:999",
+      username: "admin", firstName: "管理员"
+    },
+    payload: {
+      callback_query: {
+        id: "cb2",
+        from: { id: 999 },
+        data: "admin_users_home",
+        message: { message_id: 6, chat: { id: 1, type: "private" } }
+      }
+    }
+  });
+
+  const edited = apiCalls.filter((c) => c.method === "editMessageText").at(-1);
+  assert.ok(edited, "应该编辑出二级菜单");
+  const keyboard = edited.body.reply_markup?.inline_keyboard || [];
+  assert.deepEqual(
+    keyboard[0].map((b) => b.callback_data),
+    ["admin_users_private_1", "admin_users_group_1"]
+  );
+  assert.ok(String(edited.body.text).includes("用户管理"));
+
+  await Promise.all(ctx.pending);
+  db.close();
+});

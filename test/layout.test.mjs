@@ -12,7 +12,7 @@ import {
   LAYOUT, grid, compactLabel, clampPage, totalPagesOf, pagerRow, validateKeyboard
 } from "../src/utils/layout.js";
 
-import { getAdminMainKeyboard } from "../src/admin/menus.js";
+import { getAdminMainKeyboard, getUserManageKeyboard } from "../src/admin/menus.js";
 import { getFeatureHomeKeyboard } from "../src/admin/features.js";
 import { getUserPointsKeyboard } from "../src/admin/user-points.js";
 import { getUserLimitKeyboard } from "../src/admin/user-limit.js";
@@ -99,12 +99,24 @@ test("群聊里的管理菜单不显示商城入口，排版同样紧凑", () =>
 test("主菜单包含全部管理入口", () => {
   const flat = getAdminMainKeyboard(true).inline_keyboard.flat().map((b) => b.callback_data);
   for (const expect of [
-    "admin_users_private_1", "admin_users_group_1", "shop_admin_home",
+    "admin_users_home", "shop_admin_home",
     "admin_codes_1", "admin_tasks", "admin_feat_home", "admin_logs_1",
     "admin_status", "admin_stats", "admin_close"
   ]) {
     assert.ok(flat.includes(expect), `缺少入口 ${expect}`);
   }
+  // 私聊 / 群组用户已收进二级菜单，不应再出现在主菜单
+  assert.ok(!flat.includes("admin_users_private_1"), "主菜单不应直接放私聊用户入口");
+  assert.ok(!flat.includes("admin_users_group_1"), "主菜单不应直接放群组用户入口");
+});
+
+test("用户管理二级菜单：私聊 / 群组用户 + 返回主菜单", () => {
+  const kb = getUserManageKeyboard();
+  assertCompact(kb, { maxRows: 2, label: "用户管理菜单" });
+
+  const rows = kb.inline_keyboard;
+  assert.deepEqual(rows[0].map((b) => b.callback_data), ["admin_users_private_1", "admin_users_group_1"]);
+  assert.deepEqual(rows[1].map((b) => b.callback_data), ["admin_main_menu"]);
 });
 
 test("功能开关首页：三级入口都是两列网格", () => {

@@ -99,6 +99,8 @@ export const ADMIN_CALLBACK = {
   CLOSE: "admin_close",
   USERS_PRIVATE_PREFIX: "admin_users_private_",
   USERS_GROUP_PREFIX: "admin_users_group_",
+  // 一级「用户管理」菜单（二级才是私聊 / 群组用户列表）
+  USERS_HOME: "admin_users_home",
   GROUP_INFO_PREFIX: "admin_group_info_",
   MANAGE_USER_PREFIX: "admin_manage_user_",
   MENU_PTS_PREFIX: "admin_menu_pts_",
