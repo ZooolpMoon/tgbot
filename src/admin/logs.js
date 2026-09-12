@@ -42,7 +42,12 @@ const ACTION_LABELS = {
   kb_doc_add: "📚 新增知识库文档",
   kb_doc_enable: "✅ 启用知识库文档",
   kb_doc_disable: "🚫 停用知识库文档",
-  kb_doc_delete: "🗑️ 删除知识库文档"
+  kb_doc_delete: "🗑️ 删除知识库文档",
+  guard_request: "🛡️ 发起群规处置（待确认）",
+  guard_execute: "🛡️ 执行群规处置",
+  guard_cancel: "🚫 取消群规处置",
+  guard_unmute: "🔊 解除群内禁言",
+  guard_set_rules: "📜 设置群规"
 };
 
 /** 把数据库里的动作键翻译成中文（未知动作原样显示，方便排查新功能） */

@@ -310,6 +310,41 @@ CREATE TABLE IF NOT EXISTS kb_sessions (
   draft      TEXT DEFAULT '',
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ==========================================
+-- 🛡️ 群规执法
+-- 管理员在群里 @ 机器人说「封禁 @某人 原因」时，先按群规校验理由，再执行处置
+-- ==========================================
+
+-- 每个群一份执法配置：群规正文、默认处置方式、默认禁言时长
+CREATE TABLE IF NOT EXISTS group_guard (
+  chat_id              TEXT PRIMARY KEY,
+  rules                TEXT    DEFAULT '',
+  default_action       TEXT    NOT NULL DEFAULT 'bot',   -- bot / kick / group_ban / mute
+  default_mute_minutes INTEGER NOT NULL DEFAULT 60,
+  enabled              INTEGER NOT NULL DEFAULT 1,
+  updated_at           TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 处置记录：既做审计，也承载「待确认」的中间状态
+CREATE TABLE IF NOT EXISTS group_punishments (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id      TEXT    NOT NULL,
+  user_id      TEXT    NOT NULL,
+  user_label   TEXT    DEFAULT '',
+  action       TEXT    NOT NULL,                          -- bot_ban / kick / group_ban / mute / unban / unmute
+  reason       TEXT    DEFAULT '',
+  matched_rule TEXT    DEFAULT '',
+  duration_min INTEGER NOT NULL DEFAULT 0,
+  until_at     INTEGER NOT NULL DEFAULT 0,                 -- Unix 秒；0 = 永久或不需要
+  operator_id  TEXT    DEFAULT '',
+  status       TEXT    NOT NULL DEFAULT 'pending',         -- pending / done / cancelled / rejected / failed
+  detail       TEXT    DEFAULT '',
+  created_at   TEXT    DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_guard_pending ON group_punishments(chat_id, status, id DESC);
+CREATE INDEX IF NOT EXISTS idx_guard_user ON group_punishments(user_id, status, id DESC);
 `;
 
 let schemaReady = false;
@@ -320,7 +355,7 @@ let schemaPromise = null;
  * Worker 冷启动时先读这个标记，已是最新就跳过建表与迁移，
  * 避免每次冷启动都跑几十条语句（D1 对单次调用的查询数有限制）。
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 

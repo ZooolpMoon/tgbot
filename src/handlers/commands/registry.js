@@ -30,7 +30,9 @@ import { cmdCodeNew, cmdCodeList } from "./codes.js";
 import { cmdClearMem } from "./clearmem.js";
 import { cmdBroadcast } from "./broadcast.js";
 import { cmdKb } from "./kb.js";
-import { cmdBan, cmdUnban } from "./ban.js";
+import {
+  cmdBan, cmdUnban, cmdKick, cmdMute, cmdUnmute, cmdGroupBan, cmdRules, cmdSetRules
+} from "./ban.js";
 import { cmdShopEdit } from "../../shop/edit.js";
 import { startAddItem, cancelAddItem } from "../../shop/add.js";
 import {
@@ -147,11 +149,35 @@ export const COMMANDS = [
   },
   {
     name: "/ban", scope: "admin",
-    desc: "把用户加入封禁名单", usage: "/ban <用户ID> [原因]", handle: cmdBan
+    desc: "封禁用户（群里：@某人 + 理由，需确认）", usage: "/ban <用户ID|@某人> [理由]", handle: cmdBan
   },
   {
     name: "/unban", scope: "admin",
-    desc: "把用户移出封禁名单", usage: "/unban <用户ID>", handle: cmdUnban
+    desc: "解除封禁（机器人 + 群）", usage: "/unban <用户ID|@某人>", handle: cmdUnban
+  },
+  {
+    name: "/kick", scope: "admin",
+    desc: "踢出群组（可重新加入，需理由）", usage: "/kick <@某人> <理由>", handle: cmdKick
+  },
+  {
+    name: "/groupban", aliases: ["/gban"], scope: "admin",
+    desc: "群内封禁（不可重新加入，需理由）", usage: "/groupban <@某人> <理由>", handle: cmdGroupBan
+  },
+  {
+    name: "/mute", scope: "admin",
+    desc: "群内禁言（支持时长，需理由）", usage: "/mute <@某人> [时长] <理由>", handle: cmdMute
+  },
+  {
+    name: "/unmute", scope: "admin",
+    desc: "解除群内禁言", usage: "/unmute <@某人>", handle: cmdUnmute
+  },
+  {
+    name: "/rules", scope: "admin",
+    desc: "查看本群群规与可识别的违规类型", handle: cmdRules
+  },
+  {
+    name: "/setrules", scope: "admin",
+    desc: "设置本群群规（执法时用它校验理由）", usage: "/setrules <群规正文>", handle: cmdSetRules
   },
   {
     name: "/code_new", scope: "admin",

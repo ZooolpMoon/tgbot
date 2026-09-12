@@ -171,3 +171,72 @@ export async function downloadFileText(token, filePath, maxBytes = 512 * 1024) {
     return null;
   }
 }
+
+// ==========================================
+// 🛡️ 群管理能力（群规执法用）
+// 注意：机器人在群里必须是管理员且拥有 can_restrict_members 权限，
+// 否则 Telegram 会返回 ok:false —— 调用方需要处理「无权限」的情况。
+// ==========================================
+
+/** 查询成员信息（判断是否群管理员、是否已被禁言等） */
+export function getChatMember(token, chatId, userId) {
+  return postJSON(`${BASE(token)}/getChatMember`, { chat_id: chatId, user_id: userId });
+}
+
+/** 查询机器人自身信息（可用于确认 bot 的身份） */
+export function getMe(token) {
+  return postJSON(`${BASE(token)}/getMe`, {});
+}
+
+/**
+ * 封禁 / 踢出成员。
+ * @param {number} [untilDate] Unix 秒；0 表示永久，>0 表示到期自动解封
+ * @param {boolean} [revokeMessages] 是否同时删除该成员的消息
+ */
+export function banChatMember(token, chatId, userId, untilDate = 0, revokeMessages = false) {
+  const body = { chat_id: chatId, user_id: userId };
+  if (untilDate > 0) body.until_date = untilDate;
+  if (revokeMessages) body.revoke_messages = true;
+  return postJSON(`${BASE(token)}/banChatMember`, body);
+}
+
+/** 解除群封禁（配合 banChatMember 可实现「踢出但允许重新加入」） */
+export function unbanChatMember(token, chatId, userId, onlyIfBanned = true) {
+  return postJSON(`${BASE(token)}/unbanChatMember`, {
+    chat_id: chatId, user_id: userId, only_if_banned: onlyIfBanned
+  });
+}
+
+/** 发送权限模板：禁言时全部置否，解除禁言时全部放开 */
+function mutePermissions(canSend) {
+  return {
+    can_send_messages: canSend,
+    can_send_audios: canSend,
+    can_send_documents: canSend,
+    can_send_photos: canSend,
+    can_send_videos: canSend,
+    can_send_video_notes: canSend,
+    can_send_voice_notes: canSend,
+    can_send_polls: canSend,
+    can_send_other_messages: canSend,
+    can_add_web_page_previews: canSend,
+    can_change_info: canSend,
+    can_invite_users: canSend,
+    can_pin_messages: canSend
+  };
+}
+
+/**
+ * 禁言 / 解除禁言。
+ * @param {number} untilDate Unix 秒；0 表示永久禁言（Telegram 语义）
+ */
+export function restrictChatMember(token, chatId, userId, { mute = true, untilDate = 0, useIndependent = false } = {}) {
+  const body = {
+    chat_id: chatId,
+    user_id: userId,
+    permissions: mutePermissions(!mute)
+  };
+  if (mute && untilDate > 0) body.until_date = untilDate;
+  if (useIndependent) body.use_independent_chat_permissions = true;
+  return postJSON(`${BASE(token)}/restrictChatMember`, body);
+}

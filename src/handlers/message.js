@@ -24,10 +24,14 @@ import { isTaskGuideActive, handleTaskGuideInput, cancelTaskGuide } from "../adm
 import {
   ingestUploadedDocument, isKnowledgeGuideActive, handleKnowledgeInput, cancelKnowledgeGuide
 } from "../admin/knowledge.js";
+import { looksLikeGuardCommand } from "../services/guard.js";
+import { handleGuardRequest } from "../admin/guard.js";
 
 /** 处理 message / edited_message 更新 */
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
   const message = payload.message || payload.edited_message;
+  // 原始文本（保留 @提及 与实体偏移），群规执法解析要用它
+  const originalText = (message.text || "").trim();
   let userText = (message.text || "").trim();
 
   const chatId = uctx.chatId;
@@ -126,6 +130,15 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     return;
   }
 
+  // ---------- 群规执法：群里 @机器人 说「封禁 @某人 发广告」----------
+  // 放在封禁校验之后：被封禁的用户即便自称管理员也进不来
+  if (isGroupCtx && isMentioned && looksLikeGuardCommand(originalText)) {
+    const handled = await handleGuardRequest({
+      env, token, chatId, uctx, message, rawText: originalText, myId, isGroupCtx
+    });
+    if (handled) return;
+  }
+
   const command = userText.split(/\s+/)[0].split("@")[0].toLowerCase();
   const botMention = botUsername ? `@${botUsername}` : "Bot";
 
@@ -134,7 +147,9 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     env, ctx, token, chatId, userKey, sceneKey,
     uctx, userConfig, isGroupCtx, isMaster,
     firstName, username, rawText: userText, command, botMention,
-    myId
+    myId,
+    // 原始消息与未清洗文本：群规执法要拿实体偏移和 @提及
+    message, originalText
   };
 
   // ---------- 管理员引导式文本输入（添加商品 / 编辑商品字段）----------

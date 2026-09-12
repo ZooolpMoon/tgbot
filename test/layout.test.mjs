@@ -22,6 +22,7 @@ import { getGroupListKeyboard, getGroupMembersKeyboard } from "../src/admin/user
 import { getBannedListKeyboard } from "../src/admin/user-banned.js";
 import { getTaskListKeyboard } from "../src/admin/tasks.js";
 import { getKnowledgeHomeKeyboard, getDocumentListKeyboard } from "../src/admin/knowledge.js";
+import { getGuardCardKeyboard } from "../src/admin/guard.js";
 
 import { getShopAdminHomeKeyboard, getShopAdminItemsKeyboard, getShopAdminOrdersKeyboard } from "../src/shop/admin.js";
 import { getShopHomeKeyboard, getMyOrdersKeyboard } from "../src/shop/index.js";
@@ -158,6 +159,17 @@ test("知识库面板：首页与文档列表排版紧凑", () => {
   }));
   const listKb = getDocumentListKeyboard(docs, 1, 1);
   assertCompact(listKb, { maxRows: 6, label: "文档列表" });
+});
+
+test("群规执法确认卡片：确认/取消与切换处置都在两列网格内", () => {
+  const kb = getGuardCardKeyboard({ id: 12, action: "bot_ban" });
+  assertCompact(kb, { maxRows: 5, label: "执法确认卡片" });
+
+  const flat = kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(flat.includes("guard_go_12"));
+  assert.ok(flat.includes("guard_no_12"));
+  assert.ok(flat.includes("guard_set_12_mute"));
+  assert.ok(!flat.includes("guard_set_12_bot_ban"), "当前处置方式不应再出现在切换按钮里");
 });
 
 test("功能开关首页：三级入口都是两列网格", () => {

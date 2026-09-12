@@ -16,6 +16,7 @@ export const GLOBAL_SCOPE = "global";
 export const FEATURES = [
   { key: "ai", label: "AI 对话", desc: "私聊 / 群聊里的 AI 回复" },
   { key: "kb", label: "知识库检索", desc: "AI 回答前先检索管理员上传的资料" },
+  { key: "guard", label: "群规执法", desc: "群里 @ 机器人下达封禁 / 踢出 / 禁言（需说明理由）" },
   { key: "game", label: "游戏大厅", desc: "骰子、老虎机、硬币、转盘" },
   { key: "checkin", label: "每日签到", desc: "连续签到奖励" },
   { key: "shop", label: "积分商城", desc: "商品浏览与兑换" },

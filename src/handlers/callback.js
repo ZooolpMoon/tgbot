@@ -79,6 +79,7 @@ import { beginOrderNote } from "../shop/notes.js";
 import { upsertUserInfo, isUserBlocked } from "../services/users.js";
 import { isFeatureEnabled } from "../services/features.js";
 import { logError } from "../core/logger.js";
+import { handleGuardCallback } from "../admin/guard.js";
 
 /**
  * 处理按钮回调（callback_query）。
@@ -240,6 +241,14 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   if (data === "rank_close") {
     await closeRank(token, chatId, msgId);
     await answerCallback(token, callback.id, "已关闭");
+    return;
+  }
+
+  // ==========================================
+  // 2.8 群规执法确认卡片（本群管理员也能点，因此放在管理员校验之前）
+  // ==========================================
+  if (data.startsWith(ADMIN_CALLBACK.GUARD_PREFIX)) {
+    await handleGuardCallback({ env, ctx, token, chatId, callback, data, myId, msgId });
     return;
   }
 

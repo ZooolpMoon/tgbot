@@ -133,6 +133,10 @@ export const ADMIN_CALLBACK = {
   BANNED_PREFIX: "admin_banned_",
   UNBAN_PREFIX: "admin_unban_",
   GROUP_INFO_PREFIX: "admin_group_info_",
+
+  // ---------- 🛡️ 群规执法确认卡片 ----------
+  // 形如 guard_go_12 / guard_no_12 / guard_set_12_mute
+  GUARD_PREFIX: "guard_",
   MANAGE_USER_PREFIX: "admin_manage_user_",
   MENU_PTS_PREFIX: "admin_menu_pts_",
   MODPTS_PREFIX: "admin_modpts_",

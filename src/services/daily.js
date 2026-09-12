@@ -13,6 +13,7 @@ import { sendMessageWithKeyboard } from "../telegram/api.js";
 import { resolveAdminChatId } from "../shop/notify.js";
 import { escapeHtml } from "../utils/html.js";
 import { logError, logInfo } from "../core/logger.js";
+import { expirePunishments } from "./guard.js";
 
 /**
  * 清理过期数据（引导会话、草稿、过期兑换码）。
@@ -52,6 +53,12 @@ export async function cleanupStaleData(env) {
     "DELETE FROM kb_sessions WHERE updated_at <= datetime('now', '-1 day')"
   ).run();
 
+  // 群规处置：把已到期的临时禁言标记为 expired，并清理一周前的待确认记录
+  const expiredPunishments = await expirePunishments(env);
+  const stalePunishments = await env.DB.prepare(
+    "DELETE FROM group_punishments WHERE status = 'pending' AND created_at <= datetime('now', '-1 day')"
+  ).run();
+
   const expiredCodes = await env.DB.prepare(
     "UPDATE redeem_codes SET enabled = 0 WHERE enabled = 1 AND expires_at IS NOT NULL AND expires_at < ?"
   ).bind(today).run();
@@ -64,6 +71,8 @@ export async function cleanupStaleData(env) {
     editSessions: editSessions.meta.changes,
     taskSessions: taskSessions.meta.changes,
     kbSessions: kbSessions.meta.changes,
+    expiredPunishments,
+    stalePunishments: stalePunishments.meta.changes,
     expiredCodes: expiredCodes.meta.changes
   };
 }
