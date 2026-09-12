@@ -15,7 +15,7 @@
 ### 修复与优化
 
 - 🧠 AI 上下文裁剪从 `handlers/ai.js` 抽成 `src/services/history.js`，逻辑不变但可单测
-- 🗂️ 备注输入期间发送指令不会被误当成备注内容，只有 `/cancel` 会放弃填写；下单失败时备注草稿保留，用户不用重填
+- 🗂️ 备注输入期间发送指令不会被误当成备注内容，只有 `/cancel` 会放弃填写；进入输入态 30 分钟未回复会自动失效，避免正常聊天被吞成备注；下单失败时草稿保留，用户不用重填
 - 🗃️ 数据库新增 `redeem_codes`、`redeem_logs`、`shop_order_drafts` 表（首次请求自动创建，老库无需手工 SQL）
 - ⚙️ `wrangler.toml` 增加 `[triggers] crons = ["0 16 * * *"]`（UTC，等于北京时间 00:00）
 

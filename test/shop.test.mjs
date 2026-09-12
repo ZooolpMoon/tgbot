@@ -124,3 +124,23 @@ test("备注：回复 - 清空、超长截断、换商品不串号、可取消",
   assert.equal(db.count("shop_order_drafts"), 0, "取消后草稿应删除");
   db.close();
 });
+
+test("备注输入态超过 30 分钟自动失效，不再拦截普通消息", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = { DB: db };
+  const itemId = seedItem(db);
+
+  await beginOrderNote(env, "1", itemId);
+  assert.ok(await getPendingNoteRequest(env, "1"), "刚点开时应在等待输入");
+
+  // 把状态改成 2 小时前
+  db.exec("UPDATE shop_order_drafts SET updated_at = datetime('now','-2 hours') WHERE chat_id = '1'");
+  assert.equal(await getPendingNoteRequest(env, "1"), null, "过期状态应视为失效");
+
+  // 已保存的备注（pending=0）不受 TTL 影响，仍能读到
+  await beginOrderNote(env, "1", itemId);
+  await saveOrderNote(env, "1", "下单地址");
+  db.exec("UPDATE shop_order_drafts SET updated_at = datetime('now','-2 hours') WHERE chat_id = '1'");
+  assert.equal(await getOrderNote(env, "1", itemId), "下单地址");
+  db.close();
+});

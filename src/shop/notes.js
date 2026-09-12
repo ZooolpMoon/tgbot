@@ -9,6 +9,10 @@
 
 const MAX_NOTE_LENGTH = 300;
 
+// 进入「等待输入备注」状态后，超过这个时间就不再拦截消息，
+// 避免用户填到一半去聊天时，普通消息被当成备注吞掉。
+const PENDING_NOTE_TTL_MINUTES = 30;
+
 /** 用户点了「填写备注」：进入等待输入状态（同一商品保留原备注） */
 export async function beginOrderNote(env, chatId, itemId) {
   if (!env.DB) return "";
@@ -31,11 +35,12 @@ export async function beginOrderNote(env, chatId, itemId) {
   return keep;
 }
 
-/** 是否正在等这个会话输入备注；是则返回 { itemId } */
+/** 是否正在等这个会话输入备注；是则返回 { itemId }（超过 30 分钟的旧状态视为失效） */
 export async function getPendingNoteRequest(env, chatId) {
   if (!env.DB) return null;
   const row = await env.DB.prepare(
-    "SELECT item_id, pending FROM shop_order_drafts WHERE chat_id = ?"
+    `SELECT item_id, pending, updated_at FROM shop_order_drafts
+     WHERE chat_id = ? AND pending = 1 AND updated_at >= datetime('now', '-${PENDING_NOTE_TTL_MINUTES} minutes')`
   ).bind(chatId).first();
   if (!row || Number(row.pending) !== 1) return null;
   return { itemId: Number(row.item_id) };
