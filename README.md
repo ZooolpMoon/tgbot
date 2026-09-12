@@ -76,6 +76,8 @@
 
 ### 🤖 AI 对话
 - 基于 Cloudflare Workers AI 的 **Llama 3.3 70B** 模型
+- **模型自动回退**：主模型报错/返回空内容时自动切换备选模型，减少「AI 服务异常」
+- **上下文长度管理**：历史既限条数（10 条）也限字符数（默认 6000，超出从最旧丢弃）
 - 支持自定义 AI 偏好（`/setprompt`）
 - 支持多语言偏好（`/setlang`）
 - 每个对话场景独立保存记忆（私聊 / 每个群成员各自上下文）
@@ -84,14 +86,16 @@
 ### 💰 积分系统
 - **全局共享**：同一个人在私聊、群 A、群 B 的积分是**同一个**
 - 每次 AI 对话扣 **1 分**，失败自动退款
-- 每日签到 **+5 分**（北京时间每天一次）
+- 每日签到按**连续天数递增**奖励（首日 +5，上限 +20，每满 7 天额外 +20）
 - 管理员可任意增减用户积分
 - 每笔变动写入 `points_log` 流水
+- `/points` 分页查看流水，`/rank` 查看积分排行榜 Top 10
 
 ### 📅 每日签到
 - `/checkin` 或 `/sign`
 - 按**北京时间**（`Asia/Shanghai`）计算日期
-- 每天只能签一次，累计天数可查
+- 每天只能签一次，**累计天数**与**连续天数**都会展示
+- 连续签到奖励：`min(5 + (连续天数-1), 20)`，每满 7 天额外 +20；断签后从第 1 天重新计算
 
 ### 🎮 游戏大厅
 | 游戏 | 说明 | 赔率 |
@@ -108,7 +112,9 @@
 ### 🛒 积分商城
 - **仅私聊可用**，群聊里禁用
 - 用户用积分兑换**虚拟/实物/服务类**商品
+- 管理员可**引导式添加商品**（`/shop_add`）与**引导式编辑商品**（`/shop_edit <商品ID>`，可改名称/价格/库存/分类/图标/说明）
 - 管理员可上下架商品、处理订单
+- 用户可在「我的订单」里**自助取消待处理订单并退款**（库存同步回滚）
 - 下单自动扣积分，取消自动退款
 - 每笔积分变动写入流水
 - 支持**库存管理**（无限库存 / 有限库存）
@@ -118,12 +124,17 @@
 - `/admin` 打开控制台
 - 私聊场景 / 群聊场景**分开管理**
 - 用户积分、每日限额、发送频率独立配置
+- **封禁 / 解封用户**：被封禁用户无法再使用 AI、游戏、商城等任何功能
+- **管理员操作日志**：谁在什么时候改了什么，可翻页审计
+- **群发消息**：`/broadcast <内容>` 二次确认后分批推送给所有私聊用户
+- **记忆管理**：可清空「某群某用户」的 AI 记忆
 - 积分流水完整记录
 - 系统运行状态与统计
 
 ### 🗑️ 群聊智能回复
 - 群里只有 **@BOT** 或 **/指令** 才回复
-- 指令类消息（`/start`、`/help` 等）**5 秒后自动删除**
+- 大部分指令类消息（`/start`、`/help` 等）**5 秒后自动删除**
+- `/points`、`/rank` 等带按钮的卡片会保留，方便翻页
 - AI 回复、游戏消息、管理员菜单**保留**
 
 ---
@@ -395,6 +406,10 @@ stateDiagram-v2
 | `shop_items` | 商品（名称、图标、价格、库存、分类、上下架状态） |
 | `shop_orders` | 订单（订单号、用户、商品快照、价格快照、状态） |
 | `shop_order_log` | 订单操作日志（发货、取消等） |
+| `shop_add_sessions` | 管理员「添加商品」引导流程的临时状态 |
+| `shop_edit_sessions` | 管理员「编辑商品」引导流程的临时状态 |
+| `admin_logs` | 管理员操作审计日志（谁改了什么） |
+| `broadcast_drafts` | 群发草稿与进度（支持断点续发） |
 
 ### 关键设计
 
@@ -450,6 +465,10 @@ graph LR
     H4 --> Cmd10[shop.js]
     H4 --> Cmd11[orders.js]
     H4 --> Cmd12[admin/]
+    H4 --> Cmd13[points.js]
+    H4 --> Cmd14[rank.js]
+    H4 --> Cmd15[broadcast.js]
+    H4 --> Cmd16[clearmem.js]
 
     A --> A1[menus.js]
     A --> A2[user-list.js]
@@ -459,6 +478,7 @@ graph LR
     A --> A6[user-limit.js]
     A --> A7[user-rate.js]
     A --> A8[stats.js]
+    A --> A9[logs.js]
 
     G --> G1[index.js]
     G --> G2[shared.js]
@@ -471,11 +491,15 @@ graph LR
     Sh --> Sh2[admin.js]
     Sh --> Sh3[actions.js]
     Sh --> Sh4[notify.js]
+    Sh --> Sh5[add.js]
+    Sh --> Sh6[edit.js]
 
     S --> S1[users.js]
     S --> S2[points.js]
     S --> S3[quota.js]
     S --> S4[time.js]
+    S --> S5[checkin.js]
+    S --> S6[admin-log.js]
 
     U --> U1[html.js]
 
@@ -527,6 +551,10 @@ tgbot/
     │       ├── game.js
     │       ├── shop.js              # /shop 入口
     │       ├── orders.js            # /orders 入口
+    │       ├── points.js            # /points 积分流水（分页）
+    │       ├── rank.js              # /rank 积分排行榜
+    │       ├── broadcast.js         # /broadcast 管理员群发
+    │       ├── clearmem.js          # /clearmem 清除 AI 记忆
     │       └── admin/
     │           └── index.js         # /admin /users /users_group /stats /addpoints
     │
@@ -538,6 +566,7 @@ tgbot/
     │   ├── user-points-log.js       # 积分流水
     │   ├── user-limit.js            # 每日限额
     │   ├── user-rate.js             # 发送频率
+    │   ├── logs.js                  # 📋 管理员操作日志
     │   └── stats.js                 # 系统统计
     │
     ├── games/                       # 🎮 游戏模块
@@ -551,17 +580,24 @@ tgbot/
     ├── shop/                        # 🛒 积分商城
     │   ├── index.js                 # 用户侧：首页 / 详情 / 兑换 / 我的订单
     │   ├── admin.js                 # 管理员侧：商品/订单管理 UI
-    │   ├── actions.js               # 管理员操作：上下架/删除/发货/取消
+    │   ├── add.js                   # 管理员引导式添加商品
+    │   ├── edit.js                  # 管理员引导式编辑商品字段
+    │   ├── actions.js               # 上下架/删除/发货/取消退款（用户与管理员共用）
     │   └── notify.js                # 通知管理员
     │
     ├── services/                    # 🔧 业务服务层
     │   ├── users.js                 # 用户/场景 upsert、配置读写
     │   ├── points.js                # 积分加减、退款、流水
+    │   ├── checkin.js               # 连续签到天数与递增奖励
     │   ├── quota.js                 # 每日额度预留、退款
+    │   ├── admin-log.js             # 管理员操作审计日志
     │   └── time.js                  # 时区、日期键
     │
     └── utils/                       # 🔨 工具
         └── html.js                  # HTML 转义
+
+scripts/
+└── backup.mjs                       # 💾 D1 一键备份（npm run backup）
 ```
 
 ---
@@ -711,14 +747,16 @@ INSERT INTO shop_items (name, description, icon, price, stock, category, enabled
 |------|------|
 | `/start` | 开始使用 |
 | `/help` | 查看指令列表 |
-| `/checkin` 或 `/sign` | 每日签到（+5 积分） |
+| `/checkin` 或 `/sign` | 每日签到（连续签到奖励递增） |
+| `/points` | 积分流水（可翻页） |
+| `/rank` | 积分排行榜 Top 10 |
 | `/game` | 打开游戏大厅 |
 | `/profile` | 查看个人信息卡片 |
 | `/setlang <zh/en>` | 切换语言 |
 | `/setprompt <设定>` | 设置 AI 偏好 |
 | `/clear` | 清空对话历史 |
 | `/shop` | 打开积分商城（仅私聊） |
-| `/orders` | 查看我的订单（仅私聊） |
+| `/orders` | 查看我的订单，待处理可取消退款（仅私聊） |
 
 ### 管理员
 
@@ -729,7 +767,13 @@ INSERT INTO shop_items (name, description, icon, price, stock, category, enabled
 | `/users_group` | 群聊用户管理 |
 | `/stats` | 系统统计 |
 | `/addpoints <场景ID> <数量>` | 调整用户积分 |
+| `/clearmem <群ID> [用户ID]` | 清除指定场景 / 群组 / 群成员的 AI 记忆 |
 | `/shop_admin` | 打开商城管理（仅私聊，需先 /admin） |
+| `/shop_add` | 引导式添加商品（仅私聊，需先 /admin） |
+| `/shop_edit <商品ID>` | 引导式编辑商品（仅私聊，需先 /admin） |
+| `/broadcast <内容>` | 群发给所有私聊用户（仅私聊，需先 /admin） |
+
+管理员控制台里还有：📋 操作日志、🚫 封禁/解封用户、🧹 清空场景记忆等按钮入口。
 
 > 管理员指令需先输入 `/admin` 解锁，30 分钟内有效。
 
@@ -877,12 +921,58 @@ wrangler tail
 # 操作数据库
 wrangler d1 execute tgbot-db --remote --command "SELECT * FROM users LIMIT 10;"
 
-# 导出数据
-wrangler d1 export tgbot-db --output=backup.sql --remote
+# 导出数据（手动）
+wrangler d1 export tgbot-db --output=backup.sql --remote -c wrangler.production.toml
+
+# 备份（一键，输出到 backups/ 目录，文件名带时间戳）
+npm run backup          # 备份线上库
+npm run backup:local    # 备份本地 wrangler dev 库
 
 # 查看 Worker 版本
 wrangler versions list
 ```
+
+### 💾 数据备份与恢复
+
+`npm run backup` 会调用 [scripts/backup.mjs](scripts/backup.mjs)，
+按 `backups/tgbot-db-remote-<时间戳>.sql` 导出**结构 + 数据**（默认使用 `wrangler.production.toml`）。
+
+```bash
+# 恢复到线上库
+npx wrangler d1 execute tgbot-db --remote --file=backups/tgbot-db-remote-2026-09-12T10-00-00.sql -c wrangler.production.toml
+```
+
+**定时备份**（三选一）：
+
+1. **Windows 计划任务**：每天执行 `npm run backup`（工作目录设为项目根目录）。
+2. **GitHub Actions**（仓库 Settings → Secrets 配置 `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`）：
+
+```yaml
+name: d1-backup
+on:
+  schedule: [{ cron: "0 18 * * *" }]   # 每天 02:00（北京时间）
+  workflow_dispatch:
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - run: npx wrangler d1 export tgbot-db --remote --output=backup.sql
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: d1-backup-${{ github.run_id }}
+          path: backup.sql
+```
+
+3. **Workers Cron Triggers**：在 `wrangler.toml` 加 `[triggers] crons = ["0 18 * * *"]`，并在 `src/index.js` 的 `scheduled()` 里调用 D1 查询把数据写进 R2/其它存储。
+
+> `backups/` 已加入 `.gitignore`，备份文件不会误提交到仓库。
 
 ---
 
@@ -902,6 +992,8 @@ wrangler versions list
 | `src/shop/` | 商城模块 |
 | `src/services/` | 业务服务层 |
 | `src/utils/` | 工具函数 |
+| `scripts/` | 运维脚本（D1 备份等） |
+| `backups/` | 备份输出目录（已 gitignore） |
 
 ---
 
