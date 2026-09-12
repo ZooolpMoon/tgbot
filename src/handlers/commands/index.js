@@ -1,36 +1,6 @@
 // ==========================================
-// 📖 指令注册与分发
+// 📖 指令入口（转发到注册表）
+// 真正的命令定义在 registry.js，这里保留旧路径方便引用。
 // ==========================================
 
-import { cmdStart } from "./start.js";        // 开始指令
-import { cmdHelp } from "./help.js";          // 帮助指令
-import { cmdCheckin } from "./checkin.js";    // 签到指令
-import { cmdProfile } from "./profile.js";    // 个人信息指令
-import { cmdSetLang } from "./setlang.js";    // 语言更改指令
-import { cmdSetPrompt } from "./setprompt.js";// AI 自定义指令
-import { cmdClear } from "./clear.js";        // 清除 AI 上下文指令
-import { cmdGame } from "./game.js";          // 游戏指令
-import { cmdPoints } from "./points.js";      // 积分流水指令
-
-export const COMMANDS = {
-  "/start": cmdStart,
-  "/help": cmdHelp,
-  "/h": cmdHelp,
-  "/checkin": cmdCheckin,
-  "/sign": cmdCheckin,
-  "/profile": cmdProfile,
-  "/setlang": cmdSetLang,
-  "/setprompt": cmdSetPrompt,
-  "/clear": cmdClear,
-  "/game": cmdGame,
-  "/games": cmdGame,
-  "/points": cmdPoints,
-  "/mypoints": cmdPoints
-};
-
-export async function dispatchCommand(cmd, ctxObj) {
-  const handler = COMMANDS[cmd];
-  if (!handler) return false;
-  await handler(ctxObj);
-  return true;
-}
+export { COMMANDS, resolveCommand, dispatchCommand, buildHelpText } from "./registry.js";

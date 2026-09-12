@@ -87,6 +87,10 @@ export const ADMIN_CALLBACK = {
   LOGS_PREFIX: "admin_logs_",
   CODES_PREFIX: "admin_codes_",
   CODE_TOGGLE_PREFIX: "admin_code_toggle_",
+  FEATURES_GLOBAL: "admin_feat_g",
+  FEATURES_SCENE_PREFIX: "admin_feat_s_",
+  FEATURE_TOGGLE_PREFIX: "admin_feat_t_",
+  FEATURES_RESET_PREFIX: "admin_feat_r_",
   BROADCAST_CONFIRM: "admin_broadcast_confirm",
   BROADCAST_CANCEL: "admin_broadcast_cancel"
 };
@@ -137,6 +141,7 @@ export const SHOP_EDIT_FIELDS = {
   name: "名称",
   price: "价格",
   stock: "库存",
+  limit: "限购",
   category: "分类",
   icon: "图标",
   description: "说明"

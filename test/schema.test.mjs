@@ -100,8 +100,8 @@ test("数据迁移：实物分类归入虚拟、已发货订单归入已完成",
 });
 
 test("商城已不再提供实物分类与发货动作", () => {
-  const categories = Object.keys(SHOP_EDIT_FIELDS);
-  assert.deepEqual(categories, ["name", "price", "stock", "category", "icon", "description"]);
+  const fields = Object.keys(SHOP_EDIT_FIELDS);
+  assert.deepEqual(fields, ["name", "price", "stock", "limit", "category", "icon", "description"]);
   assert.equal(SHOP.STATUS_SHIPPED, undefined, "不应再定义 shipped 状态");
   assert.equal(SHOP_CALLBACK.ADMIN_SHIP_PREFIX, undefined, "不应再定义发货回调前缀");
 });

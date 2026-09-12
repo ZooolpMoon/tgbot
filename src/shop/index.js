@@ -11,6 +11,7 @@ import { randomInt } from "../utils/random.js";
 import { logError } from "../core/logger.js";
 import { SHOP } from "../config/constants.js";
 import { getOrderNote, cancelOrderNote } from "./notes.js";
+import { completeTask } from "../services/tasks.js";
 
 export async function renderShopHome(token, env, chatId, userKey, messageId = null, page = 1) {
   if (!env.DB) {
@@ -78,7 +79,7 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
   }
 
   const item = await env.DB.prepare(
-    "SELECT id, name, description, icon, price, stock, category, enabled FROM shop_items WHERE id = ?"
+    "SELECT id, name, description, icon, price, stock, category, enabled, per_user_limit FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   if (!item || item.enabled !== 1) {
@@ -93,13 +94,14 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
   const stockText = item.stock === -1 ? "无限" : (item.stock > 0 ? `${item.stock}` : "已售罄");
   const catText = { virtual: "虚拟物品", service: "服务" }[item.category] || item.category;
   const note = await getOrderNote(env, chatId, item.id);
+  const perUserLimit = Number(item.per_user_limit) || 0;
 
   const text =
     `${item.icon} <b>${escapeHtml(item.name)}</b>\n` +
     `-------------------------\n` +
     `📂 <b>分类：</b> ${catText}\n` +
     `💰 <b>价格：</b> 🪙 ${item.price}\n` +
-    `📦 <b>库存：</b> ${stockText}\n` +
+    `📦 <b>库存：</b> ${stockText}${perUserLimit > 0 ? `\n🙋 <b>限购：</b> 每人 ${perUserLimit} 件` : ""}\n` +
     `🪙 <b>我的积分：</b> ${pts}\n` +
     `🧾 <b>下单备注：</b> ${note ? escapeHtml(note) : "（未填写）"}\n\n` +
     `📝 <b>说明：</b>\n${escapeHtml(item.description) || "（无）"}\n`;
@@ -132,7 +134,7 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   if (!env.DB) return answerCallback(token, callback.id, "❌ 商城未启用", true);
 
   const item = await env.DB.prepare(
-    "SELECT id, name, icon, price, stock, category, enabled FROM shop_items WHERE id = ?"
+    "SELECT id, name, icon, price, stock, category, enabled, per_user_limit FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   if (!item || item.enabled !== 1) {
@@ -141,6 +143,17 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
 
   if (item.stock === 0) {
     return answerCallback(token, callback.id, "❌ 已售罄", true);
+  }
+
+  // 每人限购（已取消的订单不占名额）
+  const perUserLimit = Number(item.per_user_limit) || 0;
+  if (perUserLimit > 0) {
+    const boughtRes = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM shop_orders WHERE user_key = ? AND item_id = ? AND status <> 'cancelled'"
+    ).bind(userKey, item.id).first();
+    if ((Number(boughtRes?.n) || 0) >= perUserLimit) {
+      return answerCallback(token, callback.id, `❌ 该商品每人限购 ${perUserLimit} 件，你已达到上限`, true);
+    }
   }
 
   // 扣积分（原子操作）
@@ -188,6 +201,9 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
 
   // 订单已创建，清掉备注草稿（失败时不清理，用户不用重填）
   await cancelOrderNote(env, chatId);
+
+  // 完成「在商城兑换一次」任务（商城仅私聊，场景键即 private:<uid>）
+  await completeTask(env, userKey, "shop", { sceneKey: `private:${chatId}`, chatId, token });
 
   await logPointChange(env, userKey, -item.price, afterDeduct, `兑换 [${item.name}] 订单 ${orderNo}`);
 

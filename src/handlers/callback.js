@@ -52,10 +52,12 @@ import { renderPointsLog } from "./commands/points.js";
 import { renderRank, closeRank } from "./commands/rank.js";
 import { startBroadcast, cancelBroadcast } from "./commands/broadcast.js";
 import { renderCodeList, handleCodeToggle } from "./commands/codes.js";
+import { renderFeatureMenu, handleFeatureToggle, handleFeatureReset } from "../admin/features.js";
 import { beginOrderNote } from "../shop/notes.js";
 
 // ---- 服务 ----
 import { upsertUserInfo, isUserBlocked } from "../services/users.js";
+import { isFeatureEnabled } from "../services/features.js";
 import { logError } from "../core/logger.js";
 
 export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
@@ -104,13 +106,21 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // 1. 游戏（任何用户）
   // ==========================================
   if (data.startsWith("game_")) {
-    await handleGameCallbacks(token, env, callback, chatId, userKey, msgId, fromId, data);
+    if (!(await isFeatureEnabled(env, sceneKey, "game"))) {
+      await answerCallback(token, callback.id, "⚠️ 本场景已关闭「游戏大厅」", true);
+      return;
+    }
+    await handleGameCallbacks(token, env, callback, chatId, userKey, msgId, fromId, data, sceneKey);
     return;
   }
 
   // ==========================================
   // 2. 商城（用户侧，任何用户）
   // ==========================================
+  if (data.startsWith("shop_") && !(await isFeatureEnabled(env, sceneKey, "shop"))) {
+    await answerCallback(token, callback.id, "⚠️ 本场景已关闭「积分商城」", true);
+    return;
+  }
   if (data === "shop_home") {
     await renderShopHome(token, env, chatId, userKey, msgId);
     await answerCallback(token, callback.id, "商城");
@@ -419,6 +429,23 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       const page = parseInt(data.replace(ADMIN_CALLBACK.CODES_PREFIX, ""), 10) || 1;
       await renderCodeList(token, env, chatId, msgId, page);
       await answerCallback(token, callback.id, `兑换码第 ${page} 页`);
+    }
+
+    // ---------- 功能开关 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX)) {
+      await handleFeatureToggle({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.FEATURES_RESET_PREFIX)) {
+      await handleFeatureReset({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.FEATURES_SCENE_PREFIX)) {
+      const scopeToken = `s${parseInt(data.replace(ADMIN_CALLBACK.FEATURES_SCENE_PREFIX, ""), 10)}`;
+      await renderFeatureMenu(token, env, chatId, msgId, scopeToken);
+      await answerCallback(token, callback.id, "本场景功能开关");
+    }
+    else if (data === ADMIN_CALLBACK.FEATURES_GLOBAL) {
+      await renderFeatureMenu(token, env, chatId, msgId, "g");
+      await answerCallback(token, callback.id, "全局功能开关");
     }
 
     // ---------- 删除场景 ----------

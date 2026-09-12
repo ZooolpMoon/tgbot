@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS shop_items (
   price         INTEGER NOT NULL,
   stock         INTEGER DEFAULT -1,
   category      TEXT    DEFAULT 'virtual',
+  per_user_limit INTEGER DEFAULT 0,        -- 每人限购数量，0 = 不限
   enabled       INTEGER DEFAULT 1,
   created_at    TEXT    DEFAULT CURRENT_TIMESTAMP,
   updated_at    TEXT    DEFAULT CURRENT_TIMESTAMP
@@ -219,6 +220,32 @@ CREATE TABLE IF NOT EXISTS shop_order_drafts (
   pending    INTEGER NOT NULL DEFAULT 0,   -- 1 = 正在等用户回复备注内容
   updated_at TEXT    DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ==========================================
+-- ⚙️ 功能开关（scene_key = 'global' 为全局默认）
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS scene_settings (
+  scene_key  TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  value      TEXT NOT NULL,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (scene_key, name)
+);
+
+-- ==========================================
+-- ✅ 每日任务
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS daily_tasks (
+  user_key   TEXT    NOT NULL,
+  date_str   TEXT    NOT NULL,
+  task       TEXT    NOT NULL,
+  points     INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_key, date_str, task)
+);
+CREATE INDEX IF NOT EXISTS idx_daily_tasks_key ON daily_tasks(user_key, date_str);
 `;
 
 let schemaReady = false;
@@ -232,6 +259,7 @@ let schemaPromise = null;
 const MIGRATIONS = [
   // 结构迁移
   "ALTER TABLE users ADD COLUMN blocked INTEGER DEFAULT 0",
+  "ALTER TABLE shop_items ADD COLUMN per_user_limit INTEGER DEFAULT 0",
   // 数据迁移：v1.3.1 起商城只保留「虚拟物品 / 服务」，不再有实物与发货环节
   "UPDATE shop_items SET category = 'virtual' WHERE category = 'physical'",
   "UPDATE shop_orders SET status = 'done' WHERE status = 'shipped'"

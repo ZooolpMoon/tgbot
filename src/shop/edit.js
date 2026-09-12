@@ -22,7 +22,7 @@ export async function renderItemEditMenu(token, env, chatId, messageId, itemId) 
   if (!env.DB) return;
 
   const item = await env.DB.prepare(
-    "SELECT id, name, description, icon, price, stock, category, enabled FROM shop_items WHERE id = ?"
+    "SELECT id, name, description, icon, price, stock, category, enabled, per_user_limit FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   if (!item) {
@@ -31,12 +31,14 @@ export async function renderItemEditMenu(token, env, chatId, messageId, itemId) 
   }
 
   const stockText = Number(item.stock) === -1 ? "不限" : item.stock;
+  const limitText = Number(item.per_user_limit) > 0 ? `每人 ${item.per_user_limit} 件` : "不限";
   const text =
     `✏️ <b>编辑商品 #${item.id}</b>\n` +
     `-------------------------\n` +
     `${item.icon} <b>${escapeHtml(item.name)}</b>\n` +
     `💰 价格：🪙 ${item.price}\n` +
     `📦 库存：${stockText}\n` +
+    `🙋 限购：${limitText}\n` +
     `📂 分类：${CATEGORY_TEXT[item.category] || item.category}\n` +
     `🔘 状态：${item.enabled ? "✅ 已上架" : "🚫 已下架"}\n` +
     `📝 说明：${escapeHtml(item.description) || "（无）"}\n\n` +
@@ -53,6 +55,7 @@ export async function renderItemEditMenu(token, env, chatId, messageId, itemId) 
     { text: "🎨 改图标", callback_data: `shop_admin_editf_${item.id}_icon` }
   ]);
   kb.push([
+    { text: "🙋 改限购", callback_data: `shop_admin_editf_${item.id}_limit` },
     { text: "📝 改说明", callback_data: `shop_admin_editf_${item.id}_description` }
   ]);
   kb.push([{ text: "🔙 返回商品详情", callback_data: `shop_admin_item_${item.id}` }]);
@@ -66,7 +69,7 @@ export async function startEditField({ env, token, chatId, itemId, field }) {
   if (!SHOP_EDIT_FIELDS[field]) return sendMessage(token, chatId, "⚠️ 不支持的字段。");
 
   const item = await env.DB.prepare(
-    "SELECT id, name, price, stock, category, icon, description FROM shop_items WHERE id = ?"
+    "SELECT id, name, price, stock, category, icon, description, per_user_limit FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
   if (!item) return sendMessage(token, chatId, `❌ 商品 #${itemId} 不存在。`);
 
@@ -103,6 +106,8 @@ function editPrompt(item, field) {
       return head + `当前图标：<b>${escapeHtml(item.icon) || "无"}</b>\n\n请输入<b>新的 emoji 图标</b>：` + cancelTip;
     case "description":
       return head + `当前说明：${escapeHtml(item.description) || "（无）"}\n\n请输入<b>新的商品说明</b>（回复 - 表示清空）：` + cancelTip;
+    case "limit":
+      return head + `当前限购：<b>${Number(item.per_user_limit) > 0 ? `每人 ${item.per_user_limit} 件` : "不限"}</b>\n\n请输入<b>每人限购数量</b>（整数；0 表示不限）：` + cancelTip;
     default:
       return head + "请输入新值：" + cancelTip;
   }
@@ -132,7 +137,7 @@ export async function handleEditItemInput({ env, token, chatId, userText, adminI
   const itemId = Number(session.item_id);
 
   const item = await env.DB.prepare(
-    "SELECT id, name, price, stock, category, icon, description FROM shop_items WHERE id = ?"
+    "SELECT id, name, price, stock, category, icon, description, per_user_limit FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
   if (!item) {
     await env.DB.prepare("DELETE FROM shop_edit_sessions WHERE chat_id = ?").bind(chatId).run();
@@ -171,6 +176,12 @@ export async function handleEditItemInput({ env, token, chatId, userText, adminI
     case "description":
       value = text === "-" ? "" : text.slice(0, 500);
       break;
+    case "limit": {
+      const limit = Number.parseInt(text, 10);
+      if (!Number.isInteger(limit) || limit < 0) validationError = "⚠️ 限购数量必须是大于等于 0 的整数（0 = 不限），请重新输入：";
+      else value = limit;
+      break;
+    }
     default:
       validationError = "⚠️ 无法识别的字段，请重新从商品编辑面板进入。";
   }
@@ -180,23 +191,32 @@ export async function handleEditItemInput({ env, token, chatId, userText, adminI
     return true;
   }
 
+  // 字段名 → 数据库列名（白名单，避免拼接注入）
+  const COLUMN_MAP = {
+    name: "name", price: "price", stock: "stock", category: "category",
+    icon: "icon", description: "description", limit: "per_user_limit"
+  };
+  const column = COLUMN_MAP[field];
+
   await env.DB.prepare(
-    `UPDATE shop_items SET ${field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    `UPDATE shop_items SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
   ).bind(value, itemId).run();
 
   await env.DB.prepare("DELETE FROM shop_edit_sessions WHERE chat_id = ?").bind(chatId).run();
 
   const after = await env.DB.prepare(
-    "SELECT id, name, description, icon, price, stock, category, enabled FROM shop_items WHERE id = ?"
+    "SELECT id, name, description, icon, price, stock, category, enabled, per_user_limit FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   const stockText = Number(after.stock) === -1 ? "不限" : after.stock;
+  const limitText = Number(after.per_user_limit) > 0 ? `每人 ${after.per_user_limit} 件` : "不限";
   const text2 =
     `✅ <b>修改成功</b>\n` +
     `-------------------------\n` +
     `${after.icon} <b>${escapeHtml(after.name)}</b>（#${after.id}）\n` +
     `💰 价格：🪙 ${after.price}\n` +
     `📦 库存：${stockText}\n` +
+    `🙋 限购：${limitText}\n` +
     `📂 分类：${CATEGORY_TEXT[after.category] || after.category}\n` +
     `🔘 状态：${after.enabled ? "✅ 已上架" : "🚫 已下架"}\n` +
     `📝 说明：${escapeHtml(after.description) || "（无）"}\n\n` +

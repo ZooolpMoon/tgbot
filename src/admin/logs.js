@@ -25,7 +25,12 @@ const ACTION_LABELS = {
   scene_clear_memory: "🧹 清除场景记忆",
   group_clear_memory: "🧹 清除整群记忆",
   broadcast_done: "📢 群发完成",
-  broadcast_cancel: "🚫 取消群发"
+  broadcast_cancel: "🚫 取消群发",
+  feature_toggle: "🧩 切换功能开关",
+  feature_reset: "🔄 恢复默认开关",
+  redeem_code_create: "🎟️ 生成兑换码",
+  redeem_code_enable: "✅ 启用兑换码",
+  redeem_code_disable: "🚫 停用兑换码"
 };
 
 export function actionLabel(action) {

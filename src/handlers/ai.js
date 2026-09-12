@@ -10,6 +10,7 @@ import { getDateKey } from "../services/time.js";
 import { reserveDailyQuota, refundDailyQuota } from "../services/quota.js";
 import { tryDeductPoints, refundPoint, logPointChange } from "../services/points.js";
 import { resolveHistoryBudget, clampMessage, trimHistory } from "../services/history.js";
+import { completeTask } from "../services/tasks.js";
 import { logError, logWarn } from "../core/logger.js";
 
 export async function handleAIRequest({
@@ -157,6 +158,9 @@ export async function handleAIRequest({
   })());
 
   await sendMessage(token, chatId, replyText);
+
+  // 成功回复后记一次「和 AI 聊一次」任务（失败时不计数）
+  await completeTask(env, userKey, "chat", { sceneKey, chatId, token });
 }
 
 // ==========================================

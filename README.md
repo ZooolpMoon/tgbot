@@ -2,7 +2,7 @@
 
 一个跑在 **Cloudflare Workers + D1 + Workers AI** 上的 Telegram 机器人：AI 对话、全局积分、连续签到、小游戏、积分商城，外加一套完整的管理后台与审计日志。
 
-> 当前版本：**v1.3.1**（2026-09-12） · 变更见 [CHANGELOG.md](CHANGELOG.md)
+> 当前版本：**v2.0.0**（2026-09-12） · 变更见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -81,6 +81,22 @@ npm run backup:config
 - `/rank` 查看积分排行榜 Top 10（含自己的名次与奖牌）
 - 管理员可任意增减、封禁用户
 
+### ✅ 每日任务
+
+- `/tasks` 查看今日任务：签到 / 和 AI 聊一次 / 玩一局游戏 / 在商城兑换一次
+- **完成即刻发奖**，四个全做完再拿一次全勤奖（每天一次，全部完成时机器人会来道贺）
+- 进度按「用户 + 日期」记录，跨私聊与群聊共用；`/profile` 也会显示今日进度
+- 想改任务内容或奖励：编辑 `src/config/tasks.js` 并在对应流程里调用 `completeTask()`
+
+### ⚙️ 功能开关
+
+AI 对话、游戏大厅、每日签到、积分商城、兑换码、每日任务都能单独开关：
+
+- **全局默认**：`/admin → ⚙️ 功能开关（全局默认）`
+- **单场景覆盖**：场景编辑 → `🧩 本场景功能开关`（可「全部恢复跟随全局」）
+- 生效顺序：场景设置 → 全局设置 → 默认开启
+- 关掉之后指令、按钮回调、AI 回复都会被拦下并给出提示，不会留下半截状态
+
 ### 📅 连续签到
 
 - `/checkin`（或 `/sign`），按 `APP_TIMEZONE`（默认北京时间）判定日期，每天一次
@@ -110,6 +126,7 @@ npm run backup:config
 - 管理员：引导式添加商品 `/shop_add`、引导式编辑商品 `/shop_edit <商品ID>`
 - 管理员：上架/下架、删除、**标记已完成（已发放）**、取消并退款；标记完成会通知用户
 - 商品支持无限库存（`-1`）与有限库存；订单保存商品快照，改价改名不影响历史订单
+- **每人限购**：商品可设置每人限购份数（`0` = 不限），已取消的订单不占名额
 - 新订单自动通知管理员；用户自助取消也会通知管理员
 - 订单状态只有三种：`⏳ 待处理 → ✅ 已完成`，或 `⏳ 待处理 → ❌ 已取消（退款）`
 
@@ -300,6 +317,7 @@ INSERT INTO shop_items (name, description, icon, price, stock, category, enabled
 | `/start` | — | 欢迎信息、当前积分与额度 |
 | `/help` | `/h` | 指令列表 |
 | `/checkin` | `/sign` | 每日签到（连续签到奖励递增） |
+| `/tasks` | `/daily` | 每日任务（完成领积分） |
 | `/points` | `/mypoints` | 积分流水，可翻页 |
 | `/rank` | `/top`、`/leaderboard` | 积分排行榜 Top 10 |
 | `/game` | `/games` | 游戏大厅 |
@@ -332,7 +350,9 @@ INSERT INTO shop_items (name, description, icon, price, stock, category, enabled
 
 ### 管理控制台按钮
 
-`/admin` 面板里还能做：私聊/群聊用户列表翻页、场景编辑（限额、频率、封禁、清空记忆、删除场景）、积分增减与流水、系统状态、使用统计、兑换码、操作日志、群发入口。
+`/admin` 面板里还能做：私聊/群聊用户列表翻页、场景编辑（限额、频率、封禁、清空记忆、功能开关、删除场景）、积分增减与流水、系统状态、使用统计、兑换码、全局功能开关、操作日志、群发入口。
+
+> 指令表本身是**自动生成**的：所有命令定义在 `src/handlers/commands/registry.js`，`/help` 直接由它渲染——加命令只要在注册表里加一条，帮助文案和权限/仅私聊/功能开关判定都会自动跟上。
 
 ---
 
@@ -368,6 +388,8 @@ flowchart TB
             S4[time.js]
             S5[checkin.js]
             S6[admin-log.js]
+            S7[features.js]
+            S8[tasks.js]
         end
 
         subgraph INFRA["⚙️ 基础设施"]
@@ -690,8 +712,8 @@ tgbot/
     │   ├── message.js           # 消息总入口：群聊判定 → 封禁校验 → 指令/AI
     │   ├── callback.js          # 按钮总入口：商城 → 游戏 → 积分 → 管理员
     │   ├── ai.js                # AI 对话：配额 → 扣分 → 模型回退 → 裁剪历史
-    │   └── commands/            # 各指令实现（含 redeem.js / codes.js）+ commands/admin/
-    ├── admin/                   # 管理面板 UI（用户·积分·限额·频率·统计·日志）
+    │   └── commands/            # registry.js（命令注册表）+ 各指令实现 + commands/admin/
+    ├── admin/                   # 管理面板 UI（用户·积分·限额·频率·统计·日志·功能开关）
     ├── games/                   # 游戏注册表 + 4 个游戏
     ├── shop/                    # 商城（用户侧·管理员侧·添加·编辑·动作·通知）
     │   └── notes.js             # 🧾 下单备注草稿
@@ -699,6 +721,8 @@ tgbot/
     │   ├── users.js · points.js · quota.js · time.js · checkin.js · admin-log.js
     │   ├── redeem.js            # 🎟️ 兑换码生成/兑换/列表
     │   ├── daily.js             # ⏰ 定时任务：清理 + 日报
+    │   ├── features.js          # ⚙️ 功能开关（全局 + 场景覆盖）
+    │   ├── tasks.js             # ✅ 每日任务进度与发奖
     │   └── history.js           # 🧠 AI 上下文裁剪（可单测）
     └── utils/                   # html.js（转义）· random.js（加密随机数）
 ```
@@ -728,6 +752,8 @@ tgbot/
 | `redeem_codes` | 兑换码：面额、次数上限、已用次数、过期日、启用状态 |
 | `redeem_logs` | 兑换记录（`UNIQUE(code_id, user_key)` 保证每人一次） |
 | `shop_order_drafts` | 下单草稿：待填写/已填写的订单备注 |
+| `scene_settings` | 功能开关（`scene_key = 'global'` 是全局默认，其他为场景覆盖） |
+| `daily_tasks` | 每日任务完成记录（用户 + 日期 + 任务，主键防重复发奖） |
 
 ---
 
@@ -738,7 +764,7 @@ tgbot/
 npm run deploy:prod                    # 部署到 Cloudflare（用 wrangler.production.toml）
 npm run dev                            # 本地预览（用 .dev.vars）
 npm run check                          # 语法 + import 自检
-npm test                               # 跑测试（内存 SQLite，43 个用例）
+npm test                               # 跑测试（内存 SQLite，65 个用例）
 
 # 日志与版本
 npx wrangler tail                      # 实时日志
@@ -771,8 +797,11 @@ npm test        # = node --test，自动发现 test/*.test.mjs
 | `test/redeem.test.mjs` | 兑换码生成/兑换/重复/领完/过期/停用/分页 |
 | `test/shop.test.mjs` | 取消退款幂等、库存回滚、下单备注全流程 |
 | `test/daily.test.mjs` | 定时任务的清理规则与昨日概况统计 |
+| `test/features.test.mjs` | 功能开关：全局默认、场景覆盖、恢复跟随、单次查询 |
+| `test/tasks.test.mjs` | 每日任务：单次发奖、全勤奖、场景关闭时不计 |
+| `test/registry.test.mjs` | 命令注册表自洽性、别名解析、权限标记、帮助裁剪 |
 | `test/history.test.mjs` | AI 上下文裁剪、随机数、HTML 转义 |
-| `test/flows.test.mjs` | 入口链路（桩掉 Telegram API 驱动消息/回调） |
+| `test/flows.test.mjs` | 入口链路（桩掉 Telegram API，含限购、功能开关、定时任务入口） |
 
 > `node:sqlite` 需要 Node 22.5+；低版本会自动跳过依赖它的用例，其余断言照常执行。
 
@@ -906,6 +935,14 @@ npx wrangler login && npm run deploy:prod
 - 「已经兑换过」= 同一个码同一个人只能兑一次，这是防刷设计
 - 管理员可以在 `/admin → 🎟️ 兑换码` 里查看每个码的 `已用/上限`，并随时停用或重新启用
 
+### Q15. 想让某个群不能玩游戏 / 关掉商城
+用**功能开关**：`/admin → ⚙️ 功能开关（全局默认）` 改全局，或 `用户管理 → 该群场景 → 🧩 本场景功能开关` 只关某个群。
+生效顺序是「场景设置 → 全局设置 → 默认开启」，场景里改过才会覆盖全局，点「🔄 全部恢复跟随全局」即可恢复。
+
+### Q16. 用户说「限购商品买不了了」
+这是商品设置了每人限购。管理员在 `商城管理 → 商品详情` 能看到「🙋 限购」，用 `/shop_edit <商品ID> → 🙋 改限购` 改成 `0` 即不限购。
+注意：**已取消的订单不占名额**，用户取消后可以重新兑换。
+
 ---
 
 ## 🧩 扩展指南
@@ -945,9 +982,22 @@ lucky: {
 ### 新增一条指令
 
 1. 在 `src/handlers/commands/` 新建文件导出处理函数
-2. 在 `src/handlers/commands/index.js` 的 `COMMANDS` 注册（普通用户指令）
-3. 管理员指令在 `src/handlers/message.js` 加分支，并调用 `checkAdminUnlocked` 做权限校验
-4. 同步更新 `src/handlers/commands/help.js` 与本文档
+2. 在 `src/handlers/commands/registry.js` 的 `COMMANDS` 数组里加一条：
+
+```js
+{
+  name: "/mytask",
+  aliases: ["/mt"],          // 可选
+  feature: "tasks",          // 可选：受功能开关控制
+  privateOnly: true,         // 可选：仅私聊
+  scope: "admin",            // 可选：管理员命令（默认需先 /admin 解锁）
+  desc: "一句话说明",         // /help 直接用这句
+  usage: "/mytask <参数>",    // 可选
+  handle: myTaskHandler
+}
+```
+
+权限校验、群聊拦截、功能开关判定、`/help` 文案都由注册表统一处理，**不需要再改 message.js**。
 
 ### 商城扩展
 

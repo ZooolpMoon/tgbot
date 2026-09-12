@@ -6,8 +6,9 @@ import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { getDateKey } from "../../services/time.js";
 import { logPointChange } from "../../services/points.js";
 import { computeCheckinStreak, calcCheckinReward } from "../../services/checkin.js";
+import { completeTask } from "../../services/tasks.js";
 
-export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx }) {
+export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx, uctx }) {
   if (!env.DB) {
     await sendAutoDelete(token, chatId, "❌ 未绑定数据库，签到功能不可用。", null, isGroupCtx, ctx);
     return;
@@ -75,4 +76,6 @@ export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx 
     `⏭️ 明天签到可得 <b>+${nextReward.total}</b> 积分，连续签到奖励会越来越高～`;
 
   await sendAutoDelete(token, chatId, msg, "HTML", isGroupCtx, ctx);
+
+  await completeTask(env, userKey, "checkin", { sceneKey: uctx?.sceneKey || null, chatId, token });
 }

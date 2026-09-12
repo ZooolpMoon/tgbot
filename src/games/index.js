@@ -42,7 +42,7 @@ const GAME_REGISTRY = {
   },
   slots: {
     renderMain: (t, e, c, u, m) => SlotsGame.renderMain(t, e, c, u, m),
-    onBetConfirm: (t, e, cbId, c, u, m, amt) => SlotsGame.play(t, e, cbId, c, u, m, amt)
+    onBetConfirm: (t, e, cbId, c, u, m, amt, sceneKey) => SlotsGame.play(t, e, cbId, c, u, m, amt, sceneKey)
   },
   coin: {
     renderMain: (t, e, c, u, m) => CoinGame.renderMain(t, e, c, u, m),
@@ -50,11 +50,11 @@ const GAME_REGISTRY = {
   },
   wheel: {
     renderMain: (t, e, c, u, m) => WheelGame.renderMain(t, e, c, u, m),
-    onBetConfirm: (t, e, cbId, c, u, m, amt) => WheelGame.play(t, e, cbId, c, u, m, amt)
+    onBetConfirm: (t, e, cbId, c, u, m, amt, sceneKey) => WheelGame.play(t, e, cbId, c, u, m, amt, sceneKey)
   }
 };
 
-export async function handleGameCallbacks(token, env, callback, chatId, userKey, messageId, fromId, data) {
+export async function handleGameCallbacks(token, env, callback, chatId, userKey, messageId, fromId, data, sceneKey = null) {
   try {
     if (data === "game_hub") {
       await renderGameCenter(token, chatId, messageId);
@@ -100,7 +100,7 @@ export async function handleGameCallbacks(token, env, callback, chatId, userKey,
       const betAmount = parseInt(parts[3], 10);
       const reg = GAME_REGISTRY[game];
       if (reg && reg.onBetConfirm && Number.isFinite(betAmount) && betAmount > 0) {
-        return await reg.onBetConfirm(token, env, callback.id, chatId, userKey, messageId, betAmount);
+        return await reg.onBetConfirm(token, env, callback.id, chatId, userKey, messageId, betAmount, sceneKey);
       }
       return answerCallback(token, callback.id, `⚠️ 无效下注`, true);
     }
@@ -110,7 +110,7 @@ export async function handleGameCallbacks(token, env, callback, chatId, userKey,
       const betAmount = parseInt(parts[0], 10);
       const choice = parts[1];
       if (Number.isFinite(betAmount) && betAmount > 0 && (choice === "big" || choice === "small")) {
-        return DiceGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount, choice);
+        return DiceGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount, choice, sceneKey);
       }
     }
 
@@ -119,21 +119,21 @@ export async function handleGameCallbacks(token, env, callback, chatId, userKey,
       const betAmount = parseInt(parts[0], 10);
       const choice = parts[1];
       if (Number.isFinite(betAmount) && betAmount > 0 && (choice === "heads" || choice === "tails")) {
-        return CoinGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount, choice);
+        return CoinGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount, choice, sceneKey);
       }
     }
 
     if (data.startsWith("game_slots_play_")) {
       const betAmount = parseInt(data.replace("game_slots_play_", ""), 10);
       if (Number.isFinite(betAmount) && betAmount > 0) {
-        return SlotsGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount);
+        return SlotsGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount, sceneKey);
       }
     }
 
     if (data.startsWith("game_wheel_play_")) {
       const betAmount = parseInt(data.replace("game_wheel_play_", ""), 10);
       if (Number.isFinite(betAmount) && betAmount > 0) {
-        return WheelGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount);
+        return WheelGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount, sceneKey);
       }
     }
 

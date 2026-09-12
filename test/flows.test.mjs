@@ -8,6 +8,7 @@ import { createTestDB, hasSqlite, seedUser, seedItem } from "../test-helpers/d1.
 import { createRedeemCode } from "../src/services/redeem.js";
 import { getOrderNote } from "../src/shop/notes.js";
 import { getUserPoints } from "../src/services/users.js";
+import { setFeature, GLOBAL_SCOPE } from "../src/services/features.js";
 
 // ---- Telegram API 桩 ----
 const apiCalls = [];
@@ -215,5 +216,66 @@ test("定时任务入口：先清理过期数据，再给管理员发日报", { 
   assert.equal(db.count("shop_order_drafts"), 0, "陈旧备注草稿应被清理");
   assert.ok(findText("每日概况"), lastText().slice(0, 30));
   assert.ok(findText("待处理订单"), "日报里应包含待处理订单信息");
+  db.close();
+});
+
+test("商品限购：达到上限后拒绝，取消订单后名额释放", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:1", 1000);
+  const itemId = seedItem(db, { name: "限购商品", price: 10, stock: -1 });
+  db.exec(`UPDATE shop_items SET per_user_limit = 1 WHERE id = ${itemId}`);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+
+  const buy = async () => {
+    resetCalls();
+    await handleCallback({
+      env, ctx, token: "TEST_TOKEN", myId: "999", uctx: uctx(),
+      payload: {
+        callback_query: {
+          id: "buy", data: `shop_buy_${itemId}`,
+          message: { message_id: 5, chat: { id: 1, type: "private" } },
+          from: { id: 1, username: "tester", first_name: "测试用户" }
+        }
+      }
+    });
+    await Promise.all(ctx.pending);
+  };
+
+  await buy();
+  assert.equal(db.count("shop_orders"), 1, "第一次应兑换成功");
+
+  await buy();
+  assert.equal(db.count("shop_orders"), 1, "达到限购后不应再生成订单");
+  assert.ok(findText("限购"), lastText().slice(0, 60));
+
+  // 取消订单后名额释放
+  db.exec("UPDATE shop_orders SET status = 'cancelled'");
+  await buy();
+  assert.equal(db.count("shop_orders"), 2, "取消后应能再次兑换");
+  db.close();
+});
+
+test("功能开关：关闭游戏后点击游戏按钮被拒绝", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:1", 100);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  await setFeature(env, GLOBAL_SCOPE, "game", false);
+
+  resetCalls();
+  await handleCallback({
+    env, ctx, token: "TEST_TOKEN", myId: "999", uctx: uctx(),
+    payload: {
+      callback_query: {
+        id: "game", data: "game_dice_main",
+        message: { message_id: 5, chat: { id: 1, type: "private" } },
+        from: { id: 1, username: "tester", first_name: "测试用户" }
+      }
+    }
+  });
+  await Promise.all(ctx.pending);
+
+  assert.ok(findText("已关闭"), lastText().slice(0, 60));
   db.close();
 });

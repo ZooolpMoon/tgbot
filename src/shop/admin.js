@@ -84,7 +84,7 @@ export async function renderShopAdminItem(token, env, chatId, messageId, itemId)
   if (!env.DB) return;
 
   const item = await env.DB.prepare(
-    "SELECT id, name, description, icon, price, stock, category, enabled FROM shop_items WHERE id = ?"
+    "SELECT id, name, description, icon, price, stock, category, enabled, per_user_limit FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   if (!item) {
@@ -94,6 +94,7 @@ export async function renderShopAdminItem(token, env, chatId, messageId, itemId)
 
   const catText = { virtual: "虚拟", service: "服务" }[item.category] || item.category;
   const stockText = item.stock === -1 ? "无限" : item.stock;
+  const limitText = Number(item.per_user_limit) > 0 ? `每人 ${item.per_user_limit} 件` : "不限";
 
   const text =
     `${item.icon} <b>${escapeHtml(item.name)}</b>\n` +
@@ -101,6 +102,7 @@ export async function renderShopAdminItem(token, env, chatId, messageId, itemId)
     `🆔 ID：<code>${item.id}</code>\n` +
     `💰 价格：🪙 ${item.price}\n` +
     `📦 库存：${stockText}\n` +
+    `🙋 限购：${limitText}\n` +
     `📂 分类：${catText}\n` +
     `🔘 状态：${item.enabled ? "✅ 已上架" : "🚫 已下架"}\n\n` +
     `📝 <b>说明：</b>\n${escapeHtml(item.description) || "（无）"}`;
