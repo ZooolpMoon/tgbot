@@ -186,10 +186,33 @@ test("操作日志：按类别筛选只返回该类别记录", { skip: !hasSqlit
   // 筛选按钮齐全
   const keys = apiCalls.filter((c) => c.method === "editMessageText").at(-1)
     .body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
-  for (const f of ["all", "user", "shop", "guard", "kb", "feature", "system"]) {
+  for (const f of ["all", "user", "shop", "guard", "kb", "admins", "autodelete", "feature", "system"]) {
     assert.ok(keys.includes(`admin_logs_f_${f}_1`), `缺少筛选项 ${f}`);
   }
   db.close();
+});
+
+test("操作日志：所有动作都有中文标签，未知动作也有兜底", async () => {
+  const { actionLabel, ACTION_LABELS } = await import("../src/admin/logs.js");
+
+  // v3.x 新增的动作必须都有标签（线上就靠它们显示）
+  for (const key of [
+    "admin_add", "admin_update", "admin_remove",
+    "autodelete_set", "autodelete_reset", "autodelete_cap",
+    "kb_doc_scope",
+    "guard_toggle", "guard_default_action", "guard_default_mute", "guard_revoke",
+    "guard_restore_rules", "guard_alert_toggle", "guard_alert_keywords", "guard_alert",
+    "guard_appeal_approve", "guard_appeal_reject"
+  ]) {
+    assert.ok(ACTION_LABELS[key], `${key} 缺少中文标签`);
+    assert.match(actionLabel(key), /[\u4e00-\u9fa5]/, `${key} 的标签应含中文`);
+  }
+
+  // 历史动作（每日任务已下线）也保留可读标签
+  assert.ok(ACTION_LABELS.task_step_send_failed);
+
+  // 未知动作：给个明显的兜底，而不是裸代号
+  assert.equal(actionLabel("brand_new_action"), "⚙️ brand_new_action");
 });
 
 // ==========================================

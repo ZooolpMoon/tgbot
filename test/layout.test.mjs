@@ -209,12 +209,14 @@ test("申诉卡片：撤销 / 驳回两列一行", () => {
   assert.deepEqual(kb.inline_keyboard[0].map((b) => b.callback_data), ["appeal_ok_7", "appeal_no_7"]);
 });
 
-test("操作日志筛选菜单：7 个筛选项 + 翻页 + 返回不超过 6 行", () => {
+test("操作日志筛选菜单：9 个筛选项 + 翻页 + 返回不超过 8 行", () => {
   const kb = getLogFilterKeyboard("guard", 1, 3);
-  assertCompact(kb, { maxRows: 6, label: "日志筛选" });
+  assertCompact(kb, { maxRows: 8, label: "日志筛选" });
   const flat = kb.inline_keyboard.flat();
   assert.ok(flat.some((b) => b.text.startsWith("✅") && b.text.includes("执法")), "当前筛选要有标记");
   assert.ok(flat.some((b) => b.callback_data === "admin_logs_f_guard_2"), "翻页要带上筛选条件");
+  assert.ok(flat.some((b) => b.callback_data === "admin_logs_f_admins_1"), "应有管理员筛选");
+  assert.ok(flat.some((b) => b.callback_data === "admin_logs_f_autodelete_1"), "应有自动删除筛选");
 });
 
 test("功能开关首页：三级入口都是两列网格", () => {

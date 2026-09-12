@@ -10,7 +10,7 @@ import { ADMIN_CALLBACK } from "../config/constants.js";
 const PAGE_SIZE = 10;
 
 /** 操作类型 → 中文标签（历史动作也保留，方便查看老日志） */
-const ACTION_LABELS = {
+export const ACTION_LABELS = {
   shop_item_add: "➕ 添加商品",
   shop_item_edit: "✏️ 编辑商品",
   shop_item_enable: "✅ 上架商品",
@@ -31,6 +31,14 @@ const ACTION_LABELS = {
   broadcast_cancel: "🚫 取消群发",
   feature_toggle: "🧩 切换功能开关",
   feature_reset: "🔄 恢复默认开关",
+  // ---------- 👑 管理员与权限（v3.0.0）----------
+  admin_add: "👑 添加管理员",
+  admin_update: "👑 修改管理员角色",
+  admin_remove: "👑 移除管理员",
+  // ---------- 🗑️ 消息自动删除（v3.0.0 / v3.1.0）----------
+  autodelete_set: "🗑️ 设置消息删除时长",
+  autodelete_reset: "🗑️ 恢复默认删除时长",
+  autodelete_cap: "🗑️ 设置全局兜底删除",
   redeem_code_create: "🎟️ 生成兑换码",
   redeem_code_enable: "✅ 启用兑换码",
   redeem_code_disable: "🚫 停用兑换码",
@@ -49,7 +57,20 @@ const ACTION_LABELS = {
   guard_execute: "🛡️ 执行群规处置",
   guard_cancel: "🚫 取消群规处置",
   guard_unmute: "🔊 解除群内禁言",
-  guard_set_rules: "📜 设置群规"
+  guard_set_rules: "📜 设置群规",
+  guard_toggle: "🛡️ 开关群规执法",
+  guard_default_action: "⚖️ 修改默认处置",
+  guard_default_mute: "⏱️ 修改默认禁言时长",
+  guard_revoke: "↩️ 撤销处置",
+  guard_restore_rules: "📜 回滚群规版本",
+  guard_alert_toggle: "🔔 开关主动预警",
+  guard_alert_keywords: "🔑 修改预警关键词",
+  guard_alert: "🚨 关键词预警",
+  guard_appeal_approve: "🙋 申诉通过（撤销处置）",
+  guard_appeal_reject: "🙋 驳回申诉",
+  kb_doc_scope: "📚 调整文档生效范围",
+  // 历史动作：每日任务功能已在 v2.9.0 移除，这里保留可读性
+  task_step_send_failed: "⚠️ 引导步骤发送失败（历史）"
 };
 
 /**
@@ -82,6 +103,16 @@ const FILTERS = {
     where: "action LIKE 'kb_%'",
     params: []
   },
+  admins: {
+    label: "👑 管理员",
+    where: "action LIKE 'admin_%'",
+    params: []
+  },
+  autodelete: {
+    label: "🗑️ 自动删除",
+    where: "action LIKE 'autodelete_%'",
+    params: []
+  },
   feature: {
     label: "🧩 功能开关",
     where: "action LIKE 'feature_%'",
@@ -91,7 +122,8 @@ const FILTERS = {
     label: "⚙️ 系统",
     where: `NOT (action LIKE 'user_%' OR action LIKE 'scene_%' OR action LIKE 'group_clear%'
       OR action LIKE 'shop_%' OR action LIKE 'broadcast_%' OR action LIKE 'guard_%'
-      OR action LIKE 'kb_%' OR action LIKE 'feature_%' OR action LIKE 'task_%')`,
+      OR action LIKE 'kb_%' OR action LIKE 'feature_%' OR action LIKE 'task_%'
+      OR action LIKE 'admin_%' OR action LIKE 'autodelete_%')`,
     params: []
   }
 };
@@ -119,7 +151,7 @@ export function getLogFilterKeyboard(current, safePage, totalPages) {
 
 /** 把数据库里的动作键翻译成中文（未知动作原样显示，方便排查新功能） */
 export function actionLabel(action) {
-  return ACTION_LABELS[action] || action;
+  return ACTION_LABELS[action] || `⚙️ ${action}`;
 }
 
 /**
