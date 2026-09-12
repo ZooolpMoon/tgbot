@@ -22,7 +22,8 @@ export function getAdminMainKeyboard(showShop = true) {
       { text: "📈 使用统计", callback_data: "admin_stats" }
     ],
     [{ text: "🎟️ 兑换码", callback_data: "admin_codes_1" }],
-    [{ text: "⚙️ 功能开关（全局默认）", callback_data: "admin_feat_g" }],
+    [{ text: "✅ 每日任务管理", callback_data: "admin_tasks" }],
+    [{ text: "⚙️ 功能开关（全局）", callback_data: "admin_feat_g" }],
     [{ text: "📋 操作日志（审计）", callback_data: "admin_logs_1" }],
     [{ text: "🧹 清空我的记忆", callback_data: "admin_clear_history" }],
     [{ text: "❌ 关闭菜单", callback_data: "admin_close" }]

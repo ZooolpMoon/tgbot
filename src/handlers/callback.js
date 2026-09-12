@@ -52,7 +52,11 @@ import { renderPointsLog } from "./commands/points.js";
 import { renderRank, closeRank } from "./commands/rank.js";
 import { startBroadcast, cancelBroadcast } from "./commands/broadcast.js";
 import { renderCodeList, handleCodeToggle } from "./commands/codes.js";
-import { renderFeatureMenu, handleFeatureToggle, handleFeatureReset } from "../admin/features.js";
+import { renderFeatureMenu, handleFeatureToggle } from "../admin/features.js";
+import {
+  renderTaskAdmin, renderTaskDetail, startTaskAdd, startTaskBonusEdit, handleTaskTriggerPick,
+  startTaskFieldEdit, handleTaskToggle, handleTaskDelete, handleTaskDeleteConfirm
+} from "../admin/tasks.js";
 import { beginOrderNote } from "../shop/notes.js";
 
 // ---- 服务 ----
@@ -106,8 +110,8 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // 1. 游戏（任何用户）
   // ==========================================
   if (data.startsWith("game_")) {
-    if (!(await isFeatureEnabled(env, sceneKey, "game"))) {
-      await answerCallback(token, callback.id, "⚠️ 本场景已关闭「游戏大厅」", true);
+    if (!(await isFeatureEnabled(env, "game"))) {
+      await answerCallback(token, callback.id, "⚠️ 管理员已关闭「游戏大厅」", true);
       return;
     }
     await handleGameCallbacks(token, env, callback, chatId, userKey, msgId, fromId, data, sceneKey);
@@ -117,8 +121,8 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // ==========================================
   // 2. 商城（用户侧，任何用户）
   // ==========================================
-  if (data.startsWith("shop_") && !(await isFeatureEnabled(env, sceneKey, "shop"))) {
-    await answerCallback(token, callback.id, "⚠️ 本场景已关闭「积分商城」", true);
+  if (data.startsWith("shop_") && !(await isFeatureEnabled(env, "shop"))) {
+    await answerCallback(token, callback.id, "⚠️ 管理员已关闭「积分商城」", true);
     return;
   }
   if (data === "shop_home") {
@@ -435,17 +439,52 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     else if (data.startsWith(ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX)) {
       await handleFeatureToggle({ env, token, callback, chatId, msgId, data, adminId: fromId });
     }
-    else if (data.startsWith(ADMIN_CALLBACK.FEATURES_RESET_PREFIX)) {
-      await handleFeatureReset({ env, token, callback, chatId, msgId, data, adminId: fromId });
-    }
-    else if (data.startsWith(ADMIN_CALLBACK.FEATURES_SCENE_PREFIX)) {
-      const scopeToken = `s${parseInt(data.replace(ADMIN_CALLBACK.FEATURES_SCENE_PREFIX, ""), 10)}`;
-      await renderFeatureMenu(token, env, chatId, msgId, scopeToken);
-      await answerCallback(token, callback.id, "本场景功能开关");
-    }
     else if (data === ADMIN_CALLBACK.FEATURES_GLOBAL) {
-      await renderFeatureMenu(token, env, chatId, msgId, "g");
+      await renderFeatureMenu(token, env, chatId, msgId);
       await answerCallback(token, callback.id, "全局功能开关");
+    }
+
+    // ---------- 每日任务管理 ----------
+    else if (data === ADMIN_CALLBACK.TASKS_PREFIX) {
+      await renderTaskAdmin(token, env, chatId, msgId);
+      await answerCallback(token, callback.id, "每日任务管理");
+    }
+    else if (data === ADMIN_CALLBACK.TASK_ADD) {
+      await startTaskAdd({ env, token, chatId });
+      await answerCallback(token, callback.id, "开始添加任务");
+    }
+    else if (data === ADMIN_CALLBACK.TASK_BONUS) {
+      await startTaskBonusEdit({ env, token, chatId });
+      await answerCallback(token, callback.id, "修改全勤奖");
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.TASK_PICK_PREFIX)) {
+      await handleTaskTriggerPick({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.TASK_FIELD_PREFIX)) {
+      const raw = data.replace(ADMIN_CALLBACK.TASK_FIELD_PREFIX, "");
+      const sep = raw.lastIndexOf("_");
+      const taskId = parseInt(sep === -1 ? raw : raw.slice(0, sep), 10);
+      const field = sep === -1 ? "" : raw.slice(sep + 1);
+      await startTaskFieldEdit({ env, token, chatId, taskId, field });
+      await answerCallback(token, callback.id, "请按提示回复新内容");
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.TASK_TOGGLE_PREFIX)) {
+      await handleTaskToggle({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.TASK_DELOK_PREFIX)) {
+      await handleTaskDeleteConfirm({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.TASK_DEL_PREFIX)) {
+      await handleTaskDelete({ env, token, callback, chatId, msgId, data });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.TASK_DETAIL_PREFIX)) {
+      const taskId = parseInt(data.replace(ADMIN_CALLBACK.TASK_DETAIL_PREFIX, ""), 10);
+      if (Number.isInteger(taskId)) {
+        await renderTaskDetail(token, env, chatId, msgId, taskId);
+        await answerCallback(token, callback.id, `任务 #${taskId}`);
+      } else {
+        await answerCallback(token, callback.id, "⚠️ 任务参数无效", true);
+      }
     }
 
     // ---------- 删除场景 ----------

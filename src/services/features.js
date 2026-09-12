@@ -1,12 +1,10 @@
 // ==========================================
-// ⚙️ 功能开关
-// 作用域：
-//   "global"     全局默认（管理控制台 → 🧩 功能开关）
-//   <sceneKey>   单场景覆盖（场景编辑 → 🧩 本场景功能）
-// 生效顺序：场景显式设置 → 全局显式设置 → 默认开启
+// ⚙️ 功能开关（v2.1.0 起只服务全局）
+//   AI 对话 / 游戏大厅 / 每日签到 / 积分商城 / 兑换码 / 每日任务
+// 开启状态存在全局设置里：feature.<key> = on | off，缺省即开启。
 // ==========================================
 
-export const GLOBAL_SCOPE = "global";
+import { getSettings, setSetting, deleteSetting } from "./settings.js";
 
 export const FEATURES = [
   { key: "ai", label: "AI 对话", desc: "私聊 / 群聊里的 AI 回复" },
@@ -17,8 +15,8 @@ export const FEATURES = [
   { key: "tasks", label: "每日任务", desc: "完成任务领积分" }
 ];
 
-const FEATURE_KEYS = FEATURES.map((f) => f.key);
 const PREFIX = "feature.";
+const FEATURE_KEYS = FEATURES.map((f) => f.key);
 
 export function isFeatureKey(key) {
   return FEATURE_KEYS.includes(key);
@@ -28,80 +26,32 @@ export function featureLabel(key) {
   return FEATURES.find((f) => f.key === key)?.label || key;
 }
 
-/** 读取某个作用域里显式设置过的开关（不含继承） */
-export async function getExplicitSettings(env, scopeKey) {
+/** 全局开关状态：缺省视为开启 */
+export async function getFeatureMap(env) {
   const map = {};
-  if (!env.DB || !scopeKey) return map;
+  for (const f of FEATURES) map[f.key] = true;
 
-  const { results } = await env.DB.prepare(
-    "SELECT name, value FROM scene_settings WHERE scene_key = ?"
-  ).bind(scopeKey).all();
-
-  for (const row of results || []) {
-    const name = String(row.name || "");
-    if (!name.startsWith(PREFIX)) continue;
+  const settings = await getSettings(env, PREFIX);
+  for (const [name, value] of Object.entries(settings)) {
     const key = name.slice(PREFIX.length);
-    if (isFeatureKey(key)) map[key] = String(row.value) !== "off";
+    if (isFeatureKey(key)) map[key] = value !== "off";
   }
   return map;
 }
 
-/**
- * 一次查询取出「场景 + 全局」两层设置，算出最终生效状态。
- * @returns {Promise<Record<string, boolean>>}
- */
-export async function getFeatureMap(env, sceneKey = null) {
-  const map = {};
-  for (const f of FEATURES) map[f.key] = true; // 默认开启
-  if (!env.DB) return map;
-
-  const scopes = sceneKey && sceneKey !== GLOBAL_SCOPE ? [sceneKey, GLOBAL_SCOPE] : [GLOBAL_SCOPE];
-  const { results } = await env.DB.prepare(
-    "SELECT scene_key, name, value FROM scene_settings WHERE scene_key IN (?,?)"
-  ).bind(scopes[0], scopes[1] || GLOBAL_SCOPE).all();
-
-  // 先应用全局，再用场景覆盖
-  for (const row of results || []) {
-    const name = String(row.name || "");
-    if (!name.startsWith(PREFIX)) continue;
-    const key = name.slice(PREFIX.length);
-    if (!isFeatureKey(key)) continue;
-    if (String(row.scene_key) === GLOBAL_SCOPE) map[key] = String(row.value) !== "off";
-  }
-  if (sceneKey && sceneKey !== GLOBAL_SCOPE) {
-    for (const row of results || []) {
-      const name = String(row.name || "");
-      if (!name.startsWith(PREFIX)) continue;
-      const key = name.slice(PREFIX.length);
-      if (!isFeatureKey(key)) continue;
-      if (String(row.scene_key) === sceneKey) map[key] = String(row.value) !== "off";
-    }
-  }
-  return map;
-}
-
-export async function isFeatureEnabled(env, sceneKey, feature) {
+export async function isFeatureEnabled(env, feature) {
   if (!isFeatureKey(feature)) return true;
-  const map = await getFeatureMap(env, sceneKey);
+  const map = await getFeatureMap(env);
   return map[feature] !== false;
 }
 
-/** 设置开关（scopeKey = "global" 或某个 sceneKey） */
-export async function setFeature(env, scopeKey, feature, enabled) {
-  if (!env.DB || !isFeatureKey(feature) || !scopeKey) return false;
-  await env.DB.prepare(`
-    INSERT INTO scene_settings (scene_key, name, value, updated_at)
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(scene_key, name) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
-  `).bind(scopeKey, `${PREFIX}${feature}`, enabled ? "on" : "off").run();
-  return true;
+export async function setFeature(env, feature, enabled) {
+  if (!isFeatureKey(feature)) return false;
+  return setSetting(env, `${PREFIX}${feature}`, enabled ? "on" : "off");
 }
 
-/** 清除场景级覆盖，恢复「跟随全局」 */
-export async function clearFeatureOverride(env, scopeKey, feature) {
-  if (!env.DB || !isFeatureKey(feature) || !scopeKey) return false;
-  await env.DB.prepare(
-    "DELETE FROM scene_settings WHERE scene_key = ? AND name = ?"
-  ).bind(scopeKey, `${PREFIX}${feature}`).run();
-  return true;
+/** 清除设置，恢复默认开启 */
+export async function resetFeature(env, feature) {
+  if (!isFeatureKey(feature)) return false;
+  return deleteSetting(env, `${PREFIX}${feature}`);
 }

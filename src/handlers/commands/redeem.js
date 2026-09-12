@@ -6,6 +6,7 @@
 import { sendMessage } from "../../telegram/api.js";
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { redeemCode } from "../../services/redeem.js";
+import { completeTask } from "../../services/tasks.js";
 
 export async function cmdRedeem({ env, ctx, token, chatId, userKey, isGroupCtx, rawText }) {
   if (isGroupCtx) {
@@ -47,4 +48,7 @@ export async function cmdRedeem({ env, ctx, token, chatId, userKey, isGroupCtx, 
     `积分可在商城兑换商品，快去看看吧～`,
     "HTML"
   );
+
+  // 触发「使用一次兑换码」类任务
+  await completeTask(env, userKey, "redeem", { chatId, token });
 }

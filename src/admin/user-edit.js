@@ -91,9 +91,6 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
         { text: "🧹 清空此场景记忆", callback_data: `admin_clearmem_${scene.id}` }
       ],
       [
-        { text: "🧩 本场景功能开关", callback_data: `admin_feat_s_${scene.id}` }
-      ],
-      [
         { text: "🗑️ 删除此场景（积分保留）", callback_data: `admin_deluser_confirm_${scene.id}` }
       ],
       [{ text: "🔙 返回场景列表", callback_data: backTarget }]

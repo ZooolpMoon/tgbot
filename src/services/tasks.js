@@ -1,31 +1,78 @@
 // ==========================================
-// ✅ 每日任务服务
-// 完成即发奖；四个任务全完成后额外发一次「全勤奖」
+// ✅ 每日任务服务（v2.1.0：任务定义存数据库，可引导式增删改）
+//
+// 任务 = 触发条件(trigger) + 文案 + 奖励
+// 机器人只能观测到有限的几种行为，所以 trigger 由代码定义
+// （见 config/tasks.js 的 TASK_TRIGGERS），管理员可基于它自由增删任务。
 // ==========================================
 
-import { DAILY_TASKS, DAILY_TASK_ALL_BONUS, TASK_ALL_KEY } from "../config/tasks.js";
+import { TASK_TRIGGERS, TRIGGER_KEYS, triggerDef, triggerLabel, DEFAULT_TASK_BONUS, TASK_BONUS_SETTING, TASK_ALL_KEY } from "../config/tasks.js";
 import { getDateKey } from "./time.js";
+import { getSetting, setSetting } from "./settings.js";
 import { adjustPoints, logPointChange } from "./points.js";
-import { isFeatureEnabled } from "./features.js";
 import { sendMessage } from "../telegram/api.js";
 import { logError } from "../core/logger.js";
 
-export const TASK_KEYS = DAILY_TASKS.map((t) => t.key);
+const MAX_POINTS = 1000;
 
-export function taskDef(key) {
-  return DAILY_TASKS.find((t) => t.key === key) || null;
+/** 没有数据库时的兜底定义（只用于展示） */
+function fallbackDefs() {
+  return TASK_TRIGGERS.map((t, i) => ({
+    id: i + 1, trigger: t.key, label: t.label, hint: t.hint, points: t.points, enabled: 1, sort_order: i + 1
+  }));
 }
 
-/**
- * 今日任务进度。
- * @returns {Promise<{tasks: Array, done: number, total: number, earned: number, allDone: boolean, bonus: number}>}
- */
+/** 全部任务定义（默认按 sort_order 排序） */
+export async function listTaskDefs(env) {
+  if (!env.DB) return fallbackDefs();
+  const { results } = await env.DB.prepare(
+    "SELECT id, trigger, label, hint, points, enabled, sort_order FROM daily_task_defs ORDER BY sort_order ASC, id ASC"
+  ).all();
+  return results || [];
+}
+
+/** 只取启用的任务 */
+export async function getEnabledTaskDefs(env) {
+  const all = await listTaskDefs(env);
+  return all.filter((d) => Number(d.enabled) === 1);
+}
+
+export async function getTaskDef(env, id) {
+  if (!env.DB) return null;
+  return env.DB.prepare(
+    "SELECT id, trigger, label, hint, points, enabled, sort_order FROM daily_task_defs WHERE id = ?"
+  ).bind(id).first();
+}
+
+// ==========================================
+// 全勤奖设置
+// ==========================================
+
+export async function getTaskBonus(env) {
+  const raw = await getSetting(env, TASK_BONUS_SETTING, String(DEFAULT_TASK_BONUS));
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_TASK_BONUS;
+}
+
+export async function setTaskBonus(env, points) {
+  const n = Math.floor(Number(points));
+  if (!Number.isFinite(n) || n < 0 || n > MAX_POINTS) return false;
+  await setSetting(env, TASK_BONUS_SETTING, n);
+  return true;
+}
+
+// ==========================================
+// 进度查询
+// ==========================================
+
 export async function getTodayTasks(env, userKey) {
-  const total = DAILY_TASKS.length;
+  const defs = await getEnabledTaskDefs(env);
+  const bonus = await getTaskBonus(env);
+
   if (!env.DB) {
     return {
-      tasks: DAILY_TASKS.map((t) => ({ ...t, done: false })),
-      done: 0, total, earned: 0, allDone: false, bonus: DAILY_TASK_ALL_BONUS
+      tasks: defs.map((d) => ({ ...d, done: false })),
+      done: 0, total: defs.length, earned: 0, allDone: false, bonus
     };
   }
 
@@ -36,71 +83,80 @@ export async function getTodayTasks(env, userKey) {
 
   const rows = results || [];
   const doneMap = new Map(rows.map((r) => [String(r.task), Number(r.points) || 0]));
-
-  const tasks = DAILY_TASKS.map((t) => ({ ...t, done: doneMap.has(t.key) }));
+  const tasks = defs.map((d) => ({ ...d, done: doneMap.has(`t${d.id}`) }));
   const done = tasks.filter((t) => t.done).length;
   const earned = rows.reduce((sum, r) => sum + (Number(r.points) || 0), 0);
 
-  return { tasks, done, total, earned, allDone: done >= total, bonus: DAILY_TASK_ALL_BONUS };
+  return {
+    tasks, done, total: tasks.length, earned,
+    allDone: tasks.length > 0 && done >= tasks.length,
+    bonus
+  };
 }
 
-/**
- * 标记任务完成并立即发奖。
- * - 重复调用只会生效一次（主键 + INSERT OR IGNORE）
- * - 全部完成时追加一次全勤奖，并给用户发一条祝贺消息
- *
- * @param {object} opts
- * @param {string} [opts.sceneKey] 用于判断该场景是否关闭了「每日任务」
- * @param {string} [opts.chatId]   全部完成时发消息用
- * @param {string} [opts.token]    Telegram token
- */
-export async function completeTask(env, userKey, taskKey, { sceneKey = null, chatId = null, token = null } = {}) {
-  const def = taskDef(taskKey);
-  if (!env.DB || !userKey || !def) return { completed: false };
+// ==========================================
+// 完成任务（按触发条件）
+// ==========================================
 
-  // 场景关闭了每日任务就不再累计
-  if (sceneKey && !(await isFeatureEnabled(env, sceneKey, "tasks"))) {
-    return { completed: false, disabled: true };
-  }
+/**
+ * 触发某个行为：把所有绑定该触发条件的启用任务一起结算。
+ * 重复调用同一天只会发奖一次（主键 + INSERT OR IGNORE）。
+ *
+ * @param {string} trigger checkin / chat / game / shop / redeem
+ * @param {{chatId?: string, token?: string}} [opts] 全部完成时发祝贺消息用
+ */
+export async function completeTask(env, userKey, trigger, { chatId = null, token = null } = {}) {
+  if (!env.DB || !userKey || !TRIGGER_KEYS.includes(trigger)) return { completed: false };
+
+  const defs = (await getEnabledTaskDefs(env)).filter((d) => String(d.trigger) === trigger);
+  if (defs.length === 0) return { completed: false };
 
   const today = getDateKey(env);
+  const labels = [];
+  let earned = 0;
 
-  let first = false;
-  try {
-    const res = await env.DB.prepare(`
-      INSERT INTO daily_tasks (user_key, date_str, task, points)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(user_key, date_str, task) DO NOTHING
-    `).bind(userKey, today, taskKey, def.points).run();
-    first = res.meta.changes > 0;
-  } catch (e) {
-    logError("记录每日任务失败：", e);
-    return { completed: false };
+  for (const def of defs) {
+    let first = false;
+    try {
+      const res = await env.DB.prepare(`
+        INSERT INTO daily_tasks (user_key, date_str, task, points)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_key, date_str, task) DO NOTHING
+      `).bind(userKey, today, `t${def.id}`, def.points).run();
+      first = res.meta.changes > 0;
+    } catch (e) {
+      logError("记录每日任务失败：", e);
+      continue;
+    }
+    if (!first) continue;
+
+    const balance = await adjustPoints(env, userKey, def.points);
+    if (balance !== null) {
+      await logPointChange(env, userKey, def.points, balance, `每日任务：${def.label}`);
+    }
+    labels.push(def.label);
+    earned += Number(def.points) || 0;
   }
 
-  if (!first) return { completed: false, alreadyDone: true };
+  if (earned === 0) return { completed: false, alreadyDone: true };
 
-  let balance = await adjustPoints(env, userKey, def.points);
-  if (balance !== null) {
-    await logPointChange(env, userKey, def.points, balance, `每日任务：${def.label}`);
-  }
-
-  // 是否全部完成
+  // 判断是否全勤（启用任务全部完成）
   const progress = await getTodayTasks(env, userKey);
   let bonus = 0;
   let allDone = false;
+  let balance = null;
 
-  if (progress.allDone) {
+  if (progress.allDone && progress.bonus > 0) {
     try {
       const bonusRes = await env.DB.prepare(`
         INSERT INTO daily_tasks (user_key, date_str, task, points)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(user_key, date_str, task) DO NOTHING
-      `).bind(userKey, today, TASK_ALL_KEY, DAILY_TASK_ALL_BONUS).run();
+      `).bind(userKey, today, TASK_ALL_KEY, progress.bonus).run();
 
       if (bonusRes.meta.changes > 0) {
         allDone = true;
-        bonus = DAILY_TASK_ALL_BONUS;
+        bonus = progress.bonus;
         const after = await adjustPoints(env, userKey, bonus);
         if (after !== null) {
           await logPointChange(env, userKey, bonus, after, "每日任务：全部完成奖励");
@@ -112,14 +168,13 @@ export async function completeTask(env, userKey, taskKey, { sceneKey = null, cha
     }
   }
 
-  // 全勤时给用户一条祝贺（每天最多一条）
   if (allDone && token && chatId) {
     try {
       await sendMessage(
         token, chatId,
         `🎉 <b>今日任务全部完成！</b>\n` +
         `-------------------------\n` +
-        `✅ 任务奖励：+${progress.tasks.reduce((n, t) => n + t.points, 0)}\n` +
+        `✅ 本次任务奖励：+${earned}\n` +
         `🎁 全勤奖励：+${bonus}\n` +
         `🪙 当前积分：<b>${balance ?? "?"}</b>\n\n` +
         `明天记得再来～`,
@@ -130,5 +185,76 @@ export async function completeTask(env, userKey, taskKey, { sceneKey = null, cha
     }
   }
 
-  return { completed: true, points: def.points, bonus, allDone, balance };
+  return { completed: true, points: earned, labels, bonus, allDone, balance };
 }
+
+// ==========================================
+// 管理端 CRUD
+// ==========================================
+
+export async function createTaskDef(env, { trigger, label, hint = "", points = 1 }) {
+  if (!env.DB) return { ok: false, error: "未绑定数据库" };
+  if (!TRIGGER_KEYS.includes(String(trigger))) return { ok: false, error: "未知的触发条件" };
+
+  const name = String(label || "").trim().slice(0, 40);
+  if (!name) return { ok: false, error: "任务名称不能为空" };
+
+  const pts = Math.floor(Number(points));
+  if (!Number.isFinite(pts) || pts <= 0 || pts > MAX_POINTS) {
+    return { ok: false, error: `奖励积分需在 1 ~ ${MAX_POINTS} 之间` };
+  }
+
+  const maxRow = await env.DB.prepare("SELECT COALESCE(MAX(sort_order), 0) AS n FROM daily_task_defs").first();
+  const sortOrder = (Number(maxRow?.n) || 0) + 1;
+
+  const res = await env.DB.prepare(`
+    INSERT INTO daily_task_defs (trigger, label, hint, points, enabled, sort_order)
+    VALUES (?, ?, ?, ?, 1, ?)
+  `).bind(trigger, name, String(hint || "").trim().slice(0, 80), pts, sortOrder).run();
+
+  return { ok: true, id: Number(res.meta.last_row_id), label: name, trigger, points: pts };
+}
+
+export async function updateTaskDef(env, id, fields = {}) {
+  if (!env.DB) return { ok: false, error: "未绑定数据库" };
+
+  const def = await getTaskDef(env, id);
+  if (!def) return { ok: false, error: "任务不存在" };
+
+  const sets = [];
+  const values = [];
+
+  if (fields.label !== undefined) {
+    const label = String(fields.label).trim().slice(0, 40);
+    if (!label) return { ok: false, error: "任务名称不能为空" };
+    sets.push("label = ?"); values.push(label);
+  }
+  if (fields.hint !== undefined) {
+    sets.push("hint = ?"); values.push(String(fields.hint).trim().slice(0, 80));
+  }
+  if (fields.points !== undefined) {
+    const pts = Math.floor(Number(fields.points));
+    if (!Number.isFinite(pts) || pts <= 0 || pts > MAX_POINTS) {
+      return { ok: false, error: `奖励积分需在 1 ~ ${MAX_POINTS} 之间` };
+    }
+    sets.push("points = ?"); values.push(pts);
+  }
+  if (fields.enabled !== undefined) {
+    sets.push("enabled = ?"); values.push(fields.enabled ? 1 : 0);
+  }
+  if (sets.length === 0) return { ok: false, error: "没有需要更新的字段" };
+
+  sets.push("updated_at = CURRENT_TIMESTAMP");
+  values.push(id);
+
+  await env.DB.prepare(`UPDATE daily_task_defs SET ${sets.join(", ")} WHERE id = ?`).bind(...values).run();
+  return { ok: true };
+}
+
+export async function deleteTaskDef(env, id) {
+  if (!env.DB) return false;
+  const res = await env.DB.prepare("DELETE FROM daily_task_defs WHERE id = ?").bind(id).run();
+  return res.meta.changes > 0;
+}
+
+export { triggerLabel, triggerDef };

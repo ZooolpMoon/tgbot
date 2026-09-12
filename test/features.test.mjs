@@ -1,88 +1,92 @@
 // ==========================================
-// ⚙️ 功能开关
+// ⚙️ 功能开关（v2.1.0：只服务全局）
 // ==========================================
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTestDB, hasSqlite } from "../test-helpers/d1.mjs";
 import {
-  GLOBAL_SCOPE, FEATURES, getFeatureMap, getExplicitSettings,
-  isFeatureEnabled, setFeature, clearFeatureOverride, isFeatureKey
+  FEATURES, getFeatureMap, isFeatureEnabled, setFeature, resetFeature, isFeatureKey, featureLabel
 } from "../src/services/features.js";
+import { getSetting, setSetting, getSettings, deleteSetting, SETTINGS_SCOPE } from "../src/services/settings.js";
 
-test("默认全部开启，且能识别合法的开关名", async () => {
-  const map = await getFeatureMap({});
-  for (const f of FEATURES) assert.equal(map[f.key], true, `${f.key} 默认应开启`);
+test("开关定义与识别", () => {
+  const keys = FEATURES.map((f) => f.key);
+  assert.equal(new Set(keys).size, keys.length, "开关 key 不能重复");
+  for (const f of FEATURES) assert.ok(f.label && f.desc, `${f.key} 缺少文案`);
 
   assert.equal(isFeatureKey("ai"), true);
   assert.equal(isFeatureKey("nope"), false);
-  // 未知开关一律视为开启，不误伤
-  assert.equal(await isFeatureEnabled({}, "private:1", "nope"), true);
+  assert.equal(featureLabel("game"), "游戏大厅");
+  assert.equal(featureLabel("nope"), "nope");
 });
 
-test("全局关闭会作用于未单独设置的场景", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+test("默认全部开启；未知开关视为开启", async () => {
+  const map = await getFeatureMap({});
+  for (const f of FEATURES) assert.equal(map[f.key], true, `${f.key} 默认应开启`);
+  assert.equal(await isFeatureEnabled({}, "nope"), true);
+});
+
+test("关闭 / 重新开启并持久化", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
   const db = createTestDB();
   const env = { DB: db };
 
-  await setFeature(env, GLOBAL_SCOPE, "game", false);
-  assert.equal(await isFeatureEnabled(env, "group:-100:user:1", "game"), false);
-  assert.equal(await isFeatureEnabled(env, "group:-100:user:1", "ai"), true);
+  assert.equal(await isFeatureEnabled(env, "game"), true);
+  assert.equal(await setFeature(env, "game", false), true);
+  assert.equal(await isFeatureEnabled(env, "game"), false);
+  assert.equal(await isFeatureEnabled(env, "shop"), true, "其他开关不受影响");
 
-  const map = await getFeatureMap(env, "private:1");
-  assert.equal(map.game, false);
-  assert.equal(map.checkin, true);
-  db.close();
-});
+  assert.equal(await setFeature(env, "game", true), true);
+  assert.equal(await isFeatureEnabled(env, "game"), true);
 
-test("场景设置优先于全局设置", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
-  const db = createTestDB();
-  const env = { DB: db };
-  const scene = "group:-100:user:1";
+  // 重复设置只更新一行
+  await setFeature(env, "game", false);
+  await setFeature(env, "game", false);
+  assert.equal(db.count("scene_settings", "name = 'feature.game'"), 1);
 
-  await setFeature(env, GLOBAL_SCOPE, "game", false);
-  await setFeature(env, scene, "game", true); // 这个群单独打开
-  assert.equal(await isFeatureEnabled(env, scene, "game"), true);
-  assert.equal(await isFeatureEnabled(env, "group:-200:user:1", "game"), false, "其他群仍跟随全局关闭");
-
-  const sceneOnly = await getExplicitSettings(env, scene);
-  assert.deepEqual(sceneOnly, { game: true });
-
-  await clearFeatureOverride(env, scene, "game");
-  assert.equal(await isFeatureEnabled(env, scene, "game"), false, "清除覆盖后重新跟随全局");
-  db.close();
-});
-
-test("一次查询即可同时拿到场景与全局两层设置", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
-  const db = createTestDB();
-  const env = { DB: db };
-  const scene = "private:1";
-
-  await setFeature(env, GLOBAL_SCOPE, "tasks", false);
-  await setFeature(env, scene, "tasks", true);
-  await setFeature(env, GLOBAL_SCOPE, "shop", false);
-
-  let queries = 0;
-  const original = db.prepare;
-  const env2 = { DB: { prepare: (sql) => { queries++; return original(sql); }, batch: db.batch } };
-
-  const map = await getFeatureMap(env2, scene);
-  assert.equal(map.tasks, true, "场景覆盖生效");
-  assert.equal(map.shop, false, "全局设置生效");
-  assert.equal(queries, 1, "应只查一次数据库");
-  db.close();
-});
-
-test("setFeature / clearFeatureOverride 的边界处理", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
-  const db = createTestDB();
-  const env = { DB: db };
-
-  assert.equal(await setFeature(env, GLOBAL_SCOPE, "not-a-feature", false), false);
-  assert.equal(await setFeature(env, "", "ai", false), false);
-  assert.equal(await setFeature(env, GLOBAL_SCOPE, "ai", false), true);
+  // 未知开关不写入
+  assert.equal(await setFeature(env, "nope", false), false);
   assert.equal(db.count("scene_settings"), 1);
+  db.close();
+});
 
-  // 重复设置只更新，不新增行
-  await setFeature(env, GLOBAL_SCOPE, "ai", true);
+test("resetFeature 清除设置后恢复默认开启", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = { DB: db };
+
+  await setFeature(env, "tasks", false);
+  assert.equal(await isFeatureEnabled(env, "tasks"), false);
+
+  assert.equal(await resetFeature(env, "tasks"), true);
+  assert.equal(await isFeatureEnabled(env, "tasks"), true);
+  assert.equal(db.count("scene_settings"), 0);
+  db.close();
+});
+
+test("功能开关只写全局作用域（不会再出现场景级记录）", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = { DB: db };
+
+  await setFeature(env, "ai", false);
+  const rows = db.all("SELECT scene_key, name FROM scene_settings");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].scene_key, SETTINGS_SCOPE);
+  db.close();
+});
+
+test("全局设置服务：读写、前缀查询与删除", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = { DB: db };
+
+  assert.equal(await getSetting(env, "missing", "fallback"), "fallback");
+  await setSetting(env, "task.all_bonus", 20);
+  assert.equal(await getSetting(env, "task.all_bonus"), "20");
+
+  await setSetting(env, "feature.ai", "off");
+  const prefixed = await getSettings(env, "task.");
+  assert.deepEqual(prefixed, { "task.all_bonus": "20" });
+
+  await deleteSetting(env, "task.all_bonus");
+  assert.equal(await getSetting(env, "task.all_bonus", null), null);
   assert.equal(db.count("scene_settings"), 1);
-  assert.equal(await isFeatureEnabled(env, "private:1", "ai"), true);
   db.close();
 });

@@ -88,9 +88,16 @@ export const ADMIN_CALLBACK = {
   CODES_PREFIX: "admin_codes_",
   CODE_TOGGLE_PREFIX: "admin_code_toggle_",
   FEATURES_GLOBAL: "admin_feat_g",
-  FEATURES_SCENE_PREFIX: "admin_feat_s_",
   FEATURE_TOGGLE_PREFIX: "admin_feat_t_",
-  FEATURES_RESET_PREFIX: "admin_feat_r_",
+  TASKS_PREFIX: "admin_tasks",
+  TASK_ADD: "admin_task_add",
+  TASK_BONUS: "admin_task_bonus",
+  TASK_PICK_PREFIX: "admin_task_pick_",
+  TASK_FIELD_PREFIX: "admin_task_f_",
+  TASK_TOGGLE_PREFIX: "admin_task_t_",
+  TASK_DEL_PREFIX: "admin_task_d_",
+  TASK_DELOK_PREFIX: "admin_task_dok_",
+  TASK_DETAIL_PREFIX: "admin_task_",
   BROADCAST_CONFIRM: "admin_broadcast_confirm",
   BROADCAST_CANCEL: "admin_broadcast_cancel"
 };

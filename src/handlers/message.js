@@ -17,6 +17,7 @@ import { handleAddItemInput } from "../shop/add.js";
 import { handleEditItemInput } from "../shop/edit.js";
 import { renderShopItem } from "../shop/index.js";
 import { getPendingNoteRequest, saveOrderNote, cancelOrderNote } from "../shop/notes.js";
+import { isTaskGuideActive, handleTaskGuideInput, cancelTaskGuide } from "../admin/tasks.js";
 
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
   const message = payload.message || payload.edited_message;
@@ -110,6 +111,18 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   }
 
   // ---------- 商城下单备注输入（私聊，任何用户）----------
+  // ---------- 每日任务管理的引导式输入（管理员，私聊）----------
+  if (!isGroupCtx && isMaster && (await isTaskGuideActive(env, chatId))) {
+    if (isCommandLike) {
+      if (/^\/(cancel|取消)$/i.test(command)) {
+        await cancelTaskGuide({ env, token, chatId });
+        return;
+      }
+    } else if (await handleTaskGuideInput({ env, token, chatId, userText, adminId: userId })) {
+      return;
+    }
+  }
+
   if (!isGroupCtx) {
     const pendingNote = await getPendingNoteRequest(env, chatId);
     if (pendingNote) {
@@ -138,10 +151,10 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   }
 
   // ---------- 非指令 → AI 对话 ----------
-  if (!(await isFeatureEnabled(env, sceneKey, "ai"))) {
+  if (!(await isFeatureEnabled(env, "ai"))) {
     await sendAutoDelete(
       token, chatId,
-      `⚠️ 本场景已关闭「${featureLabel("ai")}」，如需使用请联系管理员。`,
+      `⚠️ 管理员已关闭「${featureLabel("ai")}」。`,
       null, isGroupCtx, ctx
     );
     return;

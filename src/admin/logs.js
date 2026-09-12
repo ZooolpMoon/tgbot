@@ -30,7 +30,13 @@ const ACTION_LABELS = {
   feature_reset: "🔄 恢复默认开关",
   redeem_code_create: "🎟️ 生成兑换码",
   redeem_code_enable: "✅ 启用兑换码",
-  redeem_code_disable: "🚫 停用兑换码"
+  redeem_code_disable: "🚫 停用兑换码",
+  task_create: "➕ 新增每日任务",
+  task_update: "✏️ 修改每日任务",
+  task_delete: "🗑️ 删除每日任务",
+  task_enable: "✅ 启用每日任务",
+  task_disable: "🚫 停用每日任务",
+  task_bonus: "🏆 修改全勤奖"
 };
 
 export function actionLabel(action) {
