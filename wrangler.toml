@@ -2,21 +2,22 @@ name = "tgbot"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
-# GitHub 模板配置：请勿填入真实密钥。
-# 生产/本地部署请使用：npx wrangler deploy -c wrangler.production.toml
+# 开源模板配置（占位符）：请勿在此填入任何真实密钥。
+# 生产/本地部署请用本地副本：npx wrangler deploy -c wrangler.production.toml
 [vars]
 BOT_TOKEN = ""
-BOT_USERNAME = "Zooolp_bot"
+BOT_USERNAME = ""          # 机器人用户名（不含 @），例如 YourBot
 MY_TELEGRAM_ID = ""
 WEBHOOK_SECRET = ""
 APP_TIMEZONE = "Asia/Shanghai"
-BOT_OWNER_NAME = "管理员"
-BOT_OWNER_USERNAME = "Zooolp_admin"
+BOT_OWNER_NAME = "管理员"   # 展示给用户的称呼
+BOT_OWNER_USERNAME = ""     # 管理员用户名（不含 @）
 
 # D1 数据库：创建后取消注释并填入 database_id
+# 不想用数据库也可以留空（积分/商城/签到等依赖 DB 的功能会提示未绑定）
 # [[d1_databases]]
 # binding = "DB"
-# database_name = "tgbot-db"
+# database_name = "your-db-name"
 # database_id = ""
 
 [ai]

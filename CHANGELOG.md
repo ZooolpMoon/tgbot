@@ -20,6 +20,7 @@
 - ⚙️ **CI/CD**：GitHub Actions 自动部署（push 到 main 即部署到 Cloudflare Workers）+ 代码自检工作流
 - ✅ **本地自检脚本**：`npm run check` 检查全部文件语法与相对 import 路径
 - ⬆️ **wrangler 升级到 4.x**：修复依赖漏洞告警，部署产物与 3.x 一致
+- 🌍 **开源模板与生产实例分离**：公开仓库只保留占位符（无机器人用户名 / 账号 ID / 密钥），生产参数放在独立私有仓库的 Secrets 与 Variables 中
 
 ### 修复与优化
 

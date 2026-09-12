@@ -2,7 +2,40 @@
 
 一个基于 **Cloudflare Workers + D1 + Workers AI** 的 Telegram 机器人，支持 AI 对话、全局积分、每日签到、多人在线小游戏、积分商城，以及完整的后台管理控制台。
 
-> 当前版本：v1.1.0（2026-09-12）
+> 当前版本：v1.2.0（2026-09-12）
+
+---
+
+## 🌍 开源模板 vs 生产实例
+
+本仓库是**开源模板**：所有配置都是占位符，不含任何密钥、账号 ID 或机器人用户名，任何人 clone 后填上自己的参数即可部署。
+
+生产环境请使用**独立的私有仓库**（例如 `tgbot-prod`）：
+
+| | 开源模板仓库（本仓库） | 生产实例仓库（私有） |
+|---|---|---|
+| 可见性 | Public | Private |
+| 内容 | 代码 + CI 自检，全占位符 | 同一份代码 + 生产 Secrets/Variables |
+| 部署 | 默认不部署（缺 Secrets 会跳过） | push 到 main 自动部署 |
+| 真实密钥 | ❌ 永不出现 | 只存于 Actions Secrets，不写入文件 |
+
+**同步方式**（两个仓库共用一份代码）：
+
+```bash
+# 本地一个工作目录，配两个远端
+git remote set-url origin https://github.com/<你的账号>/tgbot.git          # 开源模板（公开）
+git remote add prod https://github.com/<你的账号>/tgbot-prod.git           # 生产实例（私有）
+
+# 开发完成后，推给开源仓库；再推给生产仓库触发自动部署
+git push origin main
+git push prod main
+```
+
+本地部署（不进任何仓库）仍然使用被 `.gitignore` 忽略的 `wrangler.production.toml`：
+
+```bash
+npm run deploy:prod
+```
 
 ---
 
@@ -15,6 +48,7 @@
 - [🎮 游戏模块](#-游戏模块)
 - [🛒 商城模块](#-商城模块)
 - [📁 目录结构](#-目录结构)
+- [🌍 开源模板 vs 生产实例](#-开源模板-vs-生产实例)
 - [🚀 部署步骤](#-部署步骤)
 - [📖 指令列表](#-指令列表)
 - [🔧 常见问题](#-常见问题)
@@ -662,11 +696,11 @@ compatibility_date = "2025-01-01"
 
 [vars]
 BOT_TOKEN = "你的机器人Token"
-BOT_USERNAME = "Zooolp_bot"
+BOT_USERNAME = "你的机器人用户名（不含 @）"
 MY_TELEGRAM_ID = "你的Telegram数字ID"
 APP_TIMEZONE = "Asia/Shanghai"
 BOT_OWNER_NAME = "管理员"
-BOT_OWNER_USERNAME = "Zooolp_admin"
+BOT_OWNER_USERNAME = "你的管理员用户名（不含 @）"
 
 [[d1_databases]]
 binding = "DB"
@@ -963,7 +997,18 @@ wrangler versions list
 | `MY_TELEGRAM_ID` | ✅ | 管理员 Telegram 数字 ID |
 | `WEBHOOK_SECRET` | 可选 | 设置后 Telegram 会校验 `X-Telegram-Bot-Api-Secret-Token` |
 
-也可在 `Settings → Variables` 里加 `BOT_USERNAME`、`APP_TIMEZONE`、`BOT_OWNER_NAME`、`BOT_OWNER_USERNAME` 覆盖默认值。
+也可以在 `Settings → Variables`（非密钥，公开可见）里覆盖这些非敏感参数：
+
+| Variable | 默认值 | 说明 |
+|----------|--------|------|
+| `WORKER_NAME` | `tgbot` | Cloudflare Worker 名称 |
+| `D1_DATABASE_NAME` | `tgbot-db` | D1 数据库名称 |
+| `BOT_USERNAME` | 空 | 机器人用户名，用于群聊 @ 识别 |
+| `APP_TIMEZONE` | `Asia/Shanghai` | 额度/签到所用时区 |
+| `BOT_OWNER_NAME` | `管理员` | 展示给用户的管理员称呼 |
+| `BOT_OWNER_USERNAME` | 空 | 管理员用户名（不含 @） |
+
+> **建议只在私有生产仓库配置 Secrets 与 Variables。** 开源模板仓库保持零配置，别人 fork 后按上表填自己的值即可。
 
 没配置 Secrets 时部署工作流**不会变红**：它会打印一条 `::warning` 并跳过部署；补好 Secrets 后再推一次代码（或在 Actions 页面手动 Run workflow）即可完成自动部署。
 

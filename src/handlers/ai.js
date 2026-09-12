@@ -18,7 +18,8 @@ export async function handleAIRequest({
   const nowSec = Math.floor(Date.now() / 1000);
   const todayStr = getDateKey(env);
   const ownerName = env.BOT_OWNER_NAME ? String(env.BOT_OWNER_NAME).trim() : "管理员";
-  const ownerUsername = env.BOT_OWNER_USERNAME ? String(env.BOT_OWNER_USERNAME).trim() : "Zooolp_admin";
+  // 未配置时不写死任何账号，由部署方通过 BOT_OWNER_USERNAME 指定
+  const ownerUsername = env.BOT_OWNER_USERNAME ? String(env.BOT_OWNER_USERNAME).trim() : "admin";
 
   let quotaReserved = false;
   let pointsCharged = false;

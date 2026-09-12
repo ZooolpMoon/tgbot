@@ -52,13 +52,15 @@ jobs:
           MY_TELEGRAM_ID: ${{ secrets.MY_TELEGRAM_ID }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
-          BOT_USERNAME: ${{ vars.BOT_USERNAME || 'Zooolp_bot' }}
+          WORKER_NAME: ${{ vars.WORKER_NAME || 'tgbot' }}
+          D1_DATABASE_NAME: ${{ vars.D1_DATABASE_NAME || 'tgbot-db' }}
+          BOT_USERNAME: ${{ vars.BOT_USERNAME }}
           APP_TIMEZONE: ${{ vars.APP_TIMEZONE || 'Asia/Shanghai' }}
           BOT_OWNER_NAME: ${{ vars.BOT_OWNER_NAME || '管理员' }}
-          BOT_OWNER_USERNAME: ${{ vars.BOT_OWNER_USERNAME || 'Zooolp_admin' }}
+          BOT_OWNER_USERNAME: ${{ vars.BOT_OWNER_USERNAME }}
         run: |
           cat > wrangler.production.toml <<EOF
-          name = "tgbot"
+          name = "${WORKER_NAME}"
           main = "src/index.js"
           compatibility_date = "2025-01-01"
 
@@ -73,7 +75,7 @@ jobs:
 
           [[d1_databases]]
           binding = "DB"
-          database_name = "tgbot-db"
+          database_name = "${D1_DATABASE_NAME}"
           database_id = "${D1_DATABASE_ID}"
 
           [ai]
