@@ -108,6 +108,7 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
       if (!adminGuideActive) {
         // 静默预警：普通群聊发言（没 @机器人）同样可能违规，
         // 这里只私聊提醒管理员，不公开任何内容，也不打断群聊。
+        // 所有人都要过这一关，管理员 / owner 也不例外（群规对谁都一样）。
         if (env.DB) {
           try {
             await handleKeywordAlert({
@@ -260,8 +261,9 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   }
 
   // ---------- 非指令 → AI 对话 ----------
-  // 主动预警：命中关键词只私聊提醒管理员，不影响用户正常使用
-  if (isGroupCtx && !isMaster) {
+  // 主动预警：命中关键词只私聊提醒管理员，不影响用户正常使用。
+  // 管理员 / owner 的发言同样要过（群规对谁都一样）。
+  if (isGroupCtx) {
     try {
       await handleKeywordAlert({
         env, token, chatId, uctx, message, rawText: originalText, myId, ctx

@@ -28,7 +28,8 @@ import {
 } from "../services/guard.js";
 import { logAdminAction } from "../services/admin-log.js";
 import { logError } from "../core/logger.js";
-import { can } from "../services/admins.js";
+import { can, getAdminRole } from "../services/admins.js";
+import { formatAppTime } from "../services/time.js";
 
 /** 目标会话是不是群（Telegram 的群 ID 是负数） */
 function isGroupChatId(chatId) {
@@ -92,7 +93,7 @@ export function buildGuardCardText(record, extra = "") {
  */
 export async function requestPunishment({
   env, token, chatId, userId, userLabel, action, reason, matchedRule = "",
-  durationMin = 0, operatorId = "", ctx = null
+  durationMin = 0, operatorId = "", ctx = null, extra = ""
 }) {
   const record = await createPendingPunishment(env, {
     chatId, userId, userLabel, action, reason, matchedRule, durationMin, operatorId
@@ -103,7 +104,7 @@ export async function requestPunishment({
   }
 
   const full = await getPunishment(env, record.id);
-  const text = buildGuardCardText(full);
+  const text = buildGuardCardText(full, extra);
   const keyboard = getGuardCardKeyboard(full);
   await deliver({ token, chatId, text, keyboard, ctx, env, kind: "card" });
   return full;
@@ -375,7 +376,7 @@ export async function handleGuardCallback({ env, ctx, token, chatId, callback, d
     await deliver({
       token, chatId: groupChatId, ctx, env, kind: "notice",
       text: buildPunishmentNotice({
-        record: done, action: done.action, durationMin: done.duration_min,
+        env, record: done, action: done.action, durationMin: done.duration_min,
         untilAt: Number(done.until_at) || 0, byWhom: "管理员"
       })
     });
@@ -604,9 +605,9 @@ export async function handleKeywordAlert({ env, token, chatId, uctx, message, ra
   const hits = scanAlertKeywords(rawText, keywords);
   if (hits.length === 0) return false;
 
-  // 管理员自己发言不预警，也不打扰
-  if (myId && String(uctx.userId) === String(myId)) return false;
-  if (await isGroupAdmin(token, chatId, uctx.userId)) return false;
+  // 群规对所有人一视同仁：机器人管理员、群管理员、owner 发言同样预警。
+  // （以前这里直接 return，导致「自己发预警词机器人没反应」——见 AGENTS.md）
+  // 真正会把人锁在后台外面的动作，仍由 executePunishment / requestPunishmentFromCommand 兜底拦下。
 
   // 10 分钟内同一用户只提醒一次
   const recent = await env.DB.prepare(
@@ -618,6 +619,14 @@ export async function handleKeywordAlert({ env, token, chatId, uctx, message, ra
   if (recent) return false;
 
   const name = uctx.username ? `@${uctx.username}` : (uctx.firstName || uctx.userId);
+  // 目标是机器人管理员时，卡片仍然要发（预警本身就是提醒），
+  // 但明确说清「确认按钮会被安全策略拦下」，免得管理员以为是机器人坏了。
+  const targetRole = await getAdminRole(env, uctx.userId, { ownerId: myId });
+  const extra = targetRole
+    ? "🛡️ <b>注意：</b>发言人是机器人管理员。按安全约定不能把管理员封禁 / 禁言（否则会把后台访问权限一起锁掉），"
+      + "这条记录只作提醒，点「确认执行」会被拦下。"
+    : "";
+
   const record = await requestPunishment({
     env, token,
     chatId: resolveAdminChatId(env) || chatId,
@@ -628,7 +637,8 @@ export async function handleKeywordAlert({ env, token, chatId, uctx, message, ra
     matchedRule: "关键词预警（未公开处置，等你判断）",
     durationMin: Number(settings.default_mute_minutes) || 60,
     operatorId: "",
-    ctx
+    ctx,
+    extra
   });
 
   if (record) {

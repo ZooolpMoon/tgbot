@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 220 个用例）
+2. `npm test` 通过（当前 235 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -102,6 +102,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 确认回调 `guard_*` 要放在 callback.js 的**管理员校验之前**（本群管理员也要能点）
   - 权限：机器人管理员 或 本群管理员（creator/administrator）。本群管理员靠注册表里的 `groupAdmin: true` 放行（跳过 `/admin` 解锁），**记录里的 `operator_id` 必须是发起人**，否则确认卡片只有机器人管理员能点
   - **机器人管理员不可被处置**：命令入口（`requestPunishmentFromCommand`）、举报入口与 `executePunishment` 都要拦，别删掉这层兜底
+  - **但「预警」对所有人一视同仁**：`handleKeywordAlert` 不许再跳过 owner / 机器人管理员 / 本群管理员（v3.1.2 修过：跳过等于「自己发预警词机器人没反应」）。目标是机器人管理员时照常发卡片，只在卡片上加一句说明「确认按钮会被安全策略拦下」
   - 发给管理员私聊的卡片（举报 / 预警）`operator_id` 留空，只有机器人管理员能确认——成员不该能批准自己的举报
   - 面板与引导式编辑在 `admin/guard-panel.js`（群规正文 / 默认处置 / 默认时长 / 开关 / 处置记录），会话存 `guard_sessions`，同样是 30 分钟过期 + 定时任务兜底
 - **消息自动删除**（`services/auto-delete.js` + `telegram/auto-delete.js` + `admin/auto-delete.js`）：
@@ -123,6 +124,8 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - **菜单排版**：统一用 `src/utils/layout.js`（`grid` / `compactLabel` / `clampPage` / `pagerRow` / `validateKeyboard`），不要再各写一份 `grid()`。约定：单行 ≤ 2 个按钮、整个菜单 ≤ 8 行、按钮文案 ≤ 32 字、`callback_data` ≤ 64 字节。
   - 会随数据量增长的菜单（用户列表、任务列表、商品 / 订单列表）**必须分页**，并把键盘抽成纯函数（如 `getUserListKeyboard`），方便 `test/layout.test.mjs` 直接校验排版。
 - **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。
+- **时区：库里存 UTC，给人看的一律过 `formatAppTime()`**（`services/time.js`）：`CURRENT_TIMESTAMP` / `datetime('now')` 都是 UTC，比较、去重、到期判定也都按 UTC 做，别去改存储格式；只在展示时换算到 `APP_TIMEZONE`（默认 `Asia/Shanghai`，即北京时间 UTC+8）。新增任何显示 `created_at` / `updated_at` / `until_at` 的文案都要套一层，**不要再硬编码「UTC」或直接用 `toISOString()`**。
+- **定时任务要区分「日报时段」**：`runScheduledTasks` 的 `cron` 参数决定这次该干什么——只有每天一次的 `DAILY_SUMMARY_CRON`（`0 16 * * *` = 北京 00:00）推每日概况，每 2 分钟那条兜底 cron 只做清理与长延时删除；再用全局设置 `daily.last_summary_date` 兜底去重，保证**同一天只推一条**。v3.1.2 修过「概况一直弹」，新增定时推送时照这个模式来。
 - **改 Schema 时注意**：迁移里**不要**写会清空 `scene_settings` 里非 `global` 记录的语句——那会抹掉场景级功能开关（v2.1.0 踩过一次，已在 v2.2.0 修掉并有回归测试）。
 - **改 Schema**：
   1. 在 `SCHEMA_SQL` 里加表/索引（`CREATE TABLE IF NOT EXISTS`）

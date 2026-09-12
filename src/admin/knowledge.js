@@ -21,6 +21,7 @@ import { grid, compactLabel, clampPage, pagerRow, pageInfoText, LAYOUT } from ".
 import { ADMIN_CALLBACK, KB } from "../config/constants.js";
 import { buildGroupScopeKey } from "../core/context.js";
 import { clearGuideSessions } from "../services/sessions.js";
+import { formatAppTime } from "../services/time.js";
 import {
   KB_GLOBAL_SCOPE, ingestDocument, listDocuments, getDocument,
   setDocumentEnabled, deleteDocument, kbStats, searchKnowledge,
@@ -190,7 +191,7 @@ export async function renderDocumentList(token, env, chatId, messageId, uctx, pa
   } else {
     for (const doc of listed.rows) {
       text += `${Number(doc.enabled) === 1 ? "✅" : "🚫"} <b>${escapeHtml(doc.title)}</b> · 🧩 ${Number(doc.chunk_count) || 0} 块\n`;
-      text += `    🕒 ${escapeHtml(doc.updated_at || doc.created_at || "")}${doc.source ? ` · 📎 ${escapeHtml(doc.source)}` : ""}\n`;
+      text += `    🕒 ${escapeHtml(formatAppTime(env, doc.updated_at || doc.created_at))}${doc.source ? ` · 📎 ${escapeHtml(doc.source)}` : ""}\n`;
     }
   }
 
@@ -219,7 +220,7 @@ export async function renderDocumentDetail(token, env, chatId, messageId, docId,
   text += `🧩 分块：${Number(doc.chunk_count) || 0}\n`;
   text += `🔘 状态：${Number(doc.enabled) === 1 ? "✅ 参与检索" : "🚫 已停用"}\n`;
   text += `🧩 作用域：<code>${escapeHtml(doc.scope_key)}</code>\n`;
-  text += `🕒 更新：${escapeHtml(doc.updated_at || doc.created_at || "")}\n\n`;
+  text += `🕒 更新：${escapeHtml(formatAppTime(env, doc.updated_at || doc.created_at))}\n\n`;
   text += `📝 <b>正文预览：</b>\n${escapeHtml(preview)}${more}`;
 
   const rows = [

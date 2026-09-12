@@ -22,6 +22,7 @@ import {
 } from "../services/guard.js";
 import { resolveAlertKeywords, DEFAULT_ALERT_KEYWORDS } from "../services/guard.js";
 import { listRuleVersions, getRuleVersion, revokePunishment, getPunishment } from "../services/guard.js";
+import { formatAppTime } from "../services/time.js";
 import { kbStats } from "../services/knowledge.js";
 import { clearGuideSessions } from "../services/sessions.js";
 import { logAdminAction } from "../services/admin-log.js";
@@ -223,7 +224,7 @@ export async function renderGuardHistory(token, env, chatId, messageId, page = 1
       if (row.action === "mute" && Number(row.duration_min) > 0) text += `（${formatDuration(row.duration_min)}）`;
       text += `\n`;
       text += `👤 ${escapeHtml(row.user_label || row.user_id)} · 📌 ${escapeHtml(row.reason || "（无理由）")}\n`;
-      text += `🕒 ${escapeHtml(row.created_at || "")} · 👑 <code>${escapeHtml(row.operator_id || "")}</code>\n\n`;
+      text += `🕒 ${escapeHtml(formatAppTime(env, row.created_at))} · 👑 <code>${escapeHtml(row.operator_id || "")}</code>\n\n`;
     }
   }
 
@@ -470,7 +471,7 @@ export async function renderRuleVersions(token, env, chatId, messageId, page = 1
   } else {
     for (const row of rows) {
       const isCurrent = String(row.rules) === String(current.rules || "");
-      text += `${isCurrent ? "📌" : "•"} <b>v${row.version}</b>${isCurrent ? "（当前）" : ""} · ${row.rules.length} 字 · 🕒 ${escapeHtml(row.created_at || "")}\n`;
+      text += `${isCurrent ? "📌" : "•"} <b>v${row.version}</b>${isCurrent ? "（当前）" : ""} · ${row.rules.length} 字 · 🕒 ${escapeHtml(formatAppTime(env, row.created_at))}\n`;
       text += `    ${escapeHtml(String(row.rules).slice(0, 120))}${row.rules.length > 120 ? "…" : ""}\n`;
       if (row.note) text += `    📝 ${escapeHtml(row.note)}\n`;
       text += `\n`;

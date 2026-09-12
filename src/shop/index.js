@@ -13,6 +13,7 @@ import { logError } from "../core/logger.js";
 import { SHOP } from "../config/constants.js";
 import { getOrderNote, cancelOrderNote } from "./notes.js";
 import { categoryText } from "./categories.js";
+import { formatAppTime } from "../services/time.js";
 
 /**
  * 商城首页键盘（纯函数，便于排版测试）。
@@ -339,7 +340,7 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
       text += `${o.item_icon} <b>${escapeHtml(o.item_name)}</b>\n`;
       text += `🧾 <code>${o.order_no}</code> · 🪙 ${o.price}\n`;
       text += `📌 状态：${statusMap[o.status] || o.status}\n`;
-      text += `🕒 ${o.created_at}\n\n`;
+      text += `🕒 ${escapeHtml(formatAppTime(env, o.created_at))}\n\n`;
     });
   }
 

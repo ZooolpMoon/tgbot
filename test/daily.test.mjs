@@ -4,8 +4,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTestDB, hasSqlite, seedUser } from "../test-helpers/d1.mjs";
-import { cleanupStaleData, collectDailySummary } from "../src/services/daily.js";
+import { cleanupStaleData, collectDailySummary, runScheduledTasks, DAILY_SUMMARY_CRON } from "../src/services/daily.js";
 import { getDateKey, shiftDateKey } from "../src/services/time.js";
+
+// 定时任务会调 Telegram API；这里只记录，不真发
+let apiCalls = [];
+globalThis.fetch = async (url, opts = {}) => {
+  const method = String(url).split("/").pop();
+  apiCalls.push({ method, body: opts.body ? JSON.parse(opts.body) : {} });
+  return {
+    ok: true, status: 200, headers: { get: () => null },
+    json: async () => ({ ok: true, result: { message_id: 99 } })
+  };
+};
+
+const summaryPushes = () =>
+  apiCalls.filter((c) => String(c.body?.text || "").includes("每日概况"));
 
 test("cleanupStaleData 清理过期会话/草稿并停用过期兑换码", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
   const db = createTestDB();
@@ -88,4 +102,34 @@ test("没有数据库时定时任务不报错", async () => {
   const summary = await collectDailySummary({});
   assert.equal(summary.pendingOrders, 0);
   assert.deepEqual(summary.pendingList, []);
+});
+
+test("每日概况只在日报时段推，且同一天只推一次", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = {
+    DB: db, BOT_TOKEN: "TEST_TOKEN", MY_TELEGRAM_ID: "999",
+    ADMIN_NOTIFY_CHAT_ID: "999", APP_TIMEZONE: "Asia/Shanghai"
+  };
+
+  // 每 2 分钟的兜底 cron 只做清理与长延时删除，绝不能推概况
+  apiCalls = [];
+  const fast = await runScheduledTasks(env, "TEST_TOKEN", null, { cron: "*/2 * * * *" });
+  assert.equal(fast.notified, false);
+  assert.equal(fast.skipped, "非日报时段");
+  assert.equal(summaryPushes().length, 0, "兜底 cron 不应推概况（否则每 2 分钟弹一次）");
+
+  // 日报 cron：推一条
+  apiCalls = [];
+  const daily = await runScheduledTasks(env, "TEST_TOKEN", null, { cron: DAILY_SUMMARY_CRON });
+  assert.equal(daily.notified, true);
+  assert.equal(summaryPushes().length, 1);
+  assert.equal(String(summaryPushes()[0].body.chat_id), "999");
+
+  // 同一天再触发（改过 cron / 重复投递）：不重复推
+  apiCalls = [];
+  const again = await runScheduledTasks(env, "TEST_TOKEN", null, { cron: DAILY_SUMMARY_CRON });
+  assert.equal(again.notified, false);
+  assert.equal(again.skipped, "今日已推送");
+  assert.equal(summaryPushes().length, 0);
+  db.close();
 });

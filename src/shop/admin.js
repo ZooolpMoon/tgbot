@@ -7,6 +7,7 @@ import { sendMessage, sendMessageWithKeyboard, editMessageText } from "../telegr
 import { escapeHtml } from "../utils/html.js";
 import { grid, compactLabel, clampPage, totalPagesOf, pageOffset, pagerRow, pageInfoText, LAYOUT } from "../utils/layout.js";
 import { categoryText } from "./categories.js";
+import { formatAppTime } from "../services/time.js";
 
 const ITEMS_PER_PAGE = 8;
 const ORDERS_PER_PAGE = 5;
@@ -186,7 +187,7 @@ export async function renderShopAdminOrders(token, env, chatId, messageId, filte
     for (const o of results) {
       text += `${o.item_icon} <b>${escapeHtml(o.item_name)}</b> · 🪙${o.price}\n`;
       text += `🧾 <code>${o.order_no}</code> · 👤 <code>${o.user_id}</code>\n`;
-      text += `📌 ${statusMap[o.status] || o.status} · 🕒 ${o.created_at}\n\n`;
+      text += `📌 ${statusMap[o.status] || o.status} · 🕒 ${escapeHtml(formatAppTime(env, o.created_at))}\n\n`;
     }
   }
 
@@ -219,7 +220,7 @@ export async function renderShopAdminOrder(token, env, chatId, messageId, orderI
     `💬 会话：<code>${o.chat_id}</code>\n` +
     `📌 状态：${statusMap[o.status] || o.status}\n` +
     `📝 备注：${escapeHtml(o.remark) || "（无）"}\n` +
-    `🕒 下单：${o.created_at}`;
+    `🕒 下单：${escapeHtml(formatAppTime(env, o.created_at))}`;
 
   const inline_keyboard = [];
 

@@ -6,6 +6,7 @@ import { editMessageText, sendMessageWithKeyboard } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
 import { grid, clampPage, totalPagesOf, pageOffset, pagerRow, LAYOUT } from "../utils/layout.js";
 import { ADMIN_CALLBACK } from "../config/constants.js";
+import { formatAppTime } from "../services/time.js";
 
 const PAGE_SIZE = 10;
 
@@ -188,7 +189,7 @@ export async function renderAdminLogs(token, env, chatId, messageId, page = 1, f
     rows.forEach((r) => {
       text += `#${r.id} ${actionLabel(r.action)}\n`;
       if (r.detail) text += `└ ${escapeHtml(r.detail)}\n`;
-      text += `🕒 <code>${escapeHtml(r.created_at)}</code> · 👑 <code>${escapeHtml(r.admin_id)}</code>\n\n`;
+      text += `🕒 <code>${escapeHtml(formatAppTime(env, r.created_at))}</code> · 👑 <code>${escapeHtml(r.admin_id)}</code>\n\n`;
     });
   }
 

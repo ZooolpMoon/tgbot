@@ -11,12 +11,23 @@
 import { getDateKey, shiftDateKey } from "./time.js";
 import { sendMessageWithKeyboard, sendMessage } from "../telegram/api.js";
 import { sendAutoDelete } from "../telegram/auto-delete.js";
+import { getSetting, setSetting } from "./settings.js";
 import { resolveAdminChatId } from "../shop/notify.js";
 import { escapeHtml } from "../utils/html.js";
 import { logError, logInfo } from "../core/logger.js";
 import { expirePunishments, ACTIONS, formatDuration } from "./guard.js";
 import { reindexKnowledge } from "./knowledge.js";
 import { deleteMessage } from "../telegram/api.js";
+
+/**
+ * 「每天一次」的 cron 表达式（默认 16:00 UTC = 北京 00:00）。
+ * 只有它负责推送每日概况——每 2 分钟的那条是给「长延时自动删除」做兜底的，
+ * 如果不区分，概况就会每 2 分钟弹一次。
+ */
+export const DAILY_SUMMARY_CRON = "0 16 * * *";
+
+/** 记录「哪一天已经推过概况」的全局设置键，同一天再触发也不重复推 */
+const SUMMARY_MARK_KEY = "daily.last_summary_date";
 
 /**
  * 定时推送也可能发到群里（`ADMIN_NOTIFY_CHAT_ID` 配置成群时），
@@ -186,8 +197,13 @@ export async function collectDailySummary(env) {
 
 /**
  * 定时任务总入口：清理 → 汇总 → 给管理员推送概况（未配置管理员时只清理）。
+ *
+ * @param {object} env
+ * @param {string} token
+ * @param {object} [ctx] Workers ExecutionContext
+ * @param {{cron?:string|null}} [options] cron = 本次触发的 cron 表达式（见 DAILY_SUMMARY_CRON）
  */
-export async function runScheduledTasks(env, token, ctx = null) {
+export async function runScheduledTasks(env, token, ctx = null, { cron = null } = {}) {
   // 先处理「长延时自动删除」（每 2 分钟的 cron 会频繁跑这一条；开销很小）
   let pendingDeletes = null;
   if (token && env?.DB) {
@@ -223,6 +239,18 @@ export async function runScheduledTasks(env, token, ctx = null) {
 
   const adminChat = resolveAdminChatId(env);
   if (!token || !adminChat) return { cleanup: cleanupCounts, summary, reindex, notified: false };
+
+  // 每日概况不是每次都推：只有「每天一次」的 cron 负责推送，否则每 2 分钟就弹一次。
+  const isDailyRun = !cron || cron === DAILY_SUMMARY_CRON;
+  if (!isDailyRun) {
+    logInfo("跳过每日概况（非日报时段）：", cron);
+    return { cleanup: cleanupCounts, summary, reindex, notified: false, skipped: "非日报时段" };
+  }
+  // 同一天再触发也不重复推（多配/改配 cron 时的兜底）
+  if ((await getSetting(env, SUMMARY_MARK_KEY, "")) === summary.today) {
+    logInfo("跳过每日概况（今日已推送）：", summary.today);
+    return { cleanup: cleanupCounts, summary, reindex, notified: false, skipped: "今日已推送" };
+  }
 
   const lines = [];
   lines.push(`🌙 <b>每日概况</b> · ${summary.yesterday}`);
@@ -268,6 +296,8 @@ export async function runScheduledTasks(env, token, ctx = null) {
     await deliverPush({
       token, env, ctx, chatId: adminChat, text: lines.join("\n"), keyboard
     });
+    // 记录标记放在「发送成功之后」：发失败就不标记，下次日报时段还能再试
+    await setSetting(env, SUMMARY_MARK_KEY, summary.today);
     return { cleanup: cleanupCounts, summary, reindex, notified: true };
   } catch (e) {
     logError("发送每日概况失败：", e);

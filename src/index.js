@@ -68,11 +68,15 @@ export default {
   },
 
   // 定时任务（Cron Triggers）：清理过期数据 + 推送每日概况
-  /** 定时任务入口：先保证建表，再执行清理与日报推送 */
+  /**
+   * 定时任务入口：先保证建表，再执行清理与日报推送。
+   * event.cron 要传下去——只有「每天一次」的那条 cron 负责推每日概况，
+   * 每 2 分钟的兜底 cron 只做清理与长延时删除（否则概况会每 2 分钟弹一次）。
+   */
   async scheduled(event, env, ctx) {
     try {
       await ensureSchema(env);
-      const task = runScheduledTasks(env, env.BOT_TOKEN, ctx);
+      const task = runScheduledTasks(env, env.BOT_TOKEN, ctx, { cron: event?.cron || null });
       if (ctx?.waitUntil) ctx.waitUntil(task);
       else await task;
     } catch (e) {

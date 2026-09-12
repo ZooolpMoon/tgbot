@@ -27,6 +27,7 @@ import { setUserBlocked } from "./users.js";
 import { bigramScore, searchKnowledge } from "./knowledge.js";
 import { logError } from "../core/logger.js";
 import { escapeHtml } from "../utils/html.js";
+import { formatAppTime } from "./time.js";
 
 // ==========================================
 // 处置动作
@@ -725,8 +726,11 @@ export async function executePunishment({ env, token, record, action, durationMi
   }
 }
 
-/** 生成处置结果的群内公告文案 */
-export function buildPunishmentNotice({ record, action, durationMin, untilAt, byWhom = "管理员" }) {
+/**
+ * 生成处置结果的群内公告文案。
+ * env 只用于把「到期时间」换算成应用时区（默认北京时间），不传就回退到默认时区。
+ */
+export function buildPunishmentNotice({ env = null, record, action, durationMin, untilAt, byWhom = "管理员" }) {
   const label = ACTIONS[action]?.label || action;
   // user_label / reason / matched_rule 都可能是用户或管理员输入的原文，必须转义
   const name = escapeHtml(record.user_label || record.user_id);
@@ -737,8 +741,7 @@ export function buildPunishmentNotice({ record, action, durationMin, untilAt, by
   if (record.matched_rule) text += `📜 <b>依据：</b> ${escapeHtml(record.matched_rule)}\n`;
   text += `👑 <b>执行：</b> ${escapeHtml(byWhom)}\n`;
   if (untilAt > 0) {
-    const untilText = new Date(untilAt * 1000).toISOString().replace("T", " ").slice(0, 16);
-    text += `⏰ <b>到期：</b> ${untilText} UTC\n`;
+    text += `⏰ <b>到期：</b> ${escapeHtml(formatAppTime(env, untilAt, { seconds: false }))}\n`;
   }
   return text;
 }

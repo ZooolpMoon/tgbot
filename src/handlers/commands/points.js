@@ -9,6 +9,7 @@ import { clampPage, totalPagesOf, pageOffset, pagerRow, LAYOUT } from "../../uti
 import { getUserPoints } from "../../services/users.js";
 import { ensurePointsLogTable } from "../../services/points.js";
 import { PAGING } from "../../config/constants.js";
+import { formatAppTime } from "../../services/time.js";
 
 /**
  * 渲染积分流水。
@@ -56,7 +57,7 @@ export async function renderPointsLog(token, env, chatId, userKey, page = 1, mes
       const icon = amount > 0 ? "🟢" : "🔴";
       text += `${offset + i + 1}. ${icon} <b>${sign}</b> · 余额 <b>${balance}</b>\n`;
       text += `    └ ${escapeHtml(log.reason)}\n`;
-      text += `    🕒 <code>${escapeHtml(log.created_at)}</code>\n`;
+      text += `    🕒 <code>${escapeHtml(formatAppTime(env, log.created_at))}</code>\n`;
     });
   }
 

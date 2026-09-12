@@ -282,6 +282,49 @@ test("主动预警：命中关键词只私聊提醒管理员，不在群里发�
 // 4. 撤销处置
 // ==========================================
 
+test("群规对所有人一视同仁：owner 与本群管理员发言同样触发预警", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  seedUser(db, "user:42", 0);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+  // 42 是本群管理员，999 是机器人 owner —— 以前这两种身份会被直接跳过
+  chatMembers["-100:42"] = { status: "administrator", can_restrict_members: true, user: { id: 42 } };
+  chatMembers["-100:999"] = { status: "creator", user: { id: 999 } };
+
+  // owner 在群里发一句带关键词的普通消息（没 @机器人）
+  await handleMessage({
+    env, ctx, token: "TEST_TOKEN", myId: "999", uctx: adminUctx, isGroupCtx: true,
+    payload: { message: { text: "免费领取 加微信 兼职日赚", entities: [] } }
+  });
+  const ownerAlert = db.get("SELECT * FROM group_punishments WHERE user_id = '999' ORDER BY id DESC LIMIT 1");
+  assert.ok(ownerAlert, "owner 发言也要预警：群规对谁都一样");
+  assert.equal(ownerAlert.status, "pending");
+  assert.equal(ownerAlert.chat_id, "-100");
+  assert.match(ownerAlert.reason, /预警关键词/);
+  const ownerCard = sentTo("999").map((c) => String(c.body.text)).join("\n");
+  assert.ok(ownerCard.includes("预警关键词"), "预警卡片要私聊提醒管理员");
+  assert.ok(ownerCard.includes("机器人管理员"), "要说明管理员不会被自动处置，免得以为机器人坏了");
+
+  // 本群管理员（不是机器人管理员）发言同样预警
+  const groupAdminUctx = {
+    chatId: "-100", userId: "42", chatType: "supergroup",
+    userKey: "user:42", sceneKey: "group:-100:user:42",
+    username: "gadmin", firstName: "群管理员"
+  };
+  await handleMessage({
+    env, ctx, token: "TEST_TOKEN", myId: "999", uctx: groupAdminUctx, isGroupCtx: true,
+    payload: { message: { text: "推广一下 加VX", entities: [] } }
+  });
+  assert.ok(
+    db.get("SELECT * FROM group_punishments WHERE user_id = '42' ORDER BY id DESC LIMIT 1"),
+    "本群管理员发言也要预警"
+  );
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
 test("处置记录里可以一键撤销，并公告 + 私聊当事人", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
   const db = createTestDB();
   seedUser(db, "user:555", 10);

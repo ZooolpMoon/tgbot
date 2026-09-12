@@ -5,6 +5,7 @@
 import { sendMessage, sendMessageWithKeyboard } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
 import { logError } from "../core/logger.js";
+import { formatAppTime } from "../services/time.js";
 
 /**
  * 解析管理员通知 chatId
@@ -37,7 +38,7 @@ export async function notifyAdminNewOrder(token, env, order, item, userInfo) {
     `👤 用户：<b>${escapeHtml(userInfo.firstName || "未命名")}</b>\n` +
     `🆔 用户 ID：<code>${userInfo.userId}</code>\n` +
     `💬 下单会话：<code>${order.chat_id}</code>\n` +
-    `🕒 时间：${order.created_at || new Date().toISOString()}\n\n` +
+    `🕒 时间：${escapeHtml(formatAppTime(env, order.created_at || Date.now()))}\n\n` +
     `点击下方按钮处理：`;
 
   const keyboard = {

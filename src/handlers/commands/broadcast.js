@@ -14,6 +14,7 @@ import { ERR } from "../../config/messages.js";
 import { escapeHtml } from "../../utils/html.js";
 import { logAdminAction } from "../../services/admin-log.js";
 import { logError } from "../../core/logger.js";
+import { formatAppTime } from "../../services/time.js";
 
 const RECIPIENTS_SQL = `
   SELECT id, user_id FROM users
@@ -80,7 +81,7 @@ export async function cmdBroadcast({ env, ctx, token, chatId, isMaster, isGroupC
     `📢 <b>确认群发？</b>\n` +
     `-------------------------\n` +
     `👥 <b>预计接收用户：</b> ${targets} 人\n` +
-    `🕒 <b>提交时间：</b> ${new Date().toISOString()}\n\n` +
+    `🕒 <b>提交时间：</b> ${escapeHtml(formatAppTime(env, Date.now()))}\n\n` +
     `📝 <b>正文预览：</b>\n${escapeHtml(body)}`;
 
   const keyboard = {

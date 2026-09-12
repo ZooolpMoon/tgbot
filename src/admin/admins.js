@@ -12,6 +12,7 @@ import { escapeHtml } from "../utils/html.js";
 import { grid, clampPage, totalPagesOf, pageOffset, pagerRow, compactLabel, LAYOUT } from "../utils/layout.js";
 import { ADMIN_CALLBACK } from "../config/constants.js";
 import { logAdminAction } from "../services/admin-log.js";
+import { formatAppTime } from "../services/time.js";
 import {
   ASSIGNABLE_ROLES, CAPABILITIES, ROLES, capabilitiesOf, isAssignableRole,
   listAdmins, removeAdmin, roleLabel, setAdmin
@@ -157,7 +158,7 @@ export async function renderAdminDetail(token, env, chatId, messageId, userId) {
     `🎖️ <b>角色：</b> ${roleLabel(row.role)}\n` +
     (row.note ? `📝 <b>备注：</b> ${escapeHtml(row.note)}\n` : ``) +
     `👑 <b>授权人：</b> <code>${escapeHtml(row.granted_by || "—")}</code>\n` +
-    `🕒 <b>授权时间：</b> ${escapeHtml(row.created_at || "")}\n\n` +
+    `🕒 <b>授权时间：</b> ${escapeHtml(formatAppTime(env, row.created_at))}\n\n` +
     `<b>该角色可以做：</b>\n${caps}`;
 
   const keyboard = {

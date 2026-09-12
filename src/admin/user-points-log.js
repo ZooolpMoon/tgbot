@@ -6,6 +6,7 @@ import { editMessageText } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
 import { clampPage, totalPagesOf, pageOffset, pagerRow, LAYOUT } from "../utils/layout.js";
 import { ensurePointsLogTable } from "../services/points.js";
+import { formatAppTime } from "../services/time.js";
 
 const PAGE_SIZE = 5;
 
@@ -36,7 +37,7 @@ export async function renderUserPointsLogMenu(token, env, chatId, messageId, row
   if (results && results.length > 0) {
     results.forEach(log => {
       const sign = log.change_amount > 0 ? `+${log.change_amount}` : `${log.change_amount}`;
-      text += `⏱️ <code>${log.created_at}</code>\n`;
+      text += `⏱️ <code>${escapeHtml(formatAppTime(env, log.created_at))}</code>\n`;
       text += `变动: <b>${sign}</b> | 余额: <b>${log.balance_after}</b>\n`;
       text += `原因: ${escapeHtml(log.reason)}\n\n`;
     });
