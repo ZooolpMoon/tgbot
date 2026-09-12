@@ -365,7 +365,8 @@ test("管理员发送 .txt 文件 → 直接入库（标题取文件名）", { s
   const doc = db.get("SELECT * FROM kb_docs ORDER BY id DESC LIMIT 1");
   assert.ok(doc, "应该写入了文档");
   assert.equal(doc.title, "群规");
-  assert.equal(doc.source, "群规.txt");
+  assert.match(doc.source, /群规\.txt/, "来源里应保留原文件名");
+  assert.match(doc.source, /text/, "来源里应记录解析方式");
   assert.equal(doc.scope_key, KB_GLOBAL_SCOPE, "私聊上传进全局知识库");
   assert.ok(sentTexts().some((t) => t.includes("文件已入库")));
 

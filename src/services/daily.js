@@ -9,11 +9,12 @@
 // ==========================================
 
 import { getDateKey, shiftDateKey } from "./time.js";
-import { sendMessageWithKeyboard } from "../telegram/api.js";
+import { sendMessageWithKeyboard, sendMessage } from "../telegram/api.js";
 import { resolveAdminChatId } from "../shop/notify.js";
 import { escapeHtml } from "../utils/html.js";
 import { logError, logInfo } from "../core/logger.js";
-import { expirePunishments } from "./guard.js";
+import { expirePunishments, ACTIONS, formatDuration } from "./guard.js";
+import { reindexKnowledge } from "./knowledge.js";
 
 /**
  * 清理过期数据（引导会话、草稿、过期兑换码）。
@@ -57,10 +58,15 @@ export async function cleanupStaleData(env) {
     "DELETE FROM guard_sessions WHERE updated_at <= datetime('now', '-1 day')"
   ).run();
 
-  // 群规处置：把已到期的临时禁言标记为 expired，并清理一周前的待确认记录
-  const expiredPunishments = await expirePunishments(env);
+  // 群规处置：把已到期的临时禁言标记为 expired（返回明细，供定时任务发通知），
+  // 并清理一天前仍未确认的处置记录
+  const expiredList = await expirePunishments(env);
   const stalePunishments = await env.DB.prepare(
     "DELETE FROM group_punishments WHERE status = 'pending' AND created_at <= datetime('now', '-1 day')"
+  ).run();
+  // 已处理完的申诉保留 30 天，避免无限增长
+  const staleAppeals = await env.DB.prepare(
+    "DELETE FROM punishment_appeals WHERE status <> 'pending' AND created_at <= datetime('now', '-30 days')"
   ).run();
 
   const expiredCodes = await env.DB.prepare(
@@ -76,9 +82,12 @@ export async function cleanupStaleData(env) {
     taskSessions: taskSessions.meta.changes,
     kbSessions: kbSessions.meta.changes,
     guardSessions: guardSessions.meta.changes,
-    expiredPunishments,
+    expiredPunishments: expiredList.length,
     stalePunishments: stalePunishments.meta.changes,
-    expiredCodes: expiredCodes.meta.changes
+    staleAppeals: staleAppeals.meta.changes,
+    expiredCodes: expiredCodes.meta.changes,
+    // 明细给定时任务用（发到期通知）；日志汇总里只记数量
+    expiredList
   };
 }
 
@@ -125,10 +134,27 @@ export async function runScheduledTasks(env, token) {
   const cleanup = await cleanupStaleData(env);
   const summary = await collectDailySummary(env);
 
-  logInfo("定时任务完成：", JSON.stringify({ cleanup, summary: { ...summary, pendingList: summary.pendingList.length } }));
+  // 索引维护：补上「上传时没有 AI」或「换过向量模型」的分块（每次有上限，分多次跑完）
+  let reindex = null;
+  if (env?.AI && env?.DB) {
+    reindex = await reindexKnowledge(env, { limit: 20 });
+  }
+
+  // expiredList 只用于发通知，日志里只保留数量
+  const { expiredList = [], ...cleanupCounts } = cleanup || {};
+  logInfo("定时任务完成：", JSON.stringify({
+    cleanup: cleanupCounts,
+    reindex,
+    summary: { ...summary, pendingList: summary.pendingList.length }
+  }));
+
+  // 到期通知：限时禁言/封禁由 Telegram 自动解除，这里补一条公告 + 私聊当事人
+  if (token && expiredList.length > 0) {
+    await notifyExpiredPunishments(token, expiredList);
+  }
 
   const adminChat = resolveAdminChatId(env);
-  if (!token || !adminChat) return { cleanup, summary, notified: false };
+  if (!token || !adminChat) return { cleanup: cleanupCounts, summary, reindex, notified: false };
 
   const lines = [];
   lines.push(`🌙 <b>每日概况</b> · ${summary.yesterday}`);
@@ -139,6 +165,9 @@ export async function runScheduledTasks(env, token) {
   lines.push(`🎟️ <b>近 24h 兑换码使用：</b> ${summary.redeems24h}`);
   lines.push(`🚫 <b>当前封禁用户：</b> ${summary.blocked}`);
   lines.push(`⏳ <b>待处理订单：</b> <b>${summary.pendingOrders}</b>`);
+  if (expiredList.length > 0) {
+    lines.push(`⌛ <b>刚到期处置：</b> ${expiredList.length} 条（已自动解除并通知）`);
+  }
 
   if (summary.pendingList.length > 0) {
     lines.push("");
@@ -149,11 +178,15 @@ export async function runScheduledTasks(env, token) {
   }
 
   if (cleanup) {
-    const cleaned = Object.values(cleanup).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    const cleaned = Object.values(cleanupCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
     if (cleaned > 0) {
       lines.push("");
       lines.push(`🧹 <b>本次清理：</b> ${cleaned} 条（过期会话/草稿/兑换码）`);
     }
+  }
+
+  if (reindex?.ok && reindex.updated > 0) {
+    lines.push(`🧠 <b>知识库索引：</b> 本次重建 ${reindex.updated} 块，剩余 ${reindex.remaining} 块`);
   }
 
   const keyboard = {
@@ -165,9 +198,37 @@ export async function runScheduledTasks(env, token) {
 
   try {
     await sendMessageWithKeyboard(token, adminChat, lines.join("\n"), keyboard, "HTML");
-    return { cleanup, summary, notified: true };
+    return { cleanup: cleanupCounts, summary, reindex, notified: true };
   } catch (e) {
     logError("发送每日概况失败：", e);
-    return { cleanup, summary, notified: false };
+    return { cleanup: cleanupCounts, summary, reindex, notified: false };
+  }
+}
+
+/**
+ * 临时处置到期的通知：群里公告一句，同时私聊当事人。
+ * 单个失败不影响其它记录。
+ */
+async function notifyExpiredPunishments(token, rows) {
+  for (const row of rows) {
+    const action = ACTIONS[row.action]?.short || row.action;
+    const name = row.user_label || row.user_id;
+    try {
+      await sendMessage(
+        token, row.chat_id,
+        `⌛ <b>处置已到期</b>\n-------------------------\n` +
+        `👤 ${escapeHtml(name)} 的${action}（${formatDuration(row.duration_min)}）已自动解除。`,
+        "HTML"
+      );
+    } catch (e) {
+      logError("发送处置到期公告失败：", e);
+    }
+    try {
+      await sendMessage(
+        token, row.user_id,
+        `⌛ 你在群 <code>${escapeHtml(row.chat_id)}</code> 的${action}已到期，限制已解除。`,
+        "HTML"
+      );
+    } catch { /* 用户没私聊过机器人，忽略 */ }
   }
 }

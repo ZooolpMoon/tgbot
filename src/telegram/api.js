@@ -172,6 +172,23 @@ export async function downloadFileText(token, filePath, maxBytes = 512 * 1024) {
   }
 }
 
+/**
+ * 下载文件原始字节（.docx / .pdf 这类需要二进制解析的文件用）。
+ * @returns {Promise<ArrayBuffer|null>} 超限或失败返回 null
+ */
+export async function downloadFileBuffer(token, filePath, maxBytes = 512 * 1024) {
+  if (!filePath) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    if (buffer.byteLength > maxBytes) return null;
+    return buffer;
+  } catch {
+    return null;
+  }
+}
+
 // ==========================================
 // 🛡️ 群管理能力（群规执法用）
 // 注意：机器人在群里必须是管理员且拥有 can_restrict_members 权限，

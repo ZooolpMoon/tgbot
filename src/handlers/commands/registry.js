@@ -33,7 +33,7 @@ import { cmdKb } from "./kb.js";
 import {
   cmdBan, cmdUnban, cmdKick, cmdMute, cmdUnmute, cmdGroupBan, cmdRules, cmdSetRules
 } from "./ban.js";
-import { cmdGuard } from "./guard.js";
+import { cmdGuard, cmdAppeal } from "./guard.js";
 import { cmdSyncMenu } from "./system.js";
 import { cmdShopEdit } from "../../shop/edit.js";
 import { startAddItem, cancelAddItem } from "../../shop/add.js";
@@ -180,6 +180,11 @@ export const COMMANDS = [
   {
     name: "/guard", scope: "admin",
     desc: "群规执法面板（群里：编辑群规 / 默认处置 / 处置记录）", handle: cmdGuard
+  },
+  {
+    name: "/appeal", aliases: ["/shensu"], privateOnly: true,
+    desc: "对处置提出申诉（仅私聊）", usage: "/appeal <申诉理由>", handle: cmdAppeal,
+    privateHint: "🙋 申诉请私聊机器人，避免在群里公开。"
   },
   {
     name: "/setrules", scope: "admin",

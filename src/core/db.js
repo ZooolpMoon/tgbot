@@ -298,6 +298,7 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
   content   TEXT    NOT NULL,
   dim       INTEGER NOT NULL DEFAULT 0,
   embedding TEXT    NOT NULL DEFAULT '',
+  model     TEXT    DEFAULT '',                          -- 生成向量的模型名（换模型后据此重建索引）
   created_at TEXT   DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_kb_chunks_scope ON kb_chunks(scope_key, id);
@@ -323,6 +324,8 @@ CREATE TABLE IF NOT EXISTS group_guard (
   default_action       TEXT    NOT NULL DEFAULT 'bot',   -- bot / kick / group_ban / mute
   default_mute_minutes INTEGER NOT NULL DEFAULT 60,
   enabled              INTEGER NOT NULL DEFAULT 1,
+  alert_enabled        INTEGER NOT NULL DEFAULT 1,       -- 主动预警开关
+  alert_keywords       TEXT    DEFAULT '',               -- 自定义预警关键词（空 = 用内置默认）
   updated_at           TEXT    DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -353,6 +356,34 @@ CREATE TABLE IF NOT EXISTS guard_sessions (
   draft      TEXT DEFAULT '',
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 处置申诉：被处置人可以私聊机器人申诉，管理员在私聊里批准（撤销处置）或驳回
+CREATE TABLE IF NOT EXISTS punishment_appeals (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  punishment_id INTEGER NOT NULL,
+  chat_id       TEXT    NOT NULL,
+  user_id       TEXT    NOT NULL,
+  user_label    TEXT    DEFAULT '',
+  reason        TEXT    NOT NULL,
+  status        TEXT    NOT NULL DEFAULT 'pending',   -- pending / approved / rejected
+  decided_by    TEXT    DEFAULT '',
+  decided_at    TEXT,
+  created_at    TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_appeals_status ON punishment_appeals(status, id DESC);
+CREATE INDEX IF NOT EXISTS idx_appeals_user ON punishment_appeals(user_id, id DESC);
+
+-- 群规版本历史（每次改动留一条，可回滚）
+CREATE TABLE IF NOT EXISTS group_rule_versions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id    TEXT    NOT NULL,
+  version    INTEGER NOT NULL,
+  rules      TEXT    NOT NULL,
+  changed_by TEXT    DEFAULT '',
+  note       TEXT    DEFAULT '',
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_rule_versions ON group_rule_versions(chat_id, version DESC);
 `;
 
 let schemaReady = false;
@@ -363,7 +394,7 @@ let schemaPromise = null;
  * Worker 冷启动时先读这个标记，已是最新就跳过建表与迁移，
  * 避免每次冷启动都跑几十条语句（D1 对单次调用的查询数有限制）。
  */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 
@@ -376,6 +407,11 @@ const MIGRATIONS = [
   // 结构迁移
   "ALTER TABLE users ADD COLUMN blocked INTEGER DEFAULT 0",
   "ALTER TABLE shop_items ADD COLUMN per_user_limit INTEGER DEFAULT 0",
+  // v2.6.0：群规执法的主动预警开关与关键词
+  "ALTER TABLE group_guard ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE group_guard ADD COLUMN alert_keywords TEXT DEFAULT ''",
+  // v2.6.0：记录每条分块用了哪个向量模型，便于换模型后精准重建
+  "ALTER TABLE kb_chunks ADD COLUMN model TEXT DEFAULT ''",
   // 数据迁移：v1.3.1 起商城只保留「虚拟物品 / 服务」，不再有实物与发货环节
   "UPDATE shop_items SET category = 'virtual' WHERE category = 'physical'",
   "UPDATE shop_orders SET status = 'done' WHERE status = 'shipped'",

@@ -8,6 +8,7 @@
 
 import { renderGuardPanel } from "../../admin/guard-panel.js";
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
+import { handleAppealRequest } from "../../admin/guard.js";
 
 /** /guard：打开群规执法面板 */
 export async function cmdGuard({ env, token, chatId, uctx, isGroupCtx, ctx }) {
@@ -17,4 +18,17 @@ export async function cmdGuard({ env, token, chatId, uctx, isGroupCtx, ctx }) {
   }
   // 面板要长期停留在会话里，所以用新消息而不是自动删除
   await renderGuardPanel(token, env, chatId, null, uctx);
+}
+
+/** /appeal <理由>：被处置人私聊申诉（只针对最近 7 天内作用在自己身上的处置） */
+export async function cmdAppeal({ env, ctx, token, chatId, uctx, rawText, isGroupCtx }) {
+  if (isGroupCtx) {
+    await sendAutoDelete(
+      token, chatId,
+      "⚠️ 申诉请<b>私聊</b>机器人（在群里说会被其他成员看到）。",
+      "HTML", isGroupCtx, ctx
+    );
+    return;
+  }
+  await handleAppealRequest({ env, token, chatId, uctx, rawText });
 }

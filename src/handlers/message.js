@@ -21,11 +21,15 @@ import { handleEditItemInput } from "../shop/edit.js";
 import { renderShopItem } from "../shop/index.js";
 import { getPendingNoteRequest, saveOrderNote, cancelOrderNote } from "../shop/notes.js";
 import { isTaskGuideActive, handleTaskGuideInput, cancelTaskGuide } from "../admin/tasks.js";
+import { logError } from "../core/logger.js";
 import {
   ingestUploadedDocument, isKnowledgeGuideActive, handleKnowledgeInput, cancelKnowledgeGuide
 } from "../admin/knowledge.js";
 import { looksLikeGuardCommand } from "../services/guard.js";
-import { handleGuardRequest, handleReportRequest, looksLikeReport } from "../admin/guard.js";
+import {
+  handleGuardRequest, handleReportRequest, looksLikeReport,
+  handleAppealRequest, handleKeywordAlert
+} from "../admin/guard.js";
 import { isGuardGuideActive, handleGuardGuideInput, cancelGuardGuide } from "../admin/guard-panel.js";
 
 /** 处理 message / edited_message 更新 */
@@ -40,9 +44,9 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   const sceneKey = uctx.sceneKey;
   const userId = uctx.userId;
 
-  // ---------- 管理员上传知识库文件（.txt / .md）：在文本判定之前处理 ----------
-  // 只处理管理员发的「文档」消息，图片 / 语音等仍然走原来的忽略逻辑
-  if (!userText && message.document && myId && userId === myId) {
+  // ---------- 管理员上传知识库文件（.txt / .md / .docx / .pdf）----------
+  // 放在最前面：带说明文字的文档（caption）也要能入库，不能被文本判定挡掉
+  if (message.document && myId && userId === myId) {
     const handled = await ingestUploadedDocument({
       env, token, chatId, uctx, document: message.document, adminId: userId
     });
@@ -90,7 +94,20 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
       const isBotAdmin = Boolean(myId && userId === myId);
       const adminGuideActive = isBotAdmin
         && ((await isKnowledgeGuideActive(env, chatId)) || (await isGuardGuideActive(env, chatId)));
-      if (!adminGuideActive) return;
+      if (!adminGuideActive) {
+        // 静默预警：普通群聊发言（没 @机器人）同样可能违规，
+        // 这里只私聊提醒管理员，不公开任何内容，也不打断群聊。
+        if (env.DB) {
+          try {
+            await handleKeywordAlert({
+              env, token, chatId, uctx, message, rawText: originalText, myId
+            });
+          } catch (e) {
+            logError("关键词预警失败：", e);
+          }
+        }
+        return;
+      }
     }
 
     if (isMentioned) {
@@ -234,6 +251,23 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   }
 
   // ---------- 非指令 → AI 对话 ----------
+  // 主动预警：命中关键词只私聊提醒管理员，不影响用户正常使用
+  if (isGroupCtx && !isMaster) {
+    try {
+      await handleKeywordAlert({
+        env, token, chatId, uctx, message, rawText: originalText, myId
+      });
+    } catch (e) {
+      logError("关键词预警失败：", e);
+    }
+  }
+
+  // 私聊里的自然语言申诉：直接说「申诉 …」也能用
+  if (!isGroupCtx && /^申诉/.test(userText)) {
+    const handled = await handleAppealRequest({ env, token, chatId, uctx, rawText: userText });
+    if (handled) return;
+  }
+
   if (!(await isFeatureEnabled(env, sceneKey, "ai"))) {
     await sendAutoDelete(
       token, chatId,

@@ -77,25 +77,28 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: "🪙 积分", callback_data: `admin_menu_pts_${scene.id}` },
-        { text: "📜 流水", callback_data: `admin_log_pts_${scene.id}_1` }
+        { text: "📇 用户详情", callback_data: `admin_detail_${scene.id}` },
+        { text: "🪙 积分", callback_data: `admin_menu_pts_${scene.id}` }
       ],
       [
-        { text: "📅 限额", callback_data: `admin_menu_limit_${scene.id}` },
-        { text: "⏱️ 频率", callback_data: `admin_menu_rate_${scene.id}` }
+        { text: "📜 流水", callback_data: `admin_log_pts_${scene.id}_1` },
+        { text: "📅 限额", callback_data: `admin_menu_limit_${scene.id}` }
       ],
       [
-        { text: "⚙️ 功能开关", callback_data: `admin_feat_s_${scene.id}` },
+        { text: "⏱️ 频率", callback_data: `admin_menu_rate_${scene.id}` },
+        { text: "⚙️ 功能开关", callback_data: `admin_feat_s_${scene.id}` }
+      ],
+      [
         {
           text: blocked ? "✅ 解封" : "🚫 封禁",
           callback_data: `admin_block_${scene.id}`
-        }
+        },
+        { text: "🧹 清空记忆", callback_data: `admin_clearmem_${scene.id}` }
       ],
       [
-        { text: "🧹 清空记忆", callback_data: `admin_clearmem_${scene.id}` },
-        { text: "🗑️ 删除场景", callback_data: `admin_deluser_confirm_${scene.id}` }
-      ],
-      [{ text: "🔙 返回场景列表", callback_data: backTarget }]
+        { text: "🗑️ 删除场景", callback_data: `admin_deluser_confirm_${scene.id}` },
+        { text: "🔙 返回列表", callback_data: backTarget }
+      ]
     ]
   };
 

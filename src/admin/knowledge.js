@@ -13,7 +13,8 @@
 // ==========================================
 
 import {
-  sendMessage, sendMessageWithKeyboard, editMessageText, answerCallback, getFile, downloadFileText
+  sendMessage, sendMessageWithKeyboard, editMessageText, answerCallback,
+  getFile, downloadFileBuffer
 } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
 import { grid, compactLabel, clampPage, pagerRow, pageInfoText, LAYOUT } from "../utils/layout.js";
@@ -21,16 +22,16 @@ import { ADMIN_CALLBACK, KB } from "../config/constants.js";
 import { buildGroupScopeKey } from "../core/context.js";
 import {
   KB_GLOBAL_SCOPE, ingestDocument, listDocuments, getDocument,
-  setDocumentEnabled, deleteDocument, kbStats, searchKnowledge
+  setDocumentEnabled, deleteDocument, kbStats, searchKnowledge,
+  reindexKnowledge, moveDocumentScope, copyDocumentToScope
 } from "../services/knowledge.js";
 import { logAdminAction } from "../services/admin-log.js";
 import { logError } from "../core/logger.js";
+import { extractTextFromFile, detectFileKind } from "../services/text-extract.js";
 
 const DOCS_PER_PAGE = 6;
 /** 引导会话有效期：超过则不再拦截普通消息（与商品/任务引导保持一致） */
 const SESSION_TTL_MINUTES = 30;
-/** 允许上传的文本类扩展名 */
-const ALLOWED_EXTENSIONS = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".yml", ".yaml"];
 
 // ==========================================
 // 作用域
@@ -114,7 +115,10 @@ export function getKnowledgeHomeKeyboard() {
         { text: "➕ 添加文档", callback_data: ADMIN_CALLBACK.KB_ADD },
         { text: "📄 文档列表", callback_data: `${ADMIN_CALLBACK.KB_LIST_PREFIX}1` }
       ]),
-      [{ text: "🔍 检索测试", callback_data: ADMIN_CALLBACK.KB_TEST }],
+      ...grid([
+        { text: "🔍 检索测试", callback_data: ADMIN_CALLBACK.KB_TEST },
+        { text: "🧠 重建索引", callback_data: ADMIN_CALLBACK.KB_REINDEX }
+      ]),
       [{ text: "🔙 返回主菜单", callback_data: ADMIN_CALLBACK.MAIN_MENU }]
     ]
   };
@@ -194,7 +198,7 @@ export async function renderDocumentList(token, env, chatId, messageId, uctx, pa
 }
 
 /** 文档详情：全文预览（截断）+ 启停 / 删除 */
-export async function renderDocumentDetail(token, env, chatId, messageId, docId) {
+export async function renderDocumentDetail(token, env, chatId, messageId, docId, uctx = null) {
   if (!env.DB) return;
 
   const doc = await getDocument(env, docId);
@@ -215,20 +219,105 @@ export async function renderDocumentDetail(token, env, chatId, messageId, docId)
   text += `🕒 更新：${escapeHtml(doc.updated_at || doc.created_at || "")}\n\n`;
   text += `📝 <b>正文预览：</b>\n${escapeHtml(preview)}${more}`;
 
-  const keyboard = {
-    inline_keyboard: [
-      [
-        {
-          text: Number(doc.enabled) === 1 ? "🚫 停用" : "✅ 启用",
-          callback_data: `${ADMIN_CALLBACK.KB_TOGGLE_PREFIX}${doc.id}`
-        },
-        { text: "🗑️ 删除", callback_data: `${ADMIN_CALLBACK.KB_DEL_PREFIX}${doc.id}` }
-      ],
-      [{ text: "🔙 返回文档列表", callback_data: `${ADMIN_CALLBACK.KB_LIST_PREFIX}1` }]
+  const rows = [
+    [
+      {
+        text: Number(doc.enabled) === 1 ? "🚫 停用" : "✅ 启用",
+        callback_data: `${ADMIN_CALLBACK.KB_TOGGLE_PREFIX}${doc.id}`
+      },
+      { text: "🗑️ 删除", callback_data: `${ADMIN_CALLBACK.KB_DEL_PREFIX}${doc.id}` }
     ]
-  };
+  ];
+
+  // 生效范围调整：群文档可以提升为全局；全局文档可以复制到当前群
+  const isGlobalDoc = String(doc.scope_key) === KB_GLOBAL_SCOPE;
+  const scope = uctx ? resolveKbScope(uctx) : null;
+  if (isGlobalDoc && scope?.isGroup) {
+    rows.push([{
+      text: "⬇️ 复制到本群",
+      callback_data: `${ADMIN_CALLBACK.KB_COPY_PREFIX}${doc.id}`
+    }]);
+  } else if (!isGlobalDoc) {
+    rows.push([{
+      text: "⬆️ 设为全局（所有群可见）",
+      callback_data: `${ADMIN_CALLBACK.KB_PROMOTE_PREFIX}${doc.id}`
+    }]);
+  }
+
+  rows.push([{ text: "🔙 返回文档列表", callback_data: `${ADMIN_CALLBACK.KB_LIST_PREFIX}1` }]);
+  const keyboard = { inline_keyboard: rows };
 
   return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
+}
+
+/** 🧠 重建索引：补齐「上传时没绑定 AI / 换过向量模型」的分块 */
+export async function handleKnowledgeReindex({ env, token, callback, chatId, msgId }) {
+  if (!env.DB) return;
+  await answerCallback(token, callback.id, "开始重建索引…", false);
+
+  const result = await reindexKnowledge(env, { limit: 40 });
+  if (!result.ok) {
+    await sendMessage(token, chatId, `❌ 重建索引失败：${escapeHtml(result.error || "未知错误")}`);
+    return;
+  }
+
+  await sendMessage(
+    token, chatId,
+    result.updated === 0
+      ? `✅ <b>索引已是最新</b>\n所有分块都有与当前模型匹配的向量。`
+      : `🧠 <b>重建索引</b>\n-------------------------\n` +
+        `本次重建：<b>${result.updated}</b> 块\n` +
+        `还剩：<b>${result.remaining}</b> 块${result.remaining > 0 ? "\n\n（再点一次「🧠 重建索引」继续，每次处理 40 块）" : "（已全部完成）"}`,
+    "HTML"
+  );
+}
+
+/** ⬆️ 把群文档提升为全局文档 */
+export async function handleDocPromote({ env, token, callback, chatId, msgId, data, adminId = null }) {
+  const docId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.KB_PROMOTE_PREFIX, ""), 10);
+  if (!env.DB || !Number.isInteger(docId)) return;
+
+  const doc = await getDocument(env, docId);
+  if (!doc) {
+    await answerCallback(token, callback.id, "❌ 文档不存在", true);
+    return;
+  }
+
+  const res = await moveDocumentScope(env, docId, "global");
+  if (!res.ok) {
+    await answerCallback(token, callback.id, `⚠️ ${res.error}`, true);
+    return;
+  }
+  await logAdminAction(env, {
+    adminId, chatId, action: "kb_doc_scope", detail: `#${docId} ${doc.title} → 全局`
+  });
+  await answerCallback(token, callback.id, "✅ 已设为全局文档", true);
+  await renderDocumentDetail(token, env, chatId, msgId, docId);
+}
+
+/** ⬇️ 把全局文档复制一份到当前群 */
+export async function handleDocCopy({ env, token, callback, chatId, msgId, data, uctx, adminId = null }) {
+  const docId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.KB_COPY_PREFIX, ""), 10);
+  if (!env.DB || !Number.isInteger(docId)) return;
+
+  const scope = resolveKbScope(uctx);
+  if (!scope.isGroup) {
+    await answerCallback(token, callback.id, "⚠️ 复制到本群需要在群里操作", true);
+    return;
+  }
+
+  const doc = await getDocument(env, docId);
+  const res = await copyDocumentToScope(env, docId, scope.scopeKey, adminId);
+  if (!res.ok) {
+    await answerCallback(token, callback.id, `⚠️ ${res.error}`, true);
+    return;
+  }
+  await logAdminAction(env, {
+    adminId, chatId, action: "kb_doc_scope",
+    detail: `#${docId} ${doc?.title || ""} → 复制到 ${scope.scopeKey}`
+  });
+  await answerCallback(token, callback.id, "✅ 已复制到本群", true);
+  await renderDocumentList(token, env, chatId, msgId, uctx, 1);
 }
 
 // ==========================================
@@ -362,7 +451,7 @@ export async function handleKnowledgeInput({ env, token, chatId, uctx, userText,
 // ==========================================
 
 /** 启用 / 停用文档 */
-export async function handleDocumentToggle({ env, token, callback, chatId, msgId, data, adminId = null }) {
+export async function handleDocumentToggle({ env, token, callback, chatId, msgId, data, uctx = null, adminId = null }) {
   const docId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.KB_TOGGLE_PREFIX, ""), 10);
   if (!env.DB || !Number.isInteger(docId)) return;
 
@@ -379,7 +468,7 @@ export async function handleDocumentToggle({ env, token, callback, chatId, msgId
   });
 
   await answerCallback(token, callback.id, next ? "✅ 已启用" : "🚫 已停用");
-  await renderDocumentDetail(token, env, chatId, msgId, docId);
+  await renderDocumentDetail(token, env, chatId, msgId, docId, uctx);
 }
 
 /** 删除前二次确认 */
@@ -429,12 +518,9 @@ export async function handleDocumentDeleteConfirm({ env, token, callback, chatId
 // 文件上传（.txt / .md）
 // ==========================================
 
-/** 是否是允许入库的文本文件 */
+/** 是否是允许入库的文件（文本 / .docx / .pdf） */
 export function isSupportedKnowledgeFile(document) {
-  const name = String(document?.file_name || "").toLowerCase();
-  const mime = String(document?.mime_type || "");
-  if (mime.startsWith("text/")) return true;
-  return ALLOWED_EXTENSIONS.some((ext) => name.endsWith(ext));
+  return detectFileKind(document?.file_name, document?.mime_type) !== "unknown";
 }
 
 /** 去掉扩展名后的文件名，作为默认标题 */
@@ -463,19 +549,30 @@ export async function ingestUploadedDocument({ env, token, chatId, uctx, documen
   const scope = resolveKbScope(uctx);
   try {
     const file = await getFile(token, document.file_id);
-    const content = file ? await downloadFileText(token, file.file_path, KB.MAX_FILE_BYTES) : null;
-
-    if (!content || !content.trim()) {
-      await sendMessage(token, chatId, "❌ 读取文件失败（可能不是纯文本，或文件过大）。");
+    const buffer = file ? await downloadFileBuffer(token, file.file_path, KB.MAX_FILE_BYTES) : null;
+    if (!buffer) {
+      await sendMessage(token, chatId, "❌ 读取文件失败（文件过大或 Telegram 下载失败）。");
       return true;
     }
+
+    // 文本直接解码；.docx 解 zip 取正文；.pdf 尽力抽取文字层
+    const extracted = await extractTextFromFile({
+      buffer,
+      fileName: document.file_name,
+      mimeType: document.mime_type
+    });
+    if (!extracted.ok) {
+      await sendMessage(token, chatId, `❌ ${escapeHtml(extracted.error || "无法解析这个文件")}`);
+      return true;
+    }
+    const content = extracted.text;
 
     const title = fileTitle(document);
     const res = await ingestDocument(env, {
       scopeKey: scope.scopeKey,
       title,
       content,
-      source: String(document.file_name || "上传文件").slice(0, 80),
+      source: `${String(document.file_name || "上传文件").slice(0, 70)}（${extracted.kind}）`,
       createdBy: adminId
     });
 
@@ -493,6 +590,7 @@ export async function ingestUploadedDocument({ env, token, chatId, uctx, documen
       token, chatId,
       `🎉 <b>文件已入库</b>\n${LAYOUT.DIVIDER}\n` +
       `📄 ${escapeHtml(title)}\n` +
+      `🧾 解析方式：${extracted.kind} · 正文 ${content.length} 字\n` +
       `🧩 切块：<b>${res.chunks}</b> 块${res.embedded ? "（已生成向量）" : "（未生成向量，仅关键词检索）"}\n` +
       `📚 作用域：${scope.label}`,
       "HTML"

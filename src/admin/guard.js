@@ -19,7 +19,9 @@ import {
   ACTIONS, formatDuration, getGroupGuard, getBotGroupRights, isGroupAdmin,
   parsePunishmentRequest, validateReason, reasonRejectHint,
   createPendingPunishment, getPunishment, updatePunishmentStatus,
-  executePunishment, buildPunishmentNotice
+  executePunishment, buildPunishmentNotice,
+  findAppealablePunishment, createAppeal, getAppeal, decideAppeal,
+  revokePunishment, resolveAlertKeywords, scanAlertKeywords
 } from "../services/guard.js";
 import { logAdminAction } from "../services/admin-log.js";
 import { logError } from "../core/logger.js";
@@ -297,8 +299,8 @@ export async function requestPunishmentFromCommand({
 }
 
 /**
- * 确认卡片回调：guard_go_<id> / guard_no_<id> / guard_set_<id>_<action>
- */
+* 确认卡片回调：guard_go_<id> / guard_no_<id> / guard_set_<id>_<action>
+*/
 export async function handleGuardCallback({ env, ctx, token, chatId, callback, data, myId, msgId }) {
   if (!env.DB) return;
 
@@ -443,4 +445,249 @@ export async function handleGuardCallback({ env, ctx, token, chatId, callback, d
     adminId: operatorId, chatId, action: "guard_execute",
     detail: `#${id} ${done.action} ${done.user_label || done.user_id}（${result.detail || ""}）`
   });
+}
+
+// ==========================================
+// 🙋 处置申诉（被处置人私聊机器人）
+// ==========================================
+
+/** 申诉卡片键盘（纯函数，便于排版测试） */
+export function getAppealCardKeyboard(appealId) {
+  return {
+    inline_keyboard: [
+      [
+        { text: "✅ 撤销处置", callback_data: `appeal_ok_${appealId}` },
+        { text: "❌ 驳回申诉", callback_data: `appeal_no_${appealId}` }
+      ]
+    ]
+  };
+}
+
+/**
+ * 处理用户的申诉请求（私聊，指令 /appeal 或直接说「申诉 …」）。
+ * @returns {Promise<boolean>} 是否已处理
+ */
+export async function handleAppealRequest({ env, token, chatId, uctx, rawText }) {
+  if (!env.DB) return false;
+
+  const reason = String(rawText || "")
+    .replace(/^\/appeal(@\w+)?/i, " ")
+    .replace(/^申诉/, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (reason.length < 2) {
+    await sendMessage(
+      token, chatId,
+      "🙋 <b>申诉</b>\n" +
+      "用法：<code>/appeal 我认为这次处置不合理，因为…</code>\n\n" +
+      "只能对<b>最近 7 天内</b>、作用在你身上的处置发起申诉。",
+      "HTML"
+    );
+    return true;
+  }
+
+  const punishment = await findAppealablePunishment(env, uctx.userId);
+  if (!punishment) {
+    await sendMessage(
+      token, chatId,
+      "🙋 没有找到可以申诉的处置记录（只支持最近 7 天内、作用在你身上的处置）。",
+      "HTML"
+    );
+    return true;
+  }
+
+  const created = await createAppeal(env, {
+    punishmentId: punishment.id,
+    chatId: punishment.chat_id,
+    userId: uctx.userId,
+    userLabel: punishment.user_label || uctx.userId,
+    reason
+  });
+  if (!created.ok) {
+    await sendMessage(token, chatId, `⚠️ ${created.error}`);
+    return true;
+  }
+
+  // 卡片发到管理员私聊，管理员一键决定
+  const adminChat = resolveAdminChatId(env) || chatId;
+  const action = ACTIONS[punishment.action]?.short || punishment.action;
+  await sendMessageWithKeyboard(
+    token, adminChat,
+    `🙋 <b>收到一条申诉</b>\n${LAYOUT.DIVIDER}\n` +
+    `👤 <b>申诉人：</b>${escapeHtml(punishment.user_label || uctx.userId)}（<code>${escapeHtml(uctx.userId)}</code>）\n` +
+    `⚖️ <b>原处置：</b>${action}（${escapeHtml(punishment.reason || "无理由")}）\n` +
+    `🏠 <b>群：</b><code>${escapeHtml(punishment.chat_id)}</code>\n` +
+    `💬 <b>申诉理由：</b>${escapeHtml(reason)}\n\n` +
+    `点「✅ 撤销处置」会解除该用户的限制并在群里公告。`,
+    getAppealCardKeyboard(created.id),
+    "HTML"
+  );
+
+  await sendMessage(
+    token, chatId,
+    "✅ 申诉已提交给管理员，处理结果会私聊通知你。",
+    null
+  );
+  return true;
+}
+
+/**
+ * 申诉卡片回调：appeal_ok_<id> / appeal_no_<id>
+ */
+export async function handleAppealCallback({ env, token, callback, data, myId, chatId, msgId }) {
+  if (!env.DB) return;
+
+  const parts = String(data).split("_");
+  const kind = parts[1];               // ok / no
+  const appealId = Number.parseInt(parts[2], 10);
+  if (!Number.isInteger(appealId)) {
+    await answerCallback(token, callback.id, "⚠️ 参数无效", true);
+    return;
+  }
+
+  const appeal = await getAppeal(env, appealId);
+  if (!appeal) {
+    await answerCallback(token, callback.id, "❌ 申诉不存在", true);
+    return;
+  }
+  if (appeal.status !== "pending") {
+    await answerCallback(token, callback.id, "⚠️ 这条申诉已处理过了", true);
+    return;
+  }
+
+  // 权限：机器人管理员，或原处置所在群的管理员
+  const operatorId = String(callback.from?.id || "");
+  const allowed = (myId && operatorId === String(myId))
+    || (await isGroupAdmin(token, appeal.chat_id, operatorId));
+  if (!allowed) {
+    await answerCallback(token, callback.id, "❌ 只有管理员能处理申诉", true);
+    return;
+  }
+
+  const punishment = await getPunishment(env, appeal.punishment_id);
+  const who = escapeHtml(appeal.user_label || appeal.user_id);
+
+  if (kind === "no") {
+    await decideAppeal(env, appealId, "rejected", operatorId);
+    await answerCallback(token, callback.id, "已驳回");
+    await editMessageText(
+      token, chatId, msgId,
+      `❌ <b>申诉已驳回</b>\n${LAYOUT.DIVIDER}\n👤 ${who}\n💬 ${escapeHtml(appeal.reason)}`,
+      { inline_keyboard: [] }, "HTML"
+    );
+    try {
+      await sendMessage(token, appeal.user_id, `❌ 你的申诉未通过：${escapeHtml(appeal.reason)}\n如有疑问请联系群管理员。`);
+    } catch { /* 忽略 */ }
+    await logAdminAction(env, {
+      adminId: operatorId, chatId: appeal.chat_id, action: "guard_appeal_reject",
+      detail: `申诉 #${appealId} ${appeal.user_id}`
+    });
+    return;
+  }
+
+  if (kind !== "ok") {
+    await answerCallback(token, callback.id, "⚠️ 未知操作", true);
+    return;
+  }
+
+  // 批准：撤销原处置
+  let detail = "已撤销处置";
+  if (punishment) {
+    const result = await revokePunishment({
+      env, token, record: punishment, operatorId, note: "申诉通过"
+    });
+    if (!result.ok) {
+      await answerCallback(token, callback.id, `⚠️ ${result.error}`, true);
+      return;
+    }
+    detail = result.detail;
+  }
+
+  await decideAppeal(env, appealId, "approved", operatorId);
+  await answerCallback(token, callback.id, `✅ 申诉通过：${detail}`, true);
+  await editMessageText(
+    token, chatId, msgId,
+    `✅ <b>申诉通过，处置已撤销</b>\n${LAYOUT.DIVIDER}\n👤 ${who}\n💬 ${escapeHtml(appeal.reason)}\n⚙️ ${escapeHtml(detail)}`,
+    { inline_keyboard: [] }, "HTML"
+  );
+
+  if (punishment) {
+    try {
+      await sendMessage(
+        token, punishment.chat_id,
+        `🙋 <b>申诉通过，处置已撤销</b>\n-------------------------\n👤 ${who}\n⚙️ ${escapeHtml(detail)}`,
+        "HTML"
+      );
+    } catch (e) {
+      logError("发送申诉结果公告失败：", e);
+    }
+  }
+  try {
+    await sendMessage(token, appeal.user_id, `✅ 你的申诉已通过，限制已解除（${escapeHtml(detail)}）。`);
+  } catch { /* 忽略 */ }
+
+  await logAdminAction(env, {
+    adminId: operatorId, chatId: appeal.chat_id, action: "guard_appeal_approve",
+    detail: `申诉 #${appealId} ${appeal.user_id}（${detail}）`
+  });
+}
+
+// ==========================================
+// 🔔 主动预警（静默提醒管理员）
+// ==========================================
+
+/**
+ * 扫描一条群消息，命中预警关键词就**私聊**提醒管理员（群里不发声）。
+ * 同一用户 10 分钟内只提醒一次，避免刷屏。
+ * @returns {Promise<boolean>} 是否产生了预警
+ */
+export async function handleKeywordAlert({ env, token, chatId, uctx, message, rawText, myId }) {
+  if (!env.DB) return false;
+  if (!(await isFeatureEnabled(env, uctx.sceneKey, "guard"))) return false;
+
+  const settings = await getGroupGuard(env, chatId);
+  if (Number(settings.enabled) !== 1 || Number(settings.alert_enabled) !== 1) return false;
+
+  const keywords = resolveAlertKeywords(settings.alert_keywords);
+  const hits = scanAlertKeywords(rawText, keywords);
+  if (hits.length === 0) return false;
+
+  // 管理员自己发言不预警，也不打扰
+  if (myId && String(uctx.userId) === String(myId)) return false;
+  if (await isGroupAdmin(token, chatId, uctx.userId)) return false;
+
+  // 10 分钟内同一用户只提醒一次
+  const recent = await env.DB.prepare(
+    `SELECT id FROM group_punishments
+     WHERE chat_id = ? AND user_id = ? AND status = 'pending' AND detail LIKE '预警%'
+       AND created_at >= datetime('now', '-10 minutes')
+     LIMIT 1`
+  ).bind(String(chatId), String(uctx.userId)).first();
+  if (recent) return false;
+
+  const name = uctx.username ? `@${uctx.username}` : (uctx.firstName || uctx.userId);
+  const record = await requestPunishment({
+    env, token,
+    chatId: resolveAdminChatId(env) || chatId,
+    userId: uctx.userId,
+    userLabel: name,
+    action: settings.default_action === "bot" ? "bot_ban" : settings.default_action,
+    reason: `预警关键词：${hits.join("、")}`,
+    matchedRule: "关键词预警（未公开处置，等你判断）",
+    durationMin: Number(settings.default_mute_minutes) || 60,
+    operatorId: ""
+  });
+
+  if (record) {
+    await env.DB.prepare(
+      "UPDATE group_punishments SET chat_id = ?, detail = ? WHERE id = ?"
+    ).bind(String(chatId), `预警命中的原话：${String(rawText).slice(0, 120)}`, record.id).run();
+
+    await logAdminAction(env, {
+      adminId: myId, chatId, action: "guard_alert",
+      detail: `#${record.id} ${name}：${hits.join("、")}`
+    });
+  }
+  return true;
 }

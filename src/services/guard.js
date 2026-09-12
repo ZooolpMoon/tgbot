@@ -316,13 +316,19 @@ export function reasonRejectHint(rules = "") {
 
 /** 读取群执法配置（没有就用默认值） */
 export async function getGroupGuard(env, chatId) {
-  const fallback = { chat_id: String(chatId), rules: "", default_action: "bot_ban", default_mute_minutes: 60, enabled: 1 };
+  const fallback = {
+    chat_id: String(chatId), rules: "", default_action: "bot_ban", default_mute_minutes: 60,
+    enabled: 1, alert_enabled: 1, alert_keywords: ""
+  };
   if (!env?.DB || !chatId) return fallback;
   const row = await env.DB.prepare("SELECT * FROM group_guard WHERE chat_id = ?").bind(String(chatId)).first();
   return row ? { ...fallback, ...row } : fallback;
 }
 
-/** 写入 / 更新群执法配置 */
+/**
+ * 写入 / 更新群执法配置。
+ * 群规正文变化时会自动存一个历史版本（v2.7.0 起支持回滚）。
+ */
 export async function setGroupGuard(env, chatId, fields = {}) {
   if (!env?.DB || !chatId) return false;
   const current = await getGroupGuard(env, chatId);
@@ -330,18 +336,109 @@ export async function setGroupGuard(env, chatId, fields = {}) {
   const action = fields.defaultAction !== undefined ? String(fields.defaultAction) : current.default_action;
   const mute = fields.defaultMuteMinutes !== undefined ? Number(fields.defaultMuteMinutes) : current.default_mute_minutes;
   const enabled = fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : current.enabled;
+  const alertEnabled = fields.alertEnabled !== undefined ? (fields.alertEnabled ? 1 : 0) : current.alert_enabled;
+  const alertKeywords = fields.alertKeywords !== undefined
+    ? String(fields.alertKeywords).slice(0, 1000)
+    : current.alert_keywords;
 
   await env.DB.prepare(`
-    INSERT INTO group_guard (chat_id, rules, default_action, default_mute_minutes, enabled, updated_at)
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO group_guard
+      (chat_id, rules, default_action, default_mute_minutes, enabled, alert_enabled, alert_keywords, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(chat_id) DO UPDATE SET
       rules = EXCLUDED.rules,
       default_action = EXCLUDED.default_action,
       default_mute_minutes = EXCLUDED.default_mute_minutes,
       enabled = EXCLUDED.enabled,
+      alert_enabled = EXCLUDED.alert_enabled,
+      alert_keywords = EXCLUDED.alert_keywords,
       updated_at = CURRENT_TIMESTAMP
-  `).bind(String(chatId), rules, action, Math.max(0, Math.floor(mute) || 0), enabled).run();
+  `).bind(
+    String(chatId), rules, action, Math.max(0, Math.floor(mute) || 0),
+    enabled, alertEnabled, alertKeywords
+  ).run();
+
+  // 群规正文真的变了才记版本，避免每次改默认处置都产生一条历史
+  if (fields.rules !== undefined && rules !== String(current.rules || "")) {
+    await saveRuleVersion(env, chatId, rules, fields.changedBy || "", fields.note || "");
+  }
   return true;
+}
+
+// ==========================================
+// 📜 群规版本历史
+// ==========================================
+
+/** 存一条群规版本（版本号自动 +1） */
+export async function saveRuleVersion(env, chatId, rules, changedBy = "", note = "") {
+  if (!env?.DB || !chatId) return null;
+  const row = await env.DB.prepare(
+    "SELECT COALESCE(MAX(version), 0) AS v FROM group_rule_versions WHERE chat_id = ?"
+  ).bind(String(chatId)).first();
+  const version = (Number(row?.v) || 0) + 1;
+  const res = await env.DB.prepare(
+    `INSERT INTO group_rule_versions (chat_id, version, rules, changed_by, note)
+     VALUES (?, ?, ?, ?, ?)`
+  ).bind(String(chatId), version, String(rules || "").slice(0, 2000), String(changedBy || ""), String(note || "").slice(0, 100)).run();
+  return { id: Number(res?.meta?.last_row_id) || null, version, rules };
+}
+
+/** 分页列出某群的群规版本（最新在前） */
+export async function listRuleVersions(env, chatId, page = 1, pageSize = 5) {
+  if (!env?.DB) return { rows: [], total: 0, page: 1, totalPages: 1 };
+  const countRes = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM group_rule_versions WHERE chat_id = ?"
+  ).bind(String(chatId)).first();
+  const total = Number(countRes?.n) || 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, Math.floor(Number(page) || 1)), totalPages);
+  const { results } = await env.DB.prepare(
+    `SELECT id, version, rules, changed_by, note, created_at FROM group_rule_versions
+     WHERE chat_id = ? ORDER BY version DESC LIMIT ? OFFSET ?`
+  ).bind(String(chatId), pageSize, (safePage - 1) * pageSize).all();
+  return { rows: results || [], total, page: safePage, totalPages };
+}
+
+/** 读取某个群规版本 */
+export async function getRuleVersion(env, id) {
+  if (!env?.DB) return null;
+  return env.DB.prepare("SELECT * FROM group_rule_versions WHERE id = ?").bind(id).first();
+}
+
+// ==========================================
+// 🔔 主动预警关键词
+// ==========================================
+
+/** 内置预警关键词：命中只提醒管理员，不自动处置 */
+export const DEFAULT_ALERT_KEYWORDS = [
+  "加微信", "加VX", "加vx", "私聊我", "推广", "代购", "优惠券", "兼职", "刷单", "返利",
+  "博彩", "彩票", "赌场", "外挂", "代练", "翻墙", "点击链接", "http://", "https://t.me/",
+  "免费领取", "薅羊毛", "引流", "拉群", "日赚", "月入"
+];
+
+/** 解析关键词配置：支持换行 / 逗号 / 顿号分隔；为空则用内置默认 */
+export function resolveAlertKeywords(raw) {
+  const list = String(raw || "")
+    .split(/[\n,，、;；]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return list.length > 0 ? list : DEFAULT_ALERT_KEYWORDS;
+}
+
+/**
+ * 扫描文本命中的预警关键词。
+ * @returns {string[]} 命中的关键词（最多 3 个）
+ */
+export function scanAlertKeywords(text, keywords) {
+  const src = String(text || "").toLowerCase();
+  if (!src) return [];
+  const hits = [];
+  for (const kw of keywords) {
+    const k = String(kw).toLowerCase();
+    if (k && src.includes(k)) hits.push(kw);
+    if (hits.length >= 3) break;
+  }
+  return hits;
 }
 
 // ==========================================
@@ -427,14 +524,128 @@ export async function getActivePunishment(env, chatId, userId) {
   ).bind(String(chatId), String(userId)).first();
 }
 
-/** 把已到期的临时禁言标记为过期（定时任务调用） */
+/**
+ * 把已到期的临时处置标记为过期，并把它们返回给调用方（定时任务据此发到期通知）。
+ * Telegram 侧的限时禁言/封禁到期后由 Telegram 自动解除，这里只更新本地状态。
+ * @returns {Promise<Array>} 本次刚过期的处置记录
+ */
 export async function expirePunishments(env) {
-  if (!env?.DB) return 0;
+  if (!env?.DB) return [];
   const now = Math.floor(Date.now() / 1000);
-  const res = await env.DB.prepare(
+
+  const { results } = await env.DB.prepare(
+    `SELECT * FROM group_punishments
+     WHERE status = 'done' AND until_at > 0 AND until_at <= ?`
+  ).bind(now).all();
+  const rows = results || [];
+  if (rows.length === 0) return [];
+
+  await env.DB.prepare(
     "UPDATE group_punishments SET status = 'expired', updated_at = CURRENT_TIMESTAMP WHERE status = 'done' AND until_at > 0 AND until_at <= ?"
   ).bind(now).run();
-  return Number(res?.meta?.changes) || 0;
+  return rows;
+}
+
+/**
+ * 撤销一条已执行的处置（管理员点错、或申诉通过时使用）。
+ * 按原动作反向执行：机器人封禁→解封、禁言→解除禁言、踢出/群封→解除群封禁。
+ * @returns {Promise<{ok:boolean, error?:string, detail?:string}>}
+ */
+export async function revokePunishment({ env, token, record, operatorId = "", note = "" }) {
+  if (!env?.DB || !record) return { ok: false, error: "缺少参数" };
+
+  const action = String(record.action || "");
+  if (action === "unban" || action === "unmute") {
+    return { ok: false, error: "该记录本身就是解除类动作，无法撤销" };
+  }
+
+  const chatId = String(record.chat_id);
+  const userId = String(record.user_id);
+  let detail = "";
+
+  try {
+    if (action === "bot_ban") {
+      await setUserBlocked(env, buildUserKey(userId), false);
+      detail = "已解除机器人封禁";
+    } else {
+      // 禁言 / 踢出 / 群封 都用「解除群封禁 + 恢复发言」覆盖
+      await unbanChatMember(token, chatId, userId, false);
+      const res = await restrictChatMember(token, chatId, userId, { mute: false });
+      if (!res?.ok) {
+        return { ok: false, error: res?.description || "解除限制失败（机器人需要群管理员权限）" };
+      }
+      detail = "已解除群内限制";
+      // 顺带把机器人封禁也一起解除：管理员撤销通常意味着「这次不算」
+      await setUserBlocked(env, buildUserKey(userId), false);
+    }
+  } catch (e) {
+    logError("撤销处置失败：", e);
+    return { ok: false, error: String(e?.message || e) };
+  }
+
+  await env.DB.prepare(
+    "UPDATE group_punishments SET status = 'revoked', detail = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+  ).bind(`${detail}${note ? `（${note}）` : ""}`, record.id).run();
+
+  return { ok: true, detail };
+}
+
+/** 最近几条处置记录（用户详情页用） */
+export async function listRecentPunishmentsByUser(env, userId, limit = 5) {
+  if (!env?.DB) return [];
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM group_punishments WHERE user_id = ? ORDER BY id DESC LIMIT ?"
+  ).bind(String(userId), Math.max(1, Math.floor(limit) || 5)).all();
+  return results || [];
+}
+
+// ==========================================
+// 🙋 处置申诉
+// ==========================================
+
+/** 找出用户最近一条「可申诉」的处置（已执行或已到期，7 天内） */
+export async function findAppealablePunishment(env, userId, { withinDays = 7 } = {}) {
+  if (!env?.DB) return null;
+  const since = `-${Math.max(1, Math.floor(withinDays) || 7)} days`;
+  return env.DB.prepare(
+    `SELECT * FROM group_punishments
+     WHERE user_id = ? AND status IN ('done', 'expired')
+       AND created_at >= datetime('now', ?)
+     ORDER BY id DESC LIMIT 1`
+  ).bind(String(userId), since).first();
+}
+
+/** 创建一条申诉（同一处置重复申诉会被拒绝） */
+export async function createAppeal(env, { punishmentId, chatId, userId, userLabel = "", reason }) {
+  if (!env?.DB) return { ok: false, error: "未绑定数据库" };
+  const text = String(reason || "").trim().slice(0, 500);
+  if (text.length < 2) return { ok: false, error: "请说明申诉理由" };
+
+  const existing = await env.DB.prepare(
+    "SELECT id FROM punishment_appeals WHERE punishment_id = ? AND status = 'pending' LIMIT 1"
+  ).bind(punishmentId).first();
+  if (existing) return { ok: false, error: "这条处置已经申诉过了，请等待管理员处理" };
+
+  const res = await env.DB.prepare(
+    `INSERT INTO punishment_appeals (punishment_id, chat_id, user_id, user_label, reason)
+     VALUES (?, ?, ?, ?, ?)`
+  ).bind(punishmentId, String(chatId), String(userId), String(userLabel || ""), text).run();
+  return { ok: true, id: Number(res?.meta?.last_row_id) || null };
+}
+
+/** 读取申诉 */
+export async function getAppeal(env, id) {
+  if (!env?.DB) return null;
+  return env.DB.prepare("SELECT * FROM punishment_appeals WHERE id = ?").bind(id).first();
+}
+
+/** 更新申诉状态 */
+export async function decideAppeal(env, id, status, decidedBy = "") {
+  if (!env?.DB) return false;
+  await env.DB.prepare(
+    "UPDATE punishment_appeals SET status = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?"
+  ).bind(String(status), String(decidedBy || ""), id).run();
+  return true;
 }
 
 // ==========================================

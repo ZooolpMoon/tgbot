@@ -282,14 +282,15 @@ export async function ingestDocument(env, {
   const statements = chunks.map((chunk, index) => {
     const vec = vectors?.[index];
     return env.DB.prepare(
-      "INSERT INTO kb_chunks (doc_id, scope_key, seq, content, dim, embedding) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO kb_chunks (doc_id, scope_key, seq, content, dim, embedding, model) VALUES (?, ?, ?, ?, ?, ?, ?)"
     ).bind(
       id,
       scopeKey,
       index,
       chunk,
       vec ? vec.length : 0,
-      vec ? encodeEmbedding(vec) : ""
+      vec ? encodeEmbedding(vec) : "",
+      vec ? resolveEmbedModel(env) : ""
     );
   });
   await runBatched(env, statements);
@@ -467,4 +468,102 @@ export function buildKnowledgeContext(hits, maxChars = KB.MAX_CONTEXT_CHARS) {
   }
 
   return blocks.join("\n\n");
+}
+
+// ==========================================
+// 🧠 索引重建
+// ==========================================
+
+/**
+ * 补建 / 重建向量索引。
+ * 触发条件：没有向量（上传时没绑定 AI）或向量模型与当前模型不一致（换过模型）。
+ * 每次只处理有限条，适合放进定时任务或面板按钮里分次跑完。
+ *
+ * @returns {Promise<{ok:boolean, updated:number, remaining:number, error?:string}>}
+ */
+export async function reindexKnowledge(env, { limit = 20 } = {}) {
+  if (!env?.DB) return { ok: false, updated: 0, remaining: 0, error: "未绑定数据库" };
+  if (!env?.AI) return { ok: false, updated: 0, remaining: 0, error: "未绑定 Workers AI，无法生成向量" };
+
+  const model = resolveEmbedModel(env);
+  const size = Math.max(1, Math.min(100, Math.floor(Number(limit) || 20)));
+  const where = "embedding = '' OR dim = 0 OR model IS NULL OR model = '' OR model <> ?";
+
+  const { results } = await env.DB.prepare(
+    `SELECT id, content FROM kb_chunks WHERE ${where} ORDER BY id ASC LIMIT ?`
+  ).bind(model, size).all();
+
+  const rows = results || [];
+  if (rows.length === 0) return { ok: true, updated: 0, remaining: 0 };
+
+  let updated = 0;
+  try {
+    for (let i = 0; i < rows.length; i += KB.EMBED_BATCH) {
+      const batch = rows.slice(i, i + KB.EMBED_BATCH);
+      const vectors = await embedTexts(env, batch.map((r) => r.content));
+      if (!vectors) return { ok: false, updated, remaining: rows.length - updated, error: "向量化失败" };
+
+      const statements = batch.map((row, index) => {
+        const vec = vectors[index];
+        return env.DB.prepare(
+          "UPDATE kb_chunks SET embedding = ?, dim = ?, model = ? WHERE id = ?"
+        ).bind(encodeEmbedding(vec), vec.length, model, row.id);
+      });
+      await runBatched(env, statements, 10);
+      updated += batch.length;
+    }
+  } catch (e) {
+    logError("重建知识库索引失败：", e);
+    return { ok: false, updated, remaining: rows.length - updated, error: String(e?.message || e) };
+  }
+
+  const remainRes = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM kb_chunks WHERE ${where}`
+  ).bind(model).first();
+
+  return { ok: true, updated, remaining: Number(remainRes?.n) || 0 };
+}
+
+/**
+ * 调整文档的生效范围。
+ * @param {"global"|"scene"} target global = 所有场景可见；scene = 只在本群可见（需要 scopeKey）
+ */
+export async function moveDocumentScope(env, docId, target, scopeKey = null) {
+  if (!env?.DB) return { ok: false, error: "未绑定数据库" };
+  const doc = await getDocumentRow(env, docId);
+  if (!doc) return { ok: false, error: "文档不存在" };
+
+  const nextScope = target === "global" ? KB_GLOBAL_SCOPE : String(scopeKey || "").trim();
+  if (!nextScope) return { ok: false, error: "缺少目标群标识" };
+
+  await env.DB.batch([
+    env.DB.prepare("UPDATE kb_docs SET scope_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(nextScope, docId),
+    env.DB.prepare("UPDATE kb_chunks SET scope_key = ? WHERE doc_id = ?").bind(nextScope, docId)
+  ]);
+
+  return { ok: true, scopeKey: nextScope };
+}
+
+/** 把文档复制一份到另一个作用域（内容与向量一起复制） */
+export async function copyDocumentToScope(env, docId, scopeKey, createdBy = "") {
+  if (!env?.DB) return { ok: false, error: "未绑定数据库" };
+  const doc = await getDocumentRow(env, docId);
+  if (!doc) return { ok: false, error: "文档不存在" };
+
+  const res = await env.DB.prepare(
+    `INSERT INTO kb_docs (scope_key, title, source, content, enabled, chunk_count, created_by)
+     VALUES (?, ?, ?, ?, 1, ?, ?)`
+  ).bind(
+    String(scopeKey), `${doc.title}`, doc.source || "", doc.content,
+    Number(doc.chunk_count) || 0, String(createdBy || "")
+  ).run();
+  const newId = Number(res?.meta?.last_row_id) || null;
+  if (!newId) return { ok: false, error: "复制失败" };
+
+  await env.DB.prepare(
+    `INSERT INTO kb_chunks (doc_id, scope_key, seq, content, dim, embedding, model)
+     SELECT ?, ?, seq, content, dim, embedding, model FROM kb_chunks WHERE doc_id = ?`
+  ).bind(newId, String(scopeKey), docId).run();
+
+  return { ok: true, id: newId, scopeKey: String(scopeKey) };
 }

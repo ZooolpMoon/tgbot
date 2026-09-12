@@ -23,7 +23,8 @@ import { renderBannedListMenu, handleUnban } from "../admin/user-banned.js";
 import {
   renderKnowledgeHome, renderDocumentList, renderDocumentDetail,
   startAddDocument, startKnowledgeTest, handleDocumentToggle,
-  handleDocumentDelete, handleDocumentDeleteConfirm
+  handleDocumentDelete, handleDocumentDeleteConfirm,
+  handleKnowledgeReindex, handleDocPromote, handleDocCopy
 } from "../admin/knowledge.js";
 import {
   renderUserEditMenu,
@@ -34,6 +35,7 @@ import {
 import { renderAdminMainMenu, renderUserManageMenu } from "../admin/menus.js";
 import { renderAdminStats } from "../admin/stats.js";
 import { renderAdminLogs } from "../admin/logs.js";
+import { renderUserDetail } from "../admin/user-detail.js";
 import { renderUserPtsMenu, handleModPoints } from "../admin/user-points.js";
 import { renderUserPointsLogMenu } from "../admin/user-points-log.js";
 import { renderUserLimitMenu, handleModLimit } from "../admin/user-limit.js";
@@ -80,6 +82,7 @@ import { upsertUserInfo, isUserBlocked } from "../services/users.js";
 import { isFeatureEnabled } from "../services/features.js";
 import { logError } from "../core/logger.js";
 import { handleGuardCallback } from "../admin/guard.js";
+import { handleAppealCallback } from "../admin/guard.js";
 import { handleGuardPanelCallback } from "../admin/guard-panel.js";
 
 /**
@@ -250,6 +253,12 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // ==========================================
   if (data.startsWith(ADMIN_CALLBACK.GUARD_PREFIX)) {
     await handleGuardCallback({ env, ctx, token, chatId, callback, data, myId, msgId });
+    return;
+  }
+
+  // 申诉卡片（可能发到管理员私聊或群里的管理员）——同样放在管理员校验之前
+  if (data.startsWith("appeal_")) {
+    await handleAppealCallback({ env, token, callback, data, myId, chatId, msgId });
     return;
   }
 
@@ -430,7 +439,16 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       await answerCallback(token, callback.id, `文档第 ${page} 页`);
     }
     else if (data.startsWith(ADMIN_CALLBACK.KB_TOGGLE_PREFIX)) {
-      await handleDocumentToggle({ env, token, callback, chatId, msgId, data, adminId: fromId });
+      await handleDocumentToggle({ env, token, callback, chatId, msgId, data, uctx, adminId: fromId });
+    }
+    else if (data === ADMIN_CALLBACK.KB_REINDEX) {
+      await handleKnowledgeReindex({ env, token, callback, chatId, msgId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.KB_PROMOTE_PREFIX)) {
+      await handleDocPromote({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.KB_COPY_PREFIX)) {
+      await handleDocCopy({ env, token, callback, chatId, msgId, data, uctx, adminId: fromId });
     }
     else if (data.startsWith(ADMIN_CALLBACK.KB_DELOK_PREFIX)) {
       await handleDocumentDeleteConfirm({ env, token, callback, chatId, msgId, data, uctx, adminId: fromId });
@@ -441,7 +459,7 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     else if (data.startsWith(ADMIN_CALLBACK.KB_DOC_PREFIX)) {
       const docId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.KB_DOC_PREFIX, ""), 10);
       if (Number.isInteger(docId)) {
-        await renderDocumentDetail(token, env, chatId, msgId, docId);
+        await renderDocumentDetail(token, env, chatId, msgId, docId, uctx);
         await answerCallback(token, callback.id, `文档 #${docId}`);
       } else {
         await answerCallback(token, callback.id, "⚠️ 文档参数无效", true);
@@ -470,6 +488,11 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     }
 
     // ---------- 场景编辑 ----------
+    else if (data.startsWith("admin_detail_")) {
+      const rowId = Number.parseInt(data.replace("admin_detail_", ""), 10);
+      await renderUserDetail(token, env, chatId, msgId, rowId);
+      await answerCallback(token, callback.id, "用户详情");
+    }
     else if (data.startsWith(ADMIN_CALLBACK.MANAGE_USER_PREFIX)) {
       const rowId = parseInt(data.replace(ADMIN_CALLBACK.MANAGE_USER_PREFIX, ""), 10);
       await renderUserEditMenu(token, env, chatId, msgId, rowId);
@@ -525,6 +548,15 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     }
 
     // ---------- 操作日志 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.LOGS_FILTER_PREFIX)) {
+      // 形如 admin_logs_f_guard_2
+      const raw = String(data).replace(ADMIN_CALLBACK.LOGS_FILTER_PREFIX, "");
+      const sep = raw.lastIndexOf("_");
+      const filter = sep === -1 ? raw : raw.slice(0, sep);
+      const page = Number.parseInt(sep === -1 ? "1" : raw.slice(sep + 1), 10) || 1;
+      await renderAdminLogs(token, env, chatId, msgId, page, filter);
+      await answerCallback(token, callback.id, `${filter} 第 ${page} 页`);
+    }
     else if (data.startsWith(ADMIN_CALLBACK.LOGS_PREFIX)) {
       const page = parseInt(data.replace(ADMIN_CALLBACK.LOGS_PREFIX, ""), 10) || 1;
       await renderAdminLogs(token, env, chatId, msgId, page);

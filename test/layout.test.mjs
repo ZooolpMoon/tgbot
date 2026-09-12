@@ -24,6 +24,8 @@ import { getTaskListKeyboard } from "../src/admin/tasks.js";
 import { getKnowledgeHomeKeyboard, getDocumentListKeyboard } from "../src/admin/knowledge.js";
 import { getGuardCardKeyboard } from "../src/admin/guard.js";
 import { getGuardPanelKeyboard, getGuardHistoryKeyboard } from "../src/admin/guard-panel.js";
+import { getAppealCardKeyboard } from "../src/admin/guard.js";
+import { getLogFilterKeyboard } from "../src/admin/logs.js";
 
 import { getShopAdminHomeKeyboard, getShopAdminItemsKeyboard, getShopAdminOrdersKeyboard } from "../src/shop/admin.js";
 import { getShopHomeKeyboard, getMyOrdersKeyboard } from "../src/shop/index.js";
@@ -190,6 +192,30 @@ test("群规面板与处置记录排版紧凑", () => {
   assert.ok(off.inline_keyboard.flat().some((b) => b.text.includes("开启执法")));
 
   assertCompact(getGuardHistoryKeyboard([], 1, 1), { maxRows: 2, label: "处置记录" });
+});
+
+test("处置记录带撤销按钮时也不超过 8 行", () => {
+  const rows = Array.from({ length: 5 }, (_, i) => ({
+    id: i + 1, action: "mute", status: i === 4 ? "cancelled" : "done", user_label: `用户${i}`
+  }));
+  const kb = getGuardHistoryKeyboard(rows, 1, 1);
+  assertCompact(kb, { maxRows: 8, label: "处置记录（含撤销）" });
+  // 已取消的那条不给撤销按钮
+  assert.equal(kb.inline_keyboard.filter((r) => r[0].callback_data.startsWith("admin_guard_rev_")).length, 4);
+});
+
+test("申诉卡片：撤销 / 驳回两列一行", () => {
+  const kb = getAppealCardKeyboard(7);
+  assertCompact(kb, { maxRows: 1, label: "申诉卡片" });
+  assert.deepEqual(kb.inline_keyboard[0].map((b) => b.callback_data), ["appeal_ok_7", "appeal_no_7"]);
+});
+
+test("操作日志筛选菜单：7 个筛选项 + 翻页 + 返回不超过 6 行", () => {
+  const kb = getLogFilterKeyboard("guard", 1, 3);
+  assertCompact(kb, { maxRows: 6, label: "日志筛选" });
+  const flat = kb.inline_keyboard.flat();
+  assert.ok(flat.some((b) => b.text.startsWith("✅") && b.text.includes("执法")), "当前筛选要有标记");
+  assert.ok(flat.some((b) => b.callback_data === "admin_logs_f_guard_2"), "翻页要带上筛选条件");
 });
 
 test("功能开关首页：三级入口都是两列网格", () => {

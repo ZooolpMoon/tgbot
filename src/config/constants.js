@@ -147,6 +147,14 @@ export const ADMIN_CALLBACK = {
   GUARD_MUTE_PREFIX: "admin_guard_mute_",
   GUARD_TOGGLE: "admin_guard_toggle",
   GUARD_HISTORY_PREFIX: "admin_guard_hist_",
+  GUARD_ALERT_TOGGLE: "admin_guard_alert",
+  GUARD_ALERT_KEYWORDS: "admin_guard_keywords",
+  GUARD_VERSIONS_PREFIX: "admin_guard_ver_",
+  GUARD_VERSION_RESTORE_PREFIX: "admin_guard_vr_",
+  GUARD_REVOKE_PREFIX: "admin_guard_rev_",
+  // 申诉卡片（发给管理员私聊）
+  APPEAL_OK_PREFIX: "appeal_ok_",
+  APPEAL_NO_PREFIX: "appeal_no_",
   MANAGE_USER_PREFIX: "admin_manage_user_",
   MENU_PTS_PREFIX: "admin_menu_pts_",
   MODPTS_PREFIX: "admin_modpts_",
@@ -187,6 +195,12 @@ export const ADMIN_CALLBACK = {
   KB_TOGGLE_PREFIX: "admin_kb_t_",
   KB_DEL_PREFIX: "admin_kb_d_",
   KB_DELOK_PREFIX: "admin_kb_dok_",
+  KB_REINDEX: "admin_kb_reindex",
+  KB_PROMOTE_PREFIX: "admin_kb_promote_",
+  KB_COPY_PREFIX: "admin_kb_copy_",
+
+  // ---------- 📋 操作日志筛选 ----------
+  LOGS_FILTER_PREFIX: "admin_logs_f_",
 
   BROADCAST_CONFIRM: "admin_broadcast_confirm",
   BROADCAST_CANCEL: "admin_broadcast_cancel",
