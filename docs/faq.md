@@ -122,7 +122,7 @@ npm.cmd test
 <details>
 <summary><b>能不能改成「理由通过就直接执行」不点确认？</b></summary>
 
-可以，改 `src/admin/guard.js` 的 `sendOrReject`（把弹卡片改成直接执行）。但不建议：确认卡片是误伤的主要防线。若确实想省一步，可以只对「禁言」放开，保留封禁与踢出的确认。
+可以，改 `src/admin/guard.js` 的 `requestPunishmentFromCommand`（在 `requestPunishment` 之前直接调 `executePunishment`）。但不建议：确认卡片是误伤的主要防线。若确实想省一步，可以只对「禁言」放开，保留封禁与踢出的确认。
 
 </details>
 

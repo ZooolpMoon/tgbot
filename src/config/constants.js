@@ -182,6 +182,14 @@ export const ADMIN_CALLBACK = {
   FEATURES_SCENE_PREFIX: "admin_feat_s_",
   FEATURES_RESET_PREFIX: "admin_feat_r_",
   FEATURE_TOGGLE_PREFIX: "admin_feat_t_",
+
+  // ---------- 🗑️ 消息自动删除 ----------
+  // 首页 admin_autodel；o_ = 切换范围；k_ = 某一类；s_ = 写入时长
+  AUTO_DELETE_HOME: "admin_autodel",
+  AUTO_DELETE_SCOPE_PREFIX: "admin_autodel_o_",
+  AUTO_DELETE_KIND_PREFIX: "admin_autodel_k_",
+  AUTO_DELETE_SET_PREFIX: "admin_autodel_s_",
+
   TASKS_PREFIX: "admin_tasks",
   TASK_ADD: "admin_task_add",
   TASK_BONUS: "admin_task_bonus",

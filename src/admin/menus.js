@@ -27,6 +27,7 @@ export function getAdminMainKeyboard(showShop = true) {
     { text: "🎟️ 兑换码", callback_data: "admin_codes_1" },
     { text: "✅ 每日任务", callback_data: "admin_tasks" },
     { text: "⚙️ 功能开关", callback_data: "admin_feat_home" },
+    { text: "🗑️ 自动删除", callback_data: ADMIN_CALLBACK.AUTO_DELETE_HOME },
     { text: "📋 操作日志", callback_data: "admin_logs_1" },
     { text: "📊 运行状态", callback_data: "admin_status" },
     { text: "📈 使用统计", callback_data: "admin_stats" },
@@ -42,7 +43,7 @@ export function getAdminMainKeyboard(showShop = true) {
 const MENU_TEXT =
   `👑 <b>管理员控制台</b>\n` +
   `-------------------------\n` +
-  `用户管理 · 商城与兑换码 · 每日任务 · 功能开关 · 日志统计`;
+  `用户管理 · 商城与兑换码 · 每日任务 · 功能开关 · 自动删除 · 日志统计`;
 
 /** 二级菜单：用户管理（私聊用户 / 群组用户） */
 export function getUserManageKeyboard() {

@@ -46,6 +46,7 @@ export function buildCommandMenu({ includeAdmin = false, inGroup = false } = {})
   for (const cmd of COMMANDS) {
     if (!includeAdmin && cmd.scope === "admin") continue;
     if (inGroup && cmd.privateOnly) continue;
+    if (!inGroup && cmd.groupOnly) continue;
     const item = normalizeCommand(cmd);
     if (item) list.push(item);
   }

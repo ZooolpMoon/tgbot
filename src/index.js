@@ -69,7 +69,7 @@ export default {
   async scheduled(event, env, ctx) {
     try {
       await ensureSchema(env);
-      const task = runScheduledTasks(env, env.BOT_TOKEN);
+      const task = runScheduledTasks(env, env.BOT_TOKEN, ctx);
       if (ctx?.waitUntil) ctx.waitUntil(task);
       else await task;
     } catch (e) {

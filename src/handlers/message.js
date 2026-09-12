@@ -5,6 +5,10 @@
 // 3. 指令 → 命令注册表（权限 / 仅私聊 / 功能开关都在注册表里判定）
 // 4. 非指令 → AI 对话
 //
+// 处置类动作（封禁 / 踢出 / 禁言 / 举报 / 申诉）一律要求 /指令，
+// 不再从自然语言里猜意图——「封禁」「拉黑」这类词在正常聊天里太常见，
+// 靠关键词拦截会把普通发言误当成指令（见 AGENTS.md）。
+//
 // 注意各段判断的先后顺序：引导式输入必须排在指令分发之前，
 // 否则用户正在填写的表单内容会被当成未知指令丢掉。
 // ==========================================
@@ -25,11 +29,7 @@ import { logError } from "../core/logger.js";
 import {
   ingestUploadedDocument, isKnowledgeGuideActive, handleKnowledgeInput, cancelKnowledgeGuide
 } from "../admin/knowledge.js";
-import { looksLikeGuardCommand } from "../services/guard.js";
-import {
-  handleGuardRequest, handleReportRequest, looksLikeReport,
-  handleAppealRequest, handleKeywordAlert
-} from "../admin/guard.js";
+import { handleKeywordAlert } from "../admin/guard.js";
 import { isGuardGuideActive, handleGuardGuideInput, cancelGuardGuide } from "../admin/guard-panel.js";
 
 /** 处理 message / edited_message 更新 */
@@ -100,7 +100,7 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
         if (env.DB) {
           try {
             await handleKeywordAlert({
-              env, token, chatId, uctx, message, rawText: originalText, myId
+              env, token, chatId, uctx, message, rawText: originalText, myId, ctx
             });
           } catch (e) {
             logError("关键词预警失败：", e);
@@ -145,33 +145,30 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
 
   // ---------- 封禁校验（管理员不受限）----------
   if (userConfig.blocked && !isMaster) {
-    await sendAutoDelete(token, chatId, ERR.BLOCKED, null, isGroupCtx, ctx);
+    await sendAutoDelete(token, chatId, ERR.BLOCKED, null, isGroupCtx, ctx, {
+      kind: "cmd", env, sceneKey
+    });
     return;
-  }
-
-  // ---------- 群规执法：群里 @机器人 说「封禁 @某人 发广告」----------
-  // 放在封禁校验之后：被封禁的用户即便自称管理员也进不来
-  if (isGroupCtx && isMentioned && looksLikeGuardCommand(originalText)) {
-    const handled = await handleGuardRequest({
-      env, token, chatId, uctx, message, rawText: originalText, myId, isGroupCtx
-    });
-    if (handled) return;
-  }
-
-  // ---------- 成员举报：回复违规消息 + @机器人 说「举报 …」----------
-  if (isGroupCtx && isMentioned && !isMaster && looksLikeReport(originalText)) {
-    const handled = await handleReportRequest({
-      env, token, chatId, uctx, message, rawText: originalText, isMaster, myId
-    });
-    if (handled) return;
   }
 
   const command = userText.split(/\s+/)[0].split("@")[0].toLowerCase();
   const botMention = botUsername ? `@${botUsername}` : "Bot";
 
-  // 指令处理用的复合上下文：`ctx` 字段是 Worker 原生 ctx（sendAutoDelete 会从中取 waitUntil）
+  // 指令处理用的复合上下文：`ctx` 字段既能取到 Worker 的 waitUntil，
+  // 也带上 env / sceneKey —— sendAutoDelete 靠它按场景查「自动删除」设置。
+  // （原生 ExecutionContext 挂在 .ctx 上，方便需要原始对象时取用）
+  const workerCtx = ctx;
+  const sceneCtx = {
+    env,
+    sceneKey,
+    ctx: workerCtx,
+    waitUntil: typeof workerCtx?.waitUntil === "function"
+      ? (promise) => workerCtx.waitUntil(promise)
+      : undefined
+  };
+
   const baseCtx = {
-    env, ctx, token, chatId, userKey, sceneKey,
+    env, ctx: sceneCtx, token, chatId, userKey, sceneKey,
     uctx, userConfig, isGroupCtx, isMaster,
     firstName, username, rawText: userText, command, botMention,
     myId,
@@ -246,7 +243,9 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   if (await dispatchCommand(userText, baseCtx)) return;
 
   if (userText.startsWith("/")) {
-    await sendAutoDelete(token, chatId, ERR.UNKNOWN_CMD, null, isGroupCtx, ctx);
+    await sendAutoDelete(token, chatId, ERR.UNKNOWN_CMD, null, isGroupCtx, ctx, {
+      kind: "cmd", env, sceneKey
+    });
     return;
   }
 
@@ -255,24 +254,18 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   if (isGroupCtx && !isMaster) {
     try {
       await handleKeywordAlert({
-        env, token, chatId, uctx, message, rawText: originalText, myId
+        env, token, chatId, uctx, message, rawText: originalText, myId, ctx
       });
     } catch (e) {
       logError("关键词预警失败：", e);
     }
   }
 
-  // 私聊里的自然语言申诉：直接说「申诉 …」也能用
-  if (!isGroupCtx && /^申诉/.test(userText)) {
-    const handled = await handleAppealRequest({ env, token, chatId, uctx, rawText: userText });
-    if (handled) return;
-  }
-
   if (!(await isFeatureEnabled(env, sceneKey, "ai"))) {
     await sendAutoDelete(
       token, chatId,
       `⚠️ 本场景已关闭「${featureLabel("ai")}」，如需使用请联系管理员。`,
-      null, isGroupCtx, ctx
+      null, isGroupCtx, ctx, { kind: "cmd", env, sceneKey }
     );
     return;
   }

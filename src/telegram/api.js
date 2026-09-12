@@ -108,10 +108,14 @@ export function sendMessageWithKeyboard(token, chatId, text, replyMarkup, parseM
   return postJSON(`${BASE(token)}/sendMessage`, body);
 }
 
-/** 发送消息并返回 message_id（群聊自动删除功能依赖它） */
-export async function sendMessageGetId(token, chatId, text, parseMode = null) {
+/**
+ * 发送消息并返回 message_id（群聊自动删除功能依赖它）。
+ * 可选 replyMarkup：带按钮的卡片也要能自动删除时用。
+ */
+export async function sendMessageGetId(token, chatId, text, parseMode = null, replyMarkup = null) {
   const body = { chat_id: chatId, text };
   if (parseMode) body.parse_mode = parseMode;
+  if (replyMarkup) body.reply_markup = replyMarkup;
   const json = await postJSON(`${BASE(token)}/sendMessage`, body);
   if (json && json.ok && json.result && json.result.message_id) {
     return json.result.message_id;

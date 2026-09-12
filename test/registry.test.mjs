@@ -71,9 +71,10 @@ test("帮助文案由命令表生成，且按身份/场景裁剪", () => {
   assert.match(adminPrivate, /\/broadcast/);
   assert.match(adminPrivate, /\/code_new/);
 
-  // 每个命令的说明都应该出现在管理员版帮助里
+  // 每个命令的说明都应该出现在对应场景的帮助里
   for (const cmd of COMMANDS) {
-    assert.ok(adminPrivate.includes(cmd.name), `帮助里缺少 ${cmd.name}`);
+    const target = cmd.groupOnly ? userGroup : adminPrivate;
+    assert.ok(target.includes(cmd.name), `帮助里缺少 ${cmd.name}`);
   }
 });
 
@@ -82,5 +83,29 @@ test("帮助文案会转义 usage 里的尖括号占位符（否则会被 Telegr
   const withoutAllowedTags = html.replace(/<\/?(code|b|i)>/g, "");
   assert.doesNotMatch(withoutAllowedTags, /<[^>]*>/, "不应残留会被误解析的标签");
   assert.match(html, /&lt;群ID&gt;/, "占位符应以实体形式出现");
-  assert.match(html, /&lt;兑换码&gt;/);
+ assert.match(html, /&lt;兑换码&gt;/);
+});
+
+test("处置类指令：只认 /指令，且本群管理员也能在群里用", () => {
+  const byName = Object.fromEntries(COMMANDS.map((c) => [c.name, c]));
+
+  // 群规处置只提供指令入口，帮助文案里不再宣传自然语言
+  const groupHelp = buildHelpText({ isMaster: false, isGroupCtx: true });
+  assert.match(groupHelp, /\/report/);
+  assert.match(groupHelp, /不猜自然语言/);
+
+  // /report 是群成员可用的举报入口：仅群聊 + 受执法开关控制
+  assert.equal(byName["/report"].scope, undefined, "举报不是管理员命令");
+  assert.equal(byName["/report"].groupOnly, true, "举报只能在群里用");
+  assert.equal(byName["/report"].feature, "guard");
+
+  // 处置指令标了 groupAdmin：本群管理员无需机器人管理员身份也能用
+  for (const name of ["/ban", "/unban", "/kick", "/groupban", "/mute", "/unmute", "/rules"]) {
+    assert.equal(byName[name].groupAdmin, true, `${name} 应允许本群管理员使用`);
+  }
+  assert.equal(byName["/guard"].groupAdmin, undefined, "群规面板仍只给机器人管理员");
+  assert.equal(byName["/setrules"].groupAdmin, undefined, "改群规仍只给机器人管理员");
+
+  // 群聊帮助里不应出现仅私聊的指令
+  assert.doesNotMatch(buildHelpText({ isMaster: false, isGroupCtx: true }), /\/shop /);
 });

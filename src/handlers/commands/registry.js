@@ -33,8 +33,9 @@ import { cmdKb } from "./kb.js";
 import {
   cmdBan, cmdUnban, cmdKick, cmdMute, cmdUnmute, cmdGroupBan, cmdRules, cmdSetRules
 } from "./ban.js";
-import { cmdGuard, cmdAppeal } from "./guard.js";
+import { cmdGuard, cmdAppeal, cmdReport } from "./guard.js";
 import { cmdSyncMenu } from "./system.js";
+import { isGroupAdmin } from "../../services/guard.js";
 import { cmdShopEdit } from "../../shop/edit.js";
 import { startAddItem, cancelAddItem } from "../../shop/add.js";
 import {
@@ -151,39 +152,51 @@ export const COMMANDS = [
   },
   {
     name: "/ban", scope: "admin",
+    groupAdmin: true, feature: "guard",
     desc: "封禁用户（群里：@某人 + 理由，需确认）", usage: "/ban <用户ID|@某人> [理由]", handle: cmdBan
   },
   {
     name: "/unban", scope: "admin",
+    groupAdmin: true, feature: "guard",
     desc: "解除封禁（机器人 + 群）", usage: "/unban <用户ID|@某人>", handle: cmdUnban
   },
   {
     name: "/kick", scope: "admin",
+    groupAdmin: true, feature: "guard",
     desc: "踢出群组（可重新加入，需理由）", usage: "/kick <@某人> <理由>", handle: cmdKick
   },
   {
     name: "/groupban", aliases: ["/gban"], scope: "admin",
+    groupAdmin: true, feature: "guard",
     desc: "群内封禁（不可重新加入，需理由）", usage: "/groupban <@某人> <理由>", handle: cmdGroupBan
   },
   {
     name: "/mute", scope: "admin",
+    groupAdmin: true, feature: "guard",
     desc: "群内禁言（支持时长，需理由）", usage: "/mute <@某人> [时长] <理由>", handle: cmdMute
   },
   {
     name: "/unmute", scope: "admin",
+    groupAdmin: true, feature: "guard",
     desc: "解除群内禁言", usage: "/unmute <@某人>", handle: cmdUnmute
   },
   {
     name: "/rules", scope: "admin",
+    groupAdmin: true, feature: "guard",
     desc: "查看本群群规与可识别的违规类型", handle: cmdRules
+  },
+  {
+    name: "/report", aliases: ["/jubao"], groupOnly: true, feature: "guard",
+    desc: "举报违规（先回复对方的消息）", usage: "/report <违规现象>", handle: cmdReport,
+    groupHint: "📣 举报请在<b>群里</b>使用：先回复违规消息，再发 <code>/report 发广告</code>。"
   },
   {
     name: "/guard", scope: "admin",
     desc: "群规执法面板（群里：编辑群规 / 默认处置 / 处置记录）", handle: cmdGuard
   },
   {
-    name: "/appeal", aliases: ["/shensu"], privateOnly: true,
-    desc: "对处置提出申诉（仅私聊）", usage: "/appeal <申诉理由>", handle: cmdAppeal,
+    name: "/appeal", aliases: ["/shensu"], privateOnly: true, feature: "guard",
+    desc: "对处置提出申诉（仅私聊，只走指令）", usage: "/appeal <申诉理由>", handle: cmdAppeal,
     privateHint: "🙋 申诉请私聊机器人，避免在群里公开。"
   },
   {
@@ -257,15 +270,22 @@ export async function dispatchCommand(text, ctx) {
   const cmd = resolveCommand(text);
   if (!cmd) return false;
 
-  const { env, ctx: workerCtx, token, chatId, sceneKey, isGroupCtx, isMaster } = ctx;
+  const { env, ctx: workerCtx, token, chatId, sceneKey, isGroupCtx, isMaster, uctx } = ctx;
 
   // 1) 管理员权限
+  // 带 groupAdmin 标记的指令，本群管理员（creator / administrator）也能用，
+  // 否则「群里处置」这个能力就只剩机器人管理员一个人能用了。
   if (cmd.scope === "admin") {
-    if (!isMaster) {
+    const localGroupAdmin = !isMaster && cmd.groupAdmin && isGroupCtx && env?.DB
+      ? await isGroupAdmin(token, chatId, uctx?.userId)
+      : false;
+
+    if (!isMaster && !localGroupAdmin) {
       await sendAutoDelete(token, chatId, ERR.PERMISSION_DENIED, null, isGroupCtx, workerCtx);
       return true;
     }
-    if (cmd.needsUnlock !== false && !(await checkAdminUnlocked(env, isMaster, chatId))) {
+    // 解锁只针对机器人管理员；本群管理员没有 /admin 会话，不需要（也无法）解锁
+    if (isMaster && cmd.needsUnlock !== false && !(await checkAdminUnlocked(env, isMaster, chatId))) {
       await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, workerCtx);
       return true;
     }
@@ -274,6 +294,13 @@ export async function dispatchCommand(text, ctx) {
   // 2) 仅私聊
   if (cmd.privateOnly && isGroupCtx) {
     const hint = typeof cmd.privateHint === "function" ? cmd.privateHint(ctx) : (cmd.privateHint || "该功能仅支持私聊。");
+    await sendAutoDelete(token, chatId, hint, "HTML", isGroupCtx, workerCtx);
+    return true;
+  }
+
+  // 2.5) 仅群聊
+  if (cmd.groupOnly && !isGroupCtx) {
+    const hint = cmd.groupHint || "该指令仅支持在<b>群里</b>使用。";
     await sendAutoDelete(token, chatId, hint, "HTML", isGroupCtx, workerCtx);
     return true;
   }
@@ -301,6 +328,7 @@ export function buildHelpText({ isMaster, isGroupCtx }) {
   const visible = COMMANDS.filter((c) => {
     if (c.scope === "admin") return isMaster;
     if (c.privateOnly) return !isGroupCtx;
+    if (c.groupOnly) return isGroupCtx;
     return true;
   });
 
@@ -330,11 +358,13 @@ export function buildHelpText({ isMaster, isGroupCtx }) {
   text += `\n💡 <b>${isGroupCtx ? "群聊" : "私聊"}规则</b>\n`;
   if (isGroupCtx) {
     text += `• 只有 <b>@我</b> 或使用 <b>/指令</b> 时才会回复\n`;
-    text += `• 群聊里大部分 /指令消息 <b>5 秒后自动删除</b>\n`;
+    text += `• 处置违规请用 <code>/ban</code>、<code>/mute</code>、<code>/report</code> 等指令，机器人不猜自然语言\n`;
+    text += `• 群聊里的指令回执默认 <b>5 秒后自动删除</b>，管理员可在「🗑️ 自动删除」里按消息类型调整\n`;
     text += `• <code>/points</code>、<code>/rank</code> 等带按钮的卡片会保留，方便翻页\n`;
     text += `• 🛒 商城、🎟️ 兑换码 <b>仅支持私聊使用</b>\n`;
   } else {
     text += `• 私聊消息会正常保留\n`;
+    text += `• 申诉请用 <code>/appeal 理由</code>\n`;
     text += `• 🛒 商城、🎟️ 兑换码在私聊里完全可用\n`;
   }
   text += `• 每次 AI 对话消耗 <b>1 积分</b>（私聊与群聊共用同一份积分）\n`;

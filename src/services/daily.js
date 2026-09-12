@@ -10,11 +10,26 @@
 
 import { getDateKey, shiftDateKey } from "./time.js";
 import { sendMessageWithKeyboard, sendMessage } from "../telegram/api.js";
+import { sendAutoDelete } from "../telegram/auto-delete.js";
 import { resolveAdminChatId } from "../shop/notify.js";
 import { escapeHtml } from "../utils/html.js";
 import { logError, logInfo } from "../core/logger.js";
 import { expirePunishments, ACTIONS, formatDuration } from "./guard.js";
 import { reindexKnowledge } from "./knowledge.js";
+
+/**
+ * 定时推送也可能发到群里（`ADMIN_NOTIFY_CHAT_ID` 配置成群时），
+ * 这里按目标会话套用「系统通知」的自动删除设置；私聊保持不删。
+ */
+function deliverPush({ token, env, ctx = null, chatId, text, keyboard = null }) {
+  const isGroup = String(chatId || "").startsWith("-");
+  return sendAutoDelete(token, chatId, text, "HTML", isGroup, ctx, {
+    kind: "notice",
+    env,
+    sceneKey: isGroup ? `group:${chatId}` : null,
+    keyboard
+  });
+}
 
 /**
  * 清理过期数据（引导会话、草稿、过期兑换码）。
@@ -130,7 +145,7 @@ export async function collectDailySummary(env) {
 /**
  * 定时任务总入口：清理 → 汇总 → 给管理员推送概况（未配置管理员时只清理）。
  */
-export async function runScheduledTasks(env, token) {
+export async function runScheduledTasks(env, token, ctx = null) {
   const cleanup = await cleanupStaleData(env);
   const summary = await collectDailySummary(env);
 
@@ -150,7 +165,7 @@ export async function runScheduledTasks(env, token) {
 
   // 到期通知：限时禁言/封禁由 Telegram 自动解除，这里补一条公告 + 私聊当事人
   if (token && expiredList.length > 0) {
-    await notifyExpiredPunishments(token, expiredList);
+    await notifyExpiredPunishments(token, expiredList, env, ctx);
   }
 
   const adminChat = resolveAdminChatId(env);
@@ -197,7 +212,9 @@ export async function runScheduledTasks(env, token) {
   };
 
   try {
-    await sendMessageWithKeyboard(token, adminChat, lines.join("\n"), keyboard, "HTML");
+    await deliverPush({
+      token, env, ctx, chatId: adminChat, text: lines.join("\n"), keyboard
+    });
     return { cleanup: cleanupCounts, summary, reindex, notified: true };
   } catch (e) {
     logError("发送每日概况失败：", e);
@@ -209,17 +226,17 @@ export async function runScheduledTasks(env, token) {
  * 临时处置到期的通知：群里公告一句，同时私聊当事人。
  * 单个失败不影响其它记录。
  */
-async function notifyExpiredPunishments(token, rows) {
+async function notifyExpiredPunishments(token, rows, env = null, ctx = null) {
   for (const row of rows) {
     const action = ACTIONS[row.action]?.short || row.action;
     const name = row.user_label || row.user_id;
     try {
-      await sendMessage(
-        token, row.chat_id,
-        `⌛ <b>处置已到期</b>\n-------------------------\n` +
-        `👤 ${escapeHtml(name)} 的${action}（${formatDuration(row.duration_min)}）已自动解除。`,
-        "HTML"
-      );
+      await deliverPush({
+        token, env, ctx, chatId: row.chat_id,
+        text:
+          `⌛ <b>处置已到期</b>\n-------------------------\n` +
+          `👤 ${escapeHtml(name)} 的${action}（${formatDuration(row.duration_min)}）已自动解除。`
+      });
     } catch (e) {
       logError("发送处置到期公告失败：", e);
     }

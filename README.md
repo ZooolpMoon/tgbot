@@ -4,7 +4,7 @@
 
 全部跑在 **Cloudflare Workers** 上——不需要服务器、不需要常驻进程、不需要数据库运维，数据保存在你自己的 Cloudflare 账号里。
 
-> 当前版本 **v2.7.0** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
+> 当前版本 **v2.8.0** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
 
 ---
 
@@ -42,13 +42,13 @@
 |------|--------|------|------|
 | 🤖 AI 对话 | 多模型自动回退、上下文预算、积分计费、失败自动退款 | 私聊直接说，群里 @ 机器人 | [功能详解](docs/features.md) |
 | 📚 知识库问答（RAG） | 上传群规 / 手册 / FAQ，AI 先检索再回答并标注来源 | `/kb` 或后台 → 📚 知识库 | [知识库](docs/knowledge-base.md) |
-| 🛡️ 群规执法 | 群里 @ 机器人说「封禁 @某人 发广告」，先校验理由再执行；支持踢出 / 群封 / 限时禁言 / 申诉 / 预警 | 群里自然语言，或 `/guard` 面板 | [群规执法](docs/group-guard.md) |
+| 🛡️ 群规执法 | 用指令处置违规（先校验理由再执行）；支持踢出 / 群封 / 限时禁言 / 举报 / 申诉 / 预警 | 群里 `/ban` `/mute` 等，或 `/guard` 面板 | [群规执法](docs/group-guard.md) |
 | 🪙 积分体系 | 全局共享积分、流水、排行榜、管理员增减与封禁 | `/points`、`/rank` | [功能详解](docs/features.md) |
 | 📅 签到与每日任务 | 连续签到奖励递增；任务由管理员引导式增删改 | `/checkin`、`/tasks` | [功能详解](docs/features.md) |
 | 🎮 小游戏 | 骰子猜大小、老虎机、抛硬币、幸运转盘 | `/game` | [功能详解](docs/features.md) |
 | 🛒 积分商城 | 商品上下架、限购、下单备注、订单状态机、取消自动退款 | `/shop`（仅私聊） | [功能详解](docs/features.md) |
 | 🎟️ 兑换码 | 批量生成、次数与有效期控制、每人限兑一次 | `/code_new`、`/redeem` | [功能详解](docs/features.md) |
-| 👑 管理后台 | 用户管理、群组浏览、封禁名单、知识库、群规、功能开关、审计日志、群发 | `/admin` | [后台导览](docs/admin-console.md) |
+| 👑 管理后台 | 用户管理、群组浏览、封禁名单、知识库、群规、功能开关、消息自动删除、审计日志、群发 | `/admin` | [后台导览](docs/admin-console.md) |
 | ⏰ 定时任务 | 清理过期会话、推送每日概况、维护知识库索引、处置到期通知 | Cron Trigger | [部署与运维](docs/deployment.md) |
 
 几个具体的使用画面：
@@ -57,14 +57,17 @@
 群成员：@YourBot 退货怎么处理？
 Bot  ：AI 先检索群知识库 → 命中「售后政策」→ 依据资料回答并标注来源
 
-管理员：@YourBot 封禁 @某人 发广告刷屏
+管理员：（回复违规消息）/ban 发广告刷屏
 Bot  ：理由校验通过（违规类型「广告 / 推广引流」）→ 给管理员一张确认卡片
 管理员：点「✅ 确认执行」（或一键改成禁言 / 踢出）
 Bot  ：执行 + 群里公告 + 私聊当事人 + 写入审计
 
-群成员：（回复违规消息）@YourBot 举报 发广告
+群成员：（回复违规消息）/report 发广告
 Bot  ：把带处置按钮的卡片发到管理员私聊，群里只回执「已转给管理员」
 ```
+
+> 处置、举报、申诉都**只认 `/指令`**：自然语言里的「封禁」「拉黑」「踢了」太常见，
+> 机器人不会去猜这些词的意思，避免把正常聊天当成执法指令。
 
 ---
 
@@ -154,7 +157,7 @@ APP_TIMEZONE="Asia/Shanghai"
 ```bash
 npm run dev      # 启动本地 Worker（默认 http://localhost:8787）
 npm run check    # 语法 + import 路径自检
-npm test         # 175 个测试用例（内存 SQLite 跑真实 SQL）
+npm test         # 196 个测试用例（内存 SQLite 跑真实 SQL）
 ```
 
 ### 5. 部署
@@ -212,9 +215,9 @@ Telegram 默认只把 `/命令` 和 @ 提及转给机器人。要在群里正常
 
 ## 📖 常用指令速查
 
-**用户**：`/start` 开始 · `/help` 帮助 · `/checkin` 签到 · `/tasks` 每日任务 · `/points` 积分流水 · `/rank` 排行榜 · `/game` 游戏大厅 · `/profile` 我的资料 · `/shop` 商城 · `/orders` 我的订单 · `/redeem` 兑换码 · `/appeal` 申诉
+**用户**：`/start` 开始 · `/help` 帮助 · `/checkin` 签到 · `/tasks` 每日任务 · `/points` 积分流水 · `/rank` 排行榜 · `/game` 游戏大厅 · `/profile` 我的资料 · `/shop` 商城 · `/orders` 我的订单 · `/redeem` 兑换码 · `/report` 举报（群里） · `/appeal` 申诉（私聊）
 
-**管理员**：`/admin` 控制台 · `/users` `/users_group` 用户列表 · `/stats` 统计 · `/kb` 知识库 · `/guard` `/rules` `/setrules` 群规执法 · `/ban` `/kick` `/groupban` `/mute` `/unban` `/unmute` 处置 · `/code_new` `/code_list` 兑换码 · `/broadcast` 群发 · `/shop_admin` `/shop_add` `/shop_edit` 商城管理 · `/syncmenu` 刷新输入框菜单
+**管理员**：`/admin` 控制台 · `/users` `/users_group` 用户列表 · `/stats` 统计 · `/kb` 知识库 · `/guard` `/rules` `/setrules` 群规执法 · `/ban` `/kick` `/groupban` `/mute` `/unban` `/unmute` 处置 · `/code_new` `/code_list` 兑换码 · `/broadcast` 群发 · `/shop_admin` `/shop_add` `/shop_edit` 商城管理 · `/syncmenu` 刷新输入框菜单 · 控制台 → 🗑️ 自动删除
 
 > 管理员指令需要先在私聊发 `/admin` 解锁（30 分钟内有效）。完整表格、别名与参数说明见 [指令一览](docs/commands.md)。
 

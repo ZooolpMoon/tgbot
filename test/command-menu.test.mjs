@@ -44,6 +44,9 @@ test("buildCommandMenu：私聊只给普通命令，群聊再去掉「仅私聊�
   assert.ok(names(adm).includes("ban"), "管理员菜单里应有管理命令");
   assert.ok(names(pub).includes("shop"));
   assert.ok(!names(grp).includes("shop"), "群聊菜单里不应有「仅私聊」命令");
+  assert.ok(names(grp).includes("report"), "群聊菜单里应有「仅群聊」命令");
+  assert.ok(!names(pub).includes("report"), "私聊菜单里不应有「仅群聊」命令");
+  assert.ok(!names(adm).includes("report"), "私聊（含管理员）菜单里也不应有仅群聊命令");
   assert.ok(names(grp).includes("game"));
 
   // Telegram 对命令名与描述的限制

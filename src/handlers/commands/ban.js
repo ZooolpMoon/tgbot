@@ -6,11 +6,12 @@
 //   • 群里：/ban|/kick|/mute|/groupban <@用户|用户ID|回复对方消息> <理由>
 //           → 先按群规校验理由，再弹确认卡片，确认后才执行
 //
-// 自然语言同样支持（不用记指令）：群里 @机器人 说「封禁 @某人 发广告」即可。
+// 群规处置只支持指令：自然语言里「封禁 / 拉黑 / 踢了」太常见，
+// 靠关键词猜意图会误伤正常聊天，所以不再从普通消息里识别处置动作。
 // 解除类（/unban /unmute）不需要理由与确认，直接执行。
 // ==========================================
 
-import { sendAutoDelete } from "../../telegram/auto-delete.js";
+import { sendAutoDelete as sendAutoDeleteRaw } from "../../telegram/auto-delete.js";
 import { escapeHtml } from "../../utils/html.js";
 import { banUserById, unbanUserById } from "../../services/users.js";
 import { logAdminAction } from "../../services/admin-log.js";
@@ -19,6 +20,13 @@ import {
   parsePunishmentRequest, executePunishment, VIOLATION_RULES
 } from "../../services/guard.js";
 import { requestPunishmentFromCommand } from "../../admin/guard.js";
+
+/**
+ * 本文件里的回执都属于「群规执法」类型，统一打上 guard 标记，
+ * 这样管理员能在「🗑️ 自动删除」面板里单独设置执法回执的保留时长。
+ */
+const sendAutoDelete = (token, chatId, text, parseMode, isGroupCtx, ctx) =>
+  sendAutoDeleteRaw(token, chatId, text, parseMode, isGroupCtx, ctx, { kind: "guard" });
 
 const USAGE_BAN =
   "🚫 <b>机器人封禁</b>（该用户在私聊与所有群都不再被服务）\n-------------------------\n" +
@@ -90,7 +98,9 @@ async function groupPunishCommand({ env, ctx, token, chatId, uctx, message, orig
     action,
     reason: parsed.reason,
     durationMin: parsed.durationMin,
-    operatorId: myId
+    // 发起人是谁就记谁：本群管理员也能用指令处置，确认卡片只认发起人
+    operatorId: uctx?.userId || myId,
+    ctx
   });
 }
 
@@ -303,7 +313,8 @@ export async function cmdRules({ env, ctx, token, chatId, isGroupCtx }) {
     `⚖️ 默认处置：<b>${defaultAction}</b>${settings.default_action === "mute" ? `（${formatDuration(settings.default_mute_minutes)}）` : ""}\n` +
     `🛡️ 执法开关：${Number(settings.enabled) === 1 ? "✅ 已开启" : "🚫 已关闭"}\n\n` +
     `📌 <b>可识别的违规类型：</b>\n${categories}\n\n` +
-    `用法：@我 说「封禁 @某人 发广告」，或 <code>/mute @某人 2小时 刷屏</code>`,
+    `用法（只走指令）：<code>/ban @某人 发广告</code>、<code>/mute @某人 2小时 刷屏</code>；\n` +
+    `也可以先<b>回复对方的消息</b>，再发 <code>/ban 发广告</code>。`,
     "HTML", isGroupCtx, ctx
   );
 }

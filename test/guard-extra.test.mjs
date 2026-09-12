@@ -134,10 +134,10 @@ test("申诉：被处置人私聊申诉 → 卡片发到管理员，批准后撤
     userKey: "user:555", sceneKey: "private:555"
   };
 
-  // 私聊里自然语言「申诉 …」
+  // 私聊里用 /appeal 申诉（自然语言入口已移除）
   await handleMessage({
     env, ctx, token: "TEST_TOKEN", myId: "999", uctx: userUctx, isGroupCtx: false,
-    payload: { message: { text: "申诉 我那是正常讨论，不是刷屏", entities: [] } }
+    payload: { message: { text: "/appeal 我那是正常讨论，不是刷屏", entities: [] } }
   });
 
   const appeal = db.get("SELECT * FROM punishment_appeals ORDER BY id DESC LIMIT 1");
@@ -183,7 +183,7 @@ test("申诉：驳回会通知当事人且不改动处置", { skip: !hasSqlite &
   const userUctx = { chatId: "555", userId: "555", chatType: "private", userKey: "user:555", sceneKey: "private:555" };
   await handleMessage({
     env, ctx, token: "TEST_TOKEN", myId: "999", uctx: userUctx, isGroupCtx: false,
-    payload: { message: { text: "申诉 我觉得不合理", entities: [] } }
+    payload: { message: { text: "/appeal 我觉得不合理", entities: [] } }
   });
   const appeal = db.get("SELECT * FROM punishment_appeals ORDER BY id DESC LIMIT 1");
 
@@ -219,9 +219,9 @@ test("申诉：同一处置重复申诉会被拒绝，没有可申诉记录时�
     payload: { message: { text, entities: [] } }
   });
 
-  await appeal("申诉 第一次申诉");
+  await appeal("/appeal 第一次申诉");
   resetCalls();
-  await appeal("申诉 再来一次");
+  await appeal("/appeal 再来一次");
   assert.ok(sentTexts().some((t) => t.includes("已经申诉过了")));
 
   // 换个没有处置记录的用户
@@ -229,7 +229,7 @@ test("申诉：同一处置重复申诉会被拒绝，没有可申诉记录时�
   await handleMessage({
     env, ctx, token: "TEST_TOKEN", myId: "999", isGroupCtx: false,
     uctx: { chatId: "777", userId: "777", chatType: "private", userKey: "user:777", sceneKey: "private:777" },
-    payload: { message: { text: "申诉 我没被处置过", entities: [] } }
+    payload: { message: { text: "/appeal 我没被处置过", entities: [] } }
   });
   assert.ok(sentTexts().some((t) => t.includes("没有找到可以申诉的处置记录")));
   await Promise.all(ctx.pending);

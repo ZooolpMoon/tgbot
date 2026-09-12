@@ -30,7 +30,7 @@ flowchart TD
     Group -->|否| Clean
     Clean --> Cfg["读取场景配置"] --> Blocked{"已封禁 ?"}
     Blocked -->|是| BlockMsg["提示"]
-    Blocked -->|否| Guards{"执法 / 举报 ?"} --> Guides{"引导式输入 ?"} --> Cmd{"是 /指令 ?"}
+    Blocked -->|否| Guides{"引导式输入 ?"} --> Cmd{"是 /指令 ?"}
     Cmd -->|是| Dispatch["dispatchCommand"]
     Cmd -->|否| AI["handleAIRequest"]
     AI --> Quota["占额度"] --> Pay["扣积分"] --> RAG["知识库检索"] --> Model["调用模型（失败回退）"] --> Reply["回复并落库历史"]
@@ -43,10 +43,12 @@ flowchart TD
 1. 管理员上传知识库文件（`.txt` / `.docx` / `.pdf`）——放最前面，带说明文字的文档也要能入库
 2. 群聊过滤：不是 @机器人 也不是 `/指令` 的消息只做**静默预警**后返回
 3. 封禁校验（管理员不受限）
-4. 群规执法 / 成员举报（自然语言）
-5. 各类引导式输入（商品、任务、知识库、群规）——必须排在指令分发之前，否则用户正在填的表单会被当成未知指令丢掉
-6. 指令分发（注册表统一处理权限 / 仅私聊 / 功能开关）
-7. 落到 AI 对话
+4. 各类引导式输入（商品、任务、知识库、群规）——必须排在指令分发之前，否则用户正在填的表单会被当成未知指令丢掉
+5. 指令分发（注册表统一处理权限 / 仅私聊 / 仅群聊 / 功能开关）
+6. 落到 AI 对话
+
+处置、举报、申诉**没有自然语言入口**：`封禁 / 拉黑 / 踢了` 这类词在日常聊天里太常见，
+靠关键词拦截会误伤普通发言，所以只认 `/指令`（这是刻意的取舍，改动前先想清楚）。
 
 回调（`src/handlers/callback.js`）同理：**前缀更长的分支必须排在更短的前面**，且群规确认与申诉卡片要放在「管理员校验」之前——因为群管理员也需要点确认。
 
@@ -57,17 +59,18 @@ src/
 ├── index.js                 # Worker 入口：安全校验 → 建表 → 分发 / 定时任务
 ├── config/                  # 常量（积分、回调前缀、知识库参数）· 用户文案 · 任务触发器
 ├── core/                    # context.js（userKey/sceneKey）· db.js（Schema + 迁移）· logger.js
-├── telegram/                # api.js（含 429/5xx 退避重试）· auto-delete.js（群聊自动删除）
+├── telegram/                # api.js（含 429/5xx 退避重试）· auto-delete.js（群聊自动删除，按类型取时长）
 ├── handlers/
 │   ├── message.js           # 消息总入口
 │   ├── callback.js          # 按钮回调总入口（路由顺序即优先级）
 │   ├── ai.js                # AI 对话：额度 → 扣分 → 知识库检索 → 模型回退 → 历史
 │   └── commands/            # registry.js（命令注册表）+ 各指令 + commands/admin/
-├── admin/                   # 管理面板：用户/群组/封禁/详情/积分/限额/频率/任务/知识库/群规/日志/统计
+├── admin/                   # 管理面板：用户/群组/封禁/详情/积分/限额/频率/任务/知识库/群规/自动删除/日志/统计
 ├── services/                # 业务服务
 │   ├── users.js · points.js · quota.js · time.js · checkin.js · admin-log.js
 │   ├── tasks.js             # 每日任务定义 CRUD、进度与发奖
 │   ├── features.js          # 三级功能开关
+│   ├── auto-delete.js       # 消息自动删除设置（按类型两级配置）
 │   ├── settings.js          # 全局键值设置
 │   ├── knowledge.js         # 知识库：切块、向量、检索、索引重建
 │   ├── guard.js             # 群规执法：意图解析、理由校验、Telegram 群处置、审计

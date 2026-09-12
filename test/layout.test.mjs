@@ -107,7 +107,7 @@ test("主菜单包含全部管理入口", () => {
   const flat = getAdminMainKeyboard(true).inline_keyboard.flat().map((b) => b.callback_data);
   for (const expect of [
     "admin_users_home", "admin_kb", "shop_admin_home",
-    "admin_codes_1", "admin_tasks", "admin_feat_home", "admin_logs_1",
+    "admin_codes_1", "admin_tasks", "admin_feat_home", "admin_autodel", "admin_logs_1",
     "admin_status", "admin_stats", "admin_close"
   ]) {
     assert.ok(flat.includes(expect), `缺少入口 ${expect}`);

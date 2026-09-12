@@ -6,7 +6,7 @@
 // 第 4 步失败时，第 2、3 步会通过 rollback() 全额退回。
 // ==========================================
 
-import { sendMessage, sendChatAction } from "../telegram/api.js";
+import { sendChatAction } from "../telegram/api.js";
 import { sendAutoDelete } from "../telegram/auto-delete.js";
 import { AI_MODELS, AI_MAX_TOKENS, POINTS, RULES, KB } from "../config/constants.js";
 import { ERR } from "../config/messages.js";
@@ -45,11 +45,19 @@ export async function handleAIRequest({
   let chargedDateStr = null;
   const previousLastMsgTime = userConfig.lastMsgTime;
 
+  // 出站消息统一带上场景与消息类型：
+  //   replyNotice = 额度 / 积分 / 异常等指令回执（默认 5 秒自动删除）
+  //   replyChat   = AI 回答本身（默认保留，可在「🗑️ 自动删除」里单独设置）
+  const replyNotice = (text, parseMode = null) =>
+    sendAutoDelete(token, chatId, text, parseMode, isGroupCtx, ctx, { kind: "cmd", env, sceneKey });
+  const replyChat = (text) =>
+    sendAutoDelete(token, chatId, text, null, isGroupCtx, ctx, { kind: "ai", env, sceneKey });
+
   // 频率限制
   if (userConfig.rateLimitSec > 0 && userConfig.lastMsgTime > 0) {
     const passed = nowSec - userConfig.lastMsgTime;
     if (passed < userConfig.rateLimitSec) {
-      await sendAutoDelete(token, chatId, ERR.RATE_LIMIT(userConfig.rateLimitSec - passed), null, isGroupCtx, ctx);
+      await replyNotice(ERR.RATE_LIMIT(userConfig.rateLimitSec - passed));
       return;
     }
   }
@@ -57,12 +65,12 @@ export async function handleAIRequest({
   // 占额度
   if (env.DB && userConfig.maxDaily !== -1) {
     if (userConfig.maxDaily <= 0) {
-      await sendAutoDelete(token, chatId, ERR.QUOTA_ZERO, null, isGroupCtx, ctx);
+      await replyNotice(ERR.QUOTA_ZERO);
       return;
     }
     const ok = await reserveDailyQuota(env, sceneKey, todayStr, userConfig.maxDaily);
     if (!ok) {
-      await sendAutoDelete(token, chatId, ERR.QUOTA_EMPTY(userConfig.maxDaily), null, isGroupCtx, ctx);
+      await replyNotice(ERR.QUOTA_EMPTY(userConfig.maxDaily));
       return;
     }
     quotaReserved = true;
@@ -77,13 +85,13 @@ export async function handleAIRequest({
         await refundDailyQuota(env, sceneKey, chargedDateStr || todayStr);
         quotaReserved = false;
       }
-      await sendAutoDelete(token, chatId, ERR.POINTS_EMPTY, null, isGroupCtx, ctx);
+      await replyNotice(ERR.POINTS_EMPTY);
       return;
     }
     balanceAfterCharge = balance;
     pointsCharged = true;
   } else if (userConfig.points < POINTS.AI_COST) {
-    await sendAutoDelete(token, chatId, ERR.POINTS_EMPTY, null, isGroupCtx, ctx);
+    await replyNotice(ERR.POINTS_EMPTY);
     return;
   } else {
     pointsCharged = true;
@@ -156,7 +164,7 @@ export async function handleAIRequest({
 
   if (!env.AI) {
     await rollback(env, pointsCharged, quotaReserved, userKey, sceneKey, chargedDateStr || todayStr, previousLastMsgTime);
-    await sendAutoDelete(token, chatId, ERR.AI_NOT_BOUND, null, isGroupCtx, ctx);
+    await replyNotice(ERR.AI_NOT_BOUND);
     return;
   }
 
@@ -164,7 +172,7 @@ export async function handleAIRequest({
 
   if (!replyText) {
     await rollback(env, pointsCharged, quotaReserved, userKey, sceneKey, chargedDateStr || todayStr, previousLastMsgTime);
-    await sendAutoDelete(token, chatId, ERR.AI_ERROR, null, isGroupCtx, ctx);
+    await replyNotice(ERR.AI_ERROR);
     return;
   }
   if (fallback) logWarn(`主模型不可用，已回退到 ${usedModel}`);
@@ -196,7 +204,7 @@ export async function handleAIRequest({
   if (ctx?.waitUntil) ctx.waitUntil(saveHistoryTask);
   else await saveHistoryTask;
 
-  await sendMessage(token, chatId, replyText);
+  await replyChat(replyText);
 
   // 成功回复后记一次「和 AI 聊一次」任务（失败时不计数）
   await completeTask(env, userKey, "chat", { sceneKey, chatId, token });

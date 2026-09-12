@@ -71,6 +71,7 @@ import { renderCodeList, handleCodeToggle } from "./commands/codes.js";
 import {
   renderFeatureHome, renderFeatureScope, handleFeatureToggle, handleFeatureReset
 } from "../admin/features.js";
+import { handleAutoDeleteCallback } from "../admin/auto-delete.js";
 import {
   renderTaskAdmin, renderTaskDetail, startTaskAdd, startTaskBonusEdit, handleTaskTriggerPick,
   startTaskFieldEdit, handleTaskToggle, handleTaskDelete, handleTaskDeleteConfirm
@@ -258,7 +259,7 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
 
   // 申诉卡片（可能发到管理员私聊或群里的管理员）——同样放在管理员校验之前
   if (data.startsWith("appeal_")) {
-    await handleAppealCallback({ env, token, callback, data, myId, chatId, msgId });
+    await handleAppealCallback({ env, ctx, token, callback, data, myId, chatId, msgId });
     return;
   }
 
@@ -577,6 +578,18 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     else if (data === ADMIN_CALLBACK.FEATURES_HOME) {
       await renderFeatureHome(token, env, chatId, msgId);
       await answerCallback(token, callback.id, "功能开关");
+    }
+
+    // ---------- 🗑️ 消息自动删除 ----------
+    else if (
+      data === ADMIN_CALLBACK.AUTO_DELETE_HOME
+      || data.startsWith(ADMIN_CALLBACK.AUTO_DELETE_SCOPE_PREFIX)
+      || data.startsWith(ADMIN_CALLBACK.AUTO_DELETE_KIND_PREFIX)
+      || data.startsWith(ADMIN_CALLBACK.AUTO_DELETE_SET_PREFIX)
+    ) {
+      await handleAutoDeleteCallback({
+        env, token, callback, chatId, msgId, data, uctx, adminId: fromId
+      });
     }
     else if (data.startsWith(ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX)) {
       await handleFeatureToggle({ env, token, callback, chatId, msgId, data, adminId: fromId });

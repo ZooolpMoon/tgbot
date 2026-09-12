@@ -10,7 +10,7 @@ npm run deploy         # 部署（wrangler.toml）
 npm run deploy:prod    # 部署（wrangler.production.toml）
 npm run tail           # 实时看线上日志
 npm run check          # 语法 + 相对 import 路径自检
-npm test               # 175 个测试用例
+npm test               # 196 个测试用例
 npm run backup         # 导出线上 D1 到 backups/
 npm run backup:local   # 导出本地 D1
 npm run backup:config  # 把生产配置备份到私有仓库（需 .config-backup）
@@ -30,6 +30,7 @@ npm run backup:config  # 把生产配置备份到私有仓库（需 .config-back
 | `points.test.mjs` | 原子扣分、退款、流水 |
 | `daily.test.mjs` | 定时任务清理与日报汇总 |
 | `features.test.mjs` | 三级功能开关（全局 / 场景覆盖 / 恢复默认） |
+| `auto-delete.test.mjs` | 消息自动删除：类型默认值、两级设置、按类型取时长、面板读写 |
 | `history.test.mjs` | AI 上下文裁剪与预算 |
 | `redeem.test.mjs` | 兑换码生成、兑换、次数与过期 |
 | `shop.test.mjs` | 订单取消退款、库存回滚、下单备注 |
@@ -39,7 +40,7 @@ npm run backup:config  # 把生产配置备份到私有仓库（需 .config-back
 | `layout.test.mjs` | 所有菜单的排版约束（两列、行数、文案与 `callback_data` 长度） |
 | `flows.test.mjs` | 入口链路集成（消息 → 指令 → AI → 回调） |
 | `knowledge.test.mjs` | 分块、向量编解码、检索与降级、docx/pdf 解析、文件上传 |
-| `guard.test.mjs` / `guard-extra.test.mjs` | 执法意图解析、理由校验、确认与执行、申诉、预警、撤销、到期通知、群规版本 |
+| `guard.test.mjs` / `guard-extra.test.mjs` | 指令处置链路、理由校验、确认与执行、举报、申诉、预警、撤销、到期通知、群规版本，以及「自然语言不再触发处置」回归 |
 | `admin-extra.test.mjs` | 用户详情、日志筛选、索引重建、文档范围调整 |
 | `regression.test.mjs` | 历史缺陷回归（会话过期、群聊阻塞、签到回滚、积分夹断…） |
 
@@ -81,7 +82,9 @@ npm run check && npm test     # 提交前建议跑这一组
 |------|------|
 | `name` / `aliases` | 命令名（含 `/`）与别名 |
 | `scope: "admin"` | 需要是管理员，且默认需要先 `/admin` 解锁（`needsUnlock: false` 可跳过解锁） |
+| `groupAdmin: true` | 群里额外放行本群管理员（creator / administrator），他们不需要 `/admin` 解锁 |
 | `privateOnly: true` | 群里使用会被拦下并提示（`privateHint` 可自定义提示文案） |
+| `groupOnly: true` | 私聊里使用会被拦下并提示（`groupHint` 可自定义提示文案） |
 | `feature: "<key>"` | 受功能开关控制（key 来自 `services/features.js` 的 `FEATURES`） |
 | `usage` | 会在 `/help` 里追加参数说明（尖括号会被自动转义） |
 | `handle(ctx)` | 处理函数，参数是消息链路里的复合上下文（env / token / chatId / userKey / sceneKey / uctx …） |
@@ -95,6 +98,20 @@ npm run check && npm test     # 提交前建议跑这一组
 ```
 
 管理端的三级开关 UI 会自动出现，不需要改管理端代码。业务里用 `isFeatureEnabled(env, sceneKey, "mytool")` 判断即可。
+
+### 加一类可配置自动删除的消息
+
+在 `src/services/auto-delete.js` 的 `AUTO_DELETE_KINDS` 加一项（`key` / `label` / `icon` / `desc` / `defaultSec`），
+管理面板会自动多出一个类型按钮；发消息时带上类型即可：
+
+```js
+await sendAutoDelete(token, chatId, text, "HTML", isGroupCtx, ctx, {
+  kind: "mytool", env, sceneKey, keyboard
+});
+```
+
+复合上下文（`handle(ctx)` 收到的那个）能自动提供 `env` / `sceneKey`；只有原生 Worker ctx 时才需要显式补。
+**默认值必须与既有行为一致**（该删的仍删、该留的仍留），否则升级后会突然少消息。
 
 ### 加一个游戏
 
