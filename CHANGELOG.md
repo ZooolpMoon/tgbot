@@ -25,6 +25,8 @@
 
 ### 修复与优化
 
+- 📖 重写 README：重排章节结构，补齐新指令、配置项、数据库表、备份/安全与常见问题
+- 🔒 配置备份脚本改为从本地未跟踪文件 `.config-backup` 读取目标仓库，公开仓库里不再出现私有仓库名
 - 🧾 订单取消改为原子状态流转（`WHERE status = 'pending'`），避免并发下重复退款
 - 🗂️ 商城模块新增 `shop/add.js`、`shop/edit.js`，用户与管理员共用同一套退款逻辑
 - 🗃️ 数据库新增 `shop_edit_sessions`、`admin_logs`、`broadcast_drafts` 表与 `users.blocked` 字段（自动迁移）

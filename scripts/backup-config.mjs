@@ -9,9 +9,9 @@
 //   1. 环境变量 GITHUB_TOKEN / GH_TOKEN
 //   2. 本机 Git 凭据管理器（git credential fill，与 git push 用的是同一份）
 //
-// 可用环境变量覆盖：
-//   CONFIG_BACKUP_REPO  默认 ZooolpMoon/tgbot-config
-//   CONFIG_BACKUP_BRANCH 默认 main
+// 目标仓库（二选一，避免把私有仓库名写进公开代码）：
+//   1. 环境变量 CONFIG_BACKUP_REPO=owner/repo
+//   2. 项目根目录的未跟踪文件 .config-backup（内容就一行 owner/repo）
 // ==========================================
 
 import { execFileSync } from "node:child_process";
@@ -20,9 +20,31 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const TARGET_REPO = process.env.CONFIG_BACKUP_REPO || "ZooolpMoon/tgbot-config";
-const BRANCH = process.env.CONFIG_BACKUP_BRANCH || "main";
 const FILES = ["wrangler.production.toml", ".dev.vars"];
+
+// ---------- 解析目标仓库 ----------
+function resolveTargetRepo() {
+  if (process.env.CONFIG_BACKUP_REPO) return process.env.CONFIG_BACKUP_REPO.trim();
+  const localConfig = path.join(repoRoot, ".config-backup");
+  if (existsSync(localConfig)) {
+    const value = readFileSync(localConfig, "utf8").split("\n")[0].trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+const TARGET_REPO = resolveTargetRepo();
+const BRANCH = process.env.CONFIG_BACKUP_BRANCH || "main";
+
+if (!TARGET_REPO) {
+  console.error(
+    "❌ 未指定配置备份仓库。\n" +
+    "   任选一种方式：\n" +
+    "   1) 在项目根目录创建 .config-backup 文件，内容写一行 owner/repo；\n" +
+    "   2) 设置环境变量 CONFIG_BACKUP_REPO=owner/repo。"
+  );
+  process.exit(2);
+}
 
 // ---------- 找 git ----------
 function findGit() {

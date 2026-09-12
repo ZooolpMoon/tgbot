@@ -1,189 +1,319 @@
 # 🤖 Telegram AI Bot (Cloudflare Workers)
 
-一个基于 **Cloudflare Workers + D1 + Workers AI** 的 Telegram 机器人，支持 AI 对话、全局积分、每日签到、多人在线小游戏、积分商城，以及完整的后台管理控制台。
+一个跑在 **Cloudflare Workers + D1 + Workers AI** 上的 Telegram 机器人：AI 对话、全局积分、连续签到、小游戏、积分商城，外加一套完整的管理后台与审计日志。
 
-> 当前版本：v1.2.0（2026-09-12）
-
----
-
-## 🌍 仓库用途与部署方式
-
-本仓库既是**开源项目**也是**代码备份**：本地写完代码 `git push`，就同时完成了开源发布与备份。
-
-部署在**本地**完成，不依赖 GitHub Actions：
-
-```bash
-npm run deploy:prod    # 部署到 Cloudflare Workers（使用本地生产配置）
-npm run dev            # 本地开发预览（读取被忽略的 .dev.vars）
-npm run check          # 提交前的语法 / import 自检
-```
-
-三个配置文件的边界：
-
-| 文件 | 作用 | 是否进仓库 |
-|------|------|-----------|
-| `wrangler.toml` | 模板配置，全部是占位符 | ✅ 提交（公开） |
-| `wrangler.production.toml` | 生产配置：真实 Token / 账号 ID / D1 database_id | ❌ 已 gitignore，仅本地 |
-| `.dev.vars` | 本地 `wrangler dev` 用的变量 | ❌ 已 gitignore，仅本地 |
-
-> ⚠️ 因为本仓库是公开的，`wrangler.production.toml` 和 `.dev.vars` **永远不会**被提交。
-> 也就是说 GitHub 上只有代码，**这份含 Bot Token 的配置需要你另行备份**（密码管理器 / 私有存储），
-> 否则换电脑时需要重新向 BotFather 取 Token 并重建配置。
-
-### 🔐 生产配置怎么备份
-
-用一条命令把配置备份到**私有** GitHub 仓库（不会走公网 git 端口，用的是 GitHub API，github.com 被墙也能用）：
-
-```bash
-npm run backup:config
-```
-
-- 备份内容：`wrangler.production.toml` + `.dev.vars`
-- 目标仓库：默认 `ZooolpMoon/tgbot-config`（可用环境变量 `CONFIG_BACKUP_REPO` 覆盖）
-- 凭据：优先读 `GITHUB_TOKEN`，否则复用本机 Git 凭据管理器里 `git push` 用的那份
-- **安全兜底**：脚本会先检查目标仓库是不是私有，不是私有就直接中止，避免把 Token 推到公开仓库
-
-恢复时：克隆该私有仓库，把两个文件复制回项目根目录，然后 `npm install && npm run deploy:prod`。
+> 当前版本：**v1.2.0**（2026-09-12） · 变更见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
 ## 📑 目录
 
+- [🌍 这个仓库是什么](#-这个仓库是什么)
 - [✨ 功能特性](#-功能特性)
-- [📐 架构总览](#-架构总览)
+- [🚀 快速开始](#-快速开始)
+- [⚙️ 配置项一览](#️-配置项一览)
+- [📖 指令列表](#-指令列表)
+- [🏗️ 架构总览](#️-架构总览)
 - [🔑 用户标识与数据隔离](#-用户标识与数据隔离)
 - [🔄 消息处理流程](#-消息处理流程)
 - [🎮 游戏模块](#-游戏模块)
 - [🛒 商城模块](#-商城模块)
+- [👑 管理后台](#-管理后台)
 - [📁 目录结构](#-目录结构)
-- [🌍 仓库用途与部署方式](#-仓库用途与部署方式)
-- [🚀 部署步骤](#-部署步骤)
-- [📖 指令列表](#-指令列表)
-- [🔧 常见问题](#-常见问题)
-- [🧩 扩展新游戏](#-扩展新游戏)
-- [🛒 扩展商城](#-扩展商城)
-- [🛠️ 常用命令](#️-常用命令)
-- [⚖️ 合规说明](#️-合规说明)
+- [🗄️ 数据库表](#️-数据库表)
+- [🛠️ 运维命令](#️-运维命令)
+- [💾 备份与恢复](#-备份与恢复)
 - [🔐 安全说明](#-安全说明)
+- [⚖️ 合规说明](#️-合规说明)
+- [🔧 常见问题](#-常见问题)
+- [🧩 扩展指南](#-扩展指南)
+- [📝 许可](#-许可)
 
 ---
 
-## 🚀 快速开始
+## 🌍 这个仓库是什么
 
-### 1. 环境准备
+**一个仓库，两个用途**：它既是开源项目，也是代码备份。本地写完代码 `git push`，开源发布与备份一次完成。
 
-- Node.js 18+（推荐 LTS）
-- Cloudflare account
-- Telegram Bot Token
-- Cloudflare D1 数据库
-- Cloudflare Workers AI（可选：AI 对话功能依赖）
+部署**在本地执行**，不依赖 GitHub Actions：
 
-### 2. 配置环境变量
+```bash
+npm run deploy:prod    # 部署到 Cloudflare Workers（读取本地生产配置）
+npm run dev            # 本地开发预览（读取 .dev.vars）
+npm run check          # 提交前自检：语法 + import 路径
+```
 
-在 Cloudflare Worker 环境变量中设置：
+含密钥的文件**永远不进仓库**，各自有明确边界：
 
-- `BOT_TOKEN`：Telegram Bot Token
-- `BOT_USERNAME`：Bot 用户名（如 `@MyBot` 或 `MyBot`，推荐设置）
-- `MY_TELEGRAM_ID`：管理员 Telegram 用户 ID
-- `APP_TIMEZONE`：时区，默认 `Asia/Shanghai`
-- `DB`：D1 数据库绑定
-- `AI`：Workers AI 绑定
+| 文件 | 内容 | 是否提交 |
+|------|------|---------|
+| `wrangler.toml` | 模板配置，全部是占位符 | ✅ 提交（公开） |
+| `wrangler.production.toml` | 生产配置：Bot Token、账号 ID、D1 database_id | ❌ 本地（已 gitignore） |
+| `.dev.vars` | `npm run dev` 用的环境变量 | ❌ 本地（已 gitignore） |
+| `.config-backup` | 配置备份的目标私有仓库 `owner/repo` | ❌ 本地（已 gitignore） |
 
-### 3. 初始化数据库
+所以 GitHub 上只有代码。**那份含 Bot Token 的配置需要单独备份**，否则换电脑时要重新向 BotFather 取 Token：
 
-数据库表会在 Bot 第一次收到请求时**自动创建**（`src/core/db.js` 的 `ensureSchema` 会执行 `SCHEMA_SQL`，全部为 `CREATE TABLE IF NOT EXISTS`，幂等且不破坏已有数据）。
+```bash
+npm run backup:config
+```
 
-如需手动初始化，可执行 `SCHEMA_SQL`，包含以下表：
-
-- `users`
-- `user_scenes`
-- `chat_history`
-- `daily_stats`
-- `daily_checkin`
-- `points_log`
-- `shop_items`
-- `shop_orders`
-- `shop_order_log`
-
-### 4. 部署
-
-1. 使用生产配置部署：`npx wrangler deploy -c wrangler.production.toml`
-2. 确保 webhook 指向 Worker 入口
-3. 设置 Telegram webhook：`https://api.telegram.org/bot<token>/setWebhook?url=<worker_url>`
-4. 向 Bot 发送 `/start` 进行初始化
+它会把 `wrangler.production.toml` + `.dev.vars` 通过 GitHub API 推送到**私有**仓库（用 API 而非 git 协议，`github.com:443` 被墙时也能用），并且**上传前会先确认目标仓库是私有的**，不是私有就直接中止。
 
 ---
 
 ## ✨ 功能特性
 
 ### 🤖 AI 对话
-- 基于 Cloudflare Workers AI 的 **Llama 3.3 70B** 模型
-- **模型自动回退**：主模型报错/返回空内容时自动切换备选模型，减少「AI 服务异常」
-- **上下文长度管理**：历史既限条数（10 条）也限字符数（默认 6000，超出从最旧丢弃）
-- 支持自定义 AI 偏好（`/setprompt`）
-- 支持多语言偏好（`/setlang`）
-- 每个对话场景独立保存记忆（私聊 / 每个群成员各自上下文）
-- AI 调用失败或未绑定时自动退款
 
-### 💰 积分系统
-- **全局共享**：同一个人在私聊、群 A、群 B 的积分是**同一个**
+- 默认模型 `@cf/meta/llama-3.3-70b-instruct-fp8-fast`（Workers AI）
+- **自动回退**：主模型报错或返回空内容时，按 `llama-3.1-8b-instruct-fast → mistral-7b-instruct-v0.1` 依次重试，全部失败才提示「AI 服务异常」
+- **上下文双重限制**：最多 10 条 + 最多 6000 字符（超出从最旧的消息丢弃，单条消息截断到 2000 字符）
+- 每个场景独立记忆：私聊一份、每个群的每个成员各一份
+- 可自定义 AI 偏好（`/setprompt`）与语言（`/setlang`）
+- 调用失败 / AI 未绑定时**自动退还积分与每日额度**
+
+### 💰 积分与排行榜
+
+- **全局共享**：同一个人无论在私聊还是群 A、群 B，用的都是同一份积分
 - 每次 AI 对话扣 **1 分**，失败自动退款
-- 每日签到按**连续天数递增**奖励（首日 +5，上限 +20，每满 7 天额外 +20）
-- 管理员可任意增减用户积分
-- 每笔变动写入 `points_log` 流水
-- `/points` 分页查看流水，`/rank` 查看积分排行榜 Top 10
+- 每笔变动写入 `points_log` 流水，`/points` 可分页查看
+- `/rank` 查看积分排行榜 Top 10（含自己的名次与奖牌）
+- 管理员可任意增减、封禁用户
 
-### 📅 每日签到
-- `/checkin` 或 `/sign`
-- 按**北京时间**（`Asia/Shanghai`）计算日期
-- 每天只能签一次，**累计天数**与**连续天数**都会展示
-- 连续签到奖励：`min(5 + (连续天数-1), 20)`，每满 7 天额外 +20；断签后从第 1 天重新计算
+### 📅 连续签到
+
+- `/checkin`（或 `/sign`），按 `APP_TIMEZONE`（默认北京时间）判定日期，每天一次
+- 奖励随连续天数递增：`min(5 + (连续天数 - 1), 20)`
+- 每连续满 **7 天**额外 +20
+- 断签后从第 1 天重新计算；签到卡片会同时显示累计天数、连续天数与明天的预计奖励
 
 ### 🎮 游戏大厅
-| 游戏 | 说明 | 赔率 |
-|------|------|------|
-| 🎲 骰子猜大小 | 猜 3 个骰子点数和的大小 | 1:2 |
-| 🎰 欢乐老虎机 | 三个相同图标中奖 | 2x / 10x / 50x |
-| 🪙 抛硬币 | 猜正反面 | 1:2 |
-| 🎡 幸运转盘 | 转盘抽随机倍率 | 0x ~ 50x |
 
-- 支持**自定义下注**
-- 支持 **ALL IN（全押）**
-- 所有游戏共享同一份积分池
+| 游戏 | 玩法 | 赔率 |
+|------|------|------|
+| 🎲 骰子猜大小 | 3 个骰子点数和 3-10 为小、11-18 为大 | 1:2 |
+| 🎰 欢乐老虎机 | 两个相同 2 倍 / 三个相同 10 倍 / 三个 💎 50 倍 | 2x · 10x · 50x |
+| 🪙 抛硬币 | 猜正反面 | 1:2 |
+| 🎡 幸运转盘 | 转盘抽倍率（30% 归零 ~ 0.5% 五十倍） | 0x ~ 50x |
+
+- 支持自定义下注金额与 **ALL IN**
+- 所有游戏共用同一份积分池，随机数用 `crypto.getRandomValues`（拒绝采样，无取模偏差）
 
 ### 🛒 积分商城
-- **仅私聊可用**，群聊里禁用
-- 用户用积分兑换**虚拟/实物/服务类**商品
-- 管理员可**引导式添加商品**（`/shop_add`）与**引导式编辑商品**（`/shop_edit <商品ID>`，可改名称/价格/库存/分类/图标/说明）
-- 管理员可上下架商品、处理订单
-- 用户可在「我的订单」里**自助取消待处理订单并退款**（库存同步回滚）
-- 下单自动扣积分，取消自动退款
-- 每笔积分变动写入流水
-- 支持**库存管理**（无限库存 / 有限库存）
-- **新订单自动通知管理员**
 
-### 👑 管理控制台
-- `/admin` 打开控制台
-- 私聊场景 / 群聊场景**分开管理**
-- 用户积分、每日限额、发送频率独立配置
-- **封禁 / 解封用户**：被封禁用户无法再使用 AI、游戏、商城等任何功能
-- **管理员操作日志**：谁在什么时候改了什么，可翻页审计
-- **群发消息**：`/broadcast <内容>` 二次确认后分批推送给所有私聊用户
-- **记忆管理**：可清空「某群某用户」的 AI 记忆
-- 积分流水完整记录
-- 系统运行状态与统计
+**仅私聊可用**（群聊里点任何商城按钮都会被拒绝）。
 
-### 🗑️ 群聊智能回复
-- 群里只有 **@BOT** 或 **/指令** 才回复
-- 大部分指令类消息（`/start`、`/help` 等）**5 秒后自动删除**
-- `/points`、`/rank` 等带按钮的卡片会保留，方便翻页
-- AI 回复、游戏消息、管理员菜单**保留**
+- 用户：浏览商品 → 兑换（自动扣分、扣库存、生成订单）→ 在我的订单里查看进度
+- 用户可对**待处理订单自助取消并退款**（积分与库存同时回滚）
+- 管理员：引导式添加商品 `/shop_add`、引导式编辑商品 `/shop_edit <商品ID>`
+- 管理员：上架/下架、删除、标记发货、标记完成、取消并退款
+- 商品支持无限库存（`-1`）与有限库存；订单保存商品快照，改价改名不影响历史订单
+- 新订单自动通知管理员；用户自助取消也会通知管理员
+
+### 👑 管理后台
+
+- `/admin` 解锁（30 分钟有效），私聊场景与群聊场景分开管理
+- 每个场景可单独设置每日额度与发送频率；积分是全局的
+- **封禁 / 解封**：被封禁用户在 AI、游戏、商城、按钮回调上全部被拦截
+- **群发消息** `/broadcast <内容>`：二次确认后分批推送，支持断点续发
+- **操作审计** `/admin → 📋 操作日志`：谁在什么时候改了什么，可翻页
+- **记忆管理** `/clearmem`：可精确清除「某群 + 某用户」的 AI 记忆
+
+### 💬 群聊行为
+
+- 群里只有 **@机器人** 或 **/指令** 才会响应，其他消息静默忽略
+- 指令类消息默认 **5 秒后自动删除**（`/points`、`/rank` 等带按钮的卡片会保留，否则按钮会失效）
+- AI 回复、游戏消息、管理员菜单保留
+- 自动忽略发给其他机器人的指令（`/start@OtherBot`）
 
 ---
 
-## 📐 架构总览
+## 🚀 快速开始
 
-### 分层图（Mermaid）
+### 0. 前置条件
+
+| 需要什么 | 说明 |
+|---------|------|
+| Node.js | 18 以上（推荐 LTS） |
+| Cloudflare 账号 | 免费版即可，需要 Workers + D1 |
+| Telegram Bot Token | 找 [@BotFather](https://t.me/BotFather) 申请 |
+| 管理员 Telegram ID | 可用 [@userinfobot](https://t.me/userinfobot) 查询 |
+
+### 1. 克隆并安装
+
+```bash
+git clone https://github.com/<你的账号>/tgbot.git
+cd tgbot
+npm install
+```
+
+### 2. 创建 D1 数据库
+
+```bash
+npx wrangler login      # 首次需要登录
+npx wrangler d1 create tgbot-db
+```
+
+命令会输出 `database_id`，下一步要用。
+
+### 3. 写生产配置
+
+复制 `wrangler.toml` 为 `wrangler.production.toml`，填入真实值：
+
+```toml
+name = "tgbot"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+BOT_TOKEN = "你的机器人Token"
+BOT_USERNAME = "你的机器人用户名（不含 @）"
+MY_TELEGRAM_ID = "你的管理员 Telegram 数字 ID"
+WEBHOOK_SECRET = ""            # 可选，填了就要在 setWebhook 时传一样的值
+APP_TIMEZONE = "Asia/Shanghai"
+BOT_OWNER_NAME = "管理员"
+BOT_OWNER_USERNAME = "你的管理员用户名（不含 @）"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tgbot-db"
+database_id = "上一步输出的 database_id"
+
+[ai]
+binding = "AI"
+```
+
+> `wrangler.production.toml` 已在 `.gitignore` 里，不会被提交。
+> 记得到 `npm run backup:config` 备份它（见 [💾 备份与恢复](#-备份与恢复)）。
+
+### 4. 部署
+
+```bash
+npm run deploy:prod
+```
+
+成功后终端会输出 Worker 地址，形如 `https://tgbot.<你的子域>.workers.dev`。
+
+### 5. 绑定 Telegram Webhook
+
+浏览器打开（把两处占位符替换掉）：
+
+```
+https://api.telegram.org/bot<你的BOT_TOKEN>/setWebhook?url=<你的Worker地址>
+```
+
+返回 `{"ok":true,...}` 即成功。想加一层校验可以带上 `&secret_token=<WEBHOOK_SECRET>`。
+
+**数据库表不用手动建**：Worker 第一次收到请求时 `ensureSchema()` 会自动建表并执行增量迁移（幂等，不破坏已有数据）。
+
+### 6. 关闭群聊 Privacy Mode（必须）
+
+去 **@BotFather**：`/mybots` → 选择你的 bot → **Bot Settings** → **Group Privacy** → **Turn off**。
+改完把 bot 从所有群移除再重新添加，否则群里 @ 它不回复。
+
+### 7. 本地开发（可选）
+
+```bash
+# 手动创建 .dev.vars（已 gitignore），内容与 wrangler.production.toml 的 [vars] 一致
+# 每个变量一行，形如 KEY="value"，然后：
+npm run dev
+```
+
+`npm run backup:config` 会把 `.dev.vars` 一起备份。
+
+### 8. 添加测试商品（可选）
+
+在 D1 控制台执行：
+
+```sql
+INSERT INTO shop_items (name, description, icon, price, stock, category, enabled) VALUES
+  ('专属称号', '在群内显示专属称号', '🏷️', 50, -1, 'virtual', 1),
+  ('AI 加速包 (10 次)', '免消耗 10 次 AI 对话额度', '⚡', 100, -1, 'service', 1),
+  ('定制表情包', '管理员为你制作 1 个专属表情', '🎨', 200, 5, 'virtual', 1);
+```
+
+也可以在私聊里用 `/shop_add` 走引导式添加。
+
+---
+
+## ⚙️ 配置项一览
+
+### 环境变量
+
+| 变量 | 必填 | 默认值 | 说明 |
+|------|:----:|--------|------|
+| `BOT_TOKEN` | ✅ | — | BotFather 颁发的 Token |
+| `MY_TELEGRAM_ID` | ✅ | — | 管理员 Telegram 数字 ID，只有它能用 `/admin` |
+| `BOT_USERNAME` | 建议 | 空 | 机器人用户名（不含 `@`），群聊 @ 识别用 |
+| `WEBHOOK_SECRET` | 可选 | 空 | 填了之后 Telegram 必须回传 `X-Telegram-Bot-Api-Secret-Token` |
+| `APP_TIMEZONE` | 可选 | `Asia/Shanghai` | 签到与每日额度使用的时区 |
+| `BOT_OWNER_NAME` | 可选 | `管理员` | 展示给用户的称呼 |
+| `BOT_OWNER_USERNAME` | 可选 | 空 | 管理员用户名（不含 `@`） |
+| `ADMIN_NOTIFY_CHAT_ID` | 可选 | 同 `MY_TELEGRAM_ID` | 新订单等通知发到哪个会话 |
+| `AI_MODELS` | 可选 | 内置回退链 | 逗号分隔的模型列表，覆盖默认主/备模型 |
+| `AI_HISTORY_MAX_CHARS` | 可选 | `6000` | 上下文字符预算，`>= 500` 才生效 |
+
+### 绑定
+
+| 绑定 | 类型 | 说明 |
+|------|------|------|
+| `DB` | D1 | 用户、积分、场景、商城等全部数据 |
+| `AI` | Workers AI | AI 对话；未绑定时对话会提示并自动退分 |
+
+### 本地备份配置
+
+| 文件 / 变量 | 说明 |
+|------------|------|
+| `.config-backup` | 一行 `owner/repo`，`npm run backup:config` 的目标私有仓库 |
+| `CONFIG_BACKUP_REPO` | 环境变量形式，优先级高于 `.config-backup` |
+| `GITHUB_TOKEN` / `GH_TOKEN` | 可选；不设时复用本机 Git 凭据管理器里的凭据 |
+
+---
+
+## 📖 指令列表
+
+### 普通用户
+
+| 指令 | 别名 | 说明 |
+|------|------|------|
+| `/start` | — | 欢迎信息、当前积分与额度 |
+| `/help` | `/h` | 指令列表 |
+| `/checkin` | `/sign` | 每日签到（连续签到奖励递增） |
+| `/points` | `/mypoints` | 积分流水，可翻页 |
+| `/rank` | `/top`、`/leaderboard` | 积分排行榜 Top 10 |
+| `/game` | `/games` | 游戏大厅 |
+| `/profile` | — | 个人信息卡片 |
+| `/setlang <zh/en>` | — | 切换语言偏好 |
+| `/setprompt <设定>` | `/setprompt clear` | 设置 / 清空自定义 AI 偏好 |
+| `/clear` | — | 清空当前场景的对话记忆 |
+| `/shop` | `/store` | 积分商城（**仅私聊**） |
+| `/orders` | `/myorders` | 我的订单（**仅私聊**，待处理可取消退款） |
+
+### 管理员
+
+> 以下指令需要先发 `/admin` 解锁，解锁状态 30 分钟有效。
+
+| 指令 | 说明 |
+|------|------|
+| `/admin` | 打开管理控制台 |
+| `/users` | 私聊场景列表 |
+| `/users_group` | 群聊场景列表 |
+| `/stats` | 使用统计（用户数、活跃场景、今日签到、封禁数、审计条数…） |
+| `/addpoints <场景行ID> <数量>` | 增减某用户的**全局**积分 |
+| `/clearmem me \| <群ID> \| <群ID> <用户ID>` | 清除当前 / 整群 / 某群某成员的 AI 记忆 |
+| `/shop_admin` | 商城管理（仅私聊） |
+| `/shop_add` | 引导式添加商品（仅私聊） |
+| `/shop_edit <商品ID>` | 引导式编辑商品：名称/价格/库存/分类/图标/说明（仅私聊） |
+| `/broadcast <内容>` | 群发给所有未封禁的私聊用户（仅私聊，二次确认） |
+
+### 管理控制台按钮
+
+`/admin` 面板里还能做：私聊/群聊用户列表翻页、场景编辑（限额、频率、封禁、清空记忆、删除场景）、积分增减与流水、系统状态、使用统计、操作日志、群发入口。
+
+---
+
+## 🏗️ 架构总览
 
 ```mermaid
 flowchart TB
@@ -213,18 +343,20 @@ flowchart TB
             S2[points.js]
             S3[quota.js]
             S4[time.js]
+            S5[checkin.js]
+            S6[admin-log.js]
         end
 
         subgraph INFRA["⚙️ 基础设施"]
-            I1[telegram/api.js]
+            I1[telegram/api.js<br/>含 429 退避重试]
             I2[telegram/auto-delete.js]
-            I3[core/db.js]
+            I3[core/db.js<br/>Schema + 迁移]
             I4[core/context.js]
             I5[core/logger.js]
         end
 
         D1[(D1 数据库)]
-        AI[Workers AI<br/>Llama 3.3 70B]
+        AI[Workers AI<br/>Llama 3.3 70B + 备选模型]
     end
 
     U -->|webhook| W
@@ -247,36 +379,30 @@ flowchart TB
     I1 -->|回复| U
 ```
 
-### 简化 ASCII 图
+一句话版本：
 
 ```
-┌─────────────────────────────────────────────┐
-│           Telegram Bot (Worker)             │
-├─────────────────────────────────────────────┤
-│  handlers/   →  callback / message / ai     │
-│       ↓                                     │
-│  commands/ · games/ · admin/ · shop/        │
-│       ↓                                     │
-│  services/   →  users / points / quota/time │
-│       ↓                                     │
-│  core/ + telegram/                          │
-│       ↓                                     │
-│  D1 Database + Workers AI                   │
-└─────────────────────────────────────────────┘
+Telegram 更新 → index.js → message.js / callback.js
+                              │
+      commands · games · shop · admin
+                              │
+      services（users/points/quota/checkin/admin-log）
+                              │
+      D1 数据库 + Workers AI + Telegram Bot API
 ```
 
 ---
 
 ## 🔑 用户标识与数据隔离
 
-项目使用**两套键**区分「积分」与「场景配置」：
+两套键，各管一摊：
 
-| 键 | 格式 | 用途 |
-|----|------|------|
-| `userKey` | `user:<uid>` | 积分、积分流水（**全局共享**） |
-| `sceneKey` | `private:<uid>` 或 `group:<cid>:user:<uid>` | 限额、频率、历史、语言（**按场景隔离**） |
+| 键 | 格式 | 管什么 |
+|----|------|--------|
+| `userKey` | `user:<uid>` | 积分、积分流水 —— **跨场景共享** |
+| `sceneKey` | `private:<uid>` 或 `group:<cid>:user:<uid>` | 记忆、语言、限额、频率 —— **按场景隔离** |
 
-**效果**：同一个人在不同群里 AI 记忆互相独立，但积分是同一份。
+效果：同一个人在群里和私聊的 AI 记忆互不串味，但积分是同一份。
 
 ```mermaid
 flowchart LR
@@ -292,7 +418,7 @@ flowchart LR
     end
 
     subgraph Data["💾 数据表"]
-        T1[(users<br/>积分)]
+        T1[(users<br/>积分·封禁)]
         T2[(user_scenes<br/>限额·频率·语言)]
         T3[(chat_history<br/>对话记忆)]
         T4[(daily_stats<br/>今日计数)]
@@ -336,7 +462,9 @@ flowchart TD
     CBShop -->|是| ShopRoute[shop 路由]
     CBShop -->|否| CBGame{游戏回调?}
     CBGame -->|是| GameDispatch[handleGameCallbacks]
-    CBGame -->|否| CBAdmin{是管理员?}
+    CBGame -->|否| CBPoints{积分/排行回调?}
+    CBPoints -->|是| PointsRoute[points / rank 路由]
+    CBPoints -->|否| CBAdmin{是管理员?}
     CBAdmin -->|否| CBReject[拒绝访问]
     CBAdmin -->|是| CBAdminRoute[管理员路由分发]
 
@@ -346,16 +474,20 @@ flowchart TD
     MentionCheck -->|是| CleanText[清理文本]
     GroupCheck -->|否| CleanText
 
-    CleanText --> CmdCheck{是 /指令?}
+    CleanText --> LoadCfg[读取场景配置]
+    LoadCfg --> Blocked{被封禁?}
+    Blocked -->|是| BlockMsg[提示已被限制]
+    Blocked -->|否| CmdCheck{是 /指令?}
+
     CmdCheck -->|是| CmdDispatch[dispatchCommand]
     CmdCheck -->|否| AIRoute[handleAIRequest]
 
     AIRoute --> RateLimit{频率检查}
-    RateLimit -->|通过| Quota[占每日额度]
     RateLimit -->|拒绝| RateReject[提示过快]
+    RateLimit -->|通过| Quota[占每日额度]
     Quota --> Deduct[扣积分]
-    Deduct --> CallAI[调用 Workers AI]
-    CallAI --> SaveHistory[保存历史]
+    Deduct --> CallAI[调用 Workers AI（失败自动回退）]
+    CallAI --> SaveHistory[裁剪并保存历史]
     SaveHistory --> Reply[回复用户]
 ```
 
@@ -365,47 +497,36 @@ flowchart TD
 
 ### 通用分发机制
 
-游戏采用**注册表 + 通用路由**，新增游戏只需改 3 处，不需要碰任何路由判断。
+游戏用**注册表 + 通用路由**：新增一个游戏只要改 3 处，不用碰任何路由判断。
 
 ```mermaid
 flowchart TD
-    CB["callback_data"]
-
-    CB --> Check1{以 game_ 开头?}
+    CB["callback_data"] --> Check1{以 game_ 开头?}
     Check1 -->|是| Check2{是 game_c_ ?}
     Check2 -->|是| Custom[自定义下注面板]
     Check2 -->|否| Check3{以 _main 结尾?}
     Check3 -->|是| Main[渲染游戏首页]
     Check3 -->|否| Check4{包含 _bet_ ?}
     Check4 -->|是| Bet[GAME_REGISTRY 查找]
-    Check4 -->|否| Check5{特殊二级选择?}
-    Check5 -->|dice_play| DicePlay[骰子大小]
-    Check5 -->|coin_play| CoinPlay[硬币正反]
-    Check5 -->|slots_play| SlotsPlay[老虎机直开]
-    Check5 -->|wheel_play| WheelPlay[转盘直开]
+    Check4 -->|否| Check5{二级选择?}
+    Check5 -->|dice_play| DicePlay[骰子选大小]
+    Check5 -->|coin_play| CoinPlay[硬币选正反]
+    Check5 -->|slots_play| SlotsPlay[老虎机直接开奖]
+    Check5 -->|wheel_play| WheelPlay[转盘直接开奖]
 
-    Bet --> Reg{注册表有?}
+    Bet --> Reg{注册表里有?}
     Reg -->|是| Dispatch[调用 onBetConfirm]
     Reg -->|否| Invalid[提示无效]
-
-    Dispatch --> D1[骰子 → 选大小]
-    Dispatch --> D2[老虎机 → 直接开奖]
-    Dispatch --> D3[硬币 → 选正反]
-    Dispatch --> D4[转盘 → 直接开奖]
-
-    style Dispatch fill:#b8e6b8
-    style D2 fill:#ffe4b5
-    style D4 fill:#ffe4b5
 ```
 
 ### 现有游戏
 
 | 图标 | 名称 | 二级选择 | 赔率 |
 |------|------|---------|------|
-| 🎲 | 骰子猜大小 | 有（选大/小） | 1:2 |
-| 🎰 | 欢乐老虎机 | 无（直接开奖） | 2x / 10x / 50x |
-| 🪙 | 抛硬币 | 有（正/反） | 1:2 |
-| 🎡 | 幸运转盘 | 无（直接开奖） | 0x ~ 50x |
+| 🎲 | 骰子猜大小 | 大 / 小 | 1:2 |
+| 🎰 | 欢乐老虎机 | 直接开奖 | 2x / 10x / 50x |
+| 🪙 | 抛硬币 | 正 / 反 | 1:2 |
+| 🎡 | 幸运转盘 | 直接开奖 | 0x ~ 50x |
 
 ---
 
@@ -425,8 +546,10 @@ flowchart TD
     Notify --> Admin[管理员处理]
     Admin --> Ship[标记发货]
     Admin --> Cancel[取消退款]
+    Order --> UserCancel[用户自助取消退款]
     Ship --> NotifyUser1[通知用户]
     Cancel --> NotifyUser2[通知用户 + 退分]
+    UserCancel --> NotifyUser3[通知用户 + 退分 + 回滚库存]
 ```
 
 ### 订单状态机
@@ -436,30 +559,48 @@ stateDiagram-v2
     [*] --> pending: 用户兑换
     pending --> shipped: 管理员发货
     pending --> cancelled: 管理员取消并退款
+    pending --> cancelled: 用户自助取消并退款
     shipped --> done: 管理员标记完成
     done --> [*]
     cancelled --> [*]
 ```
 
-### 数据库表
-
-| 表 | 用途 |
-|----|------|
-| `shop_items` | 商品（名称、图标、价格、库存、分类、上下架状态） |
-| `shop_orders` | 订单（订单号、用户、商品快照、价格快照、状态） |
-| `shop_order_log` | 订单操作日志（发货、取消等） |
-| `shop_add_sessions` | 管理员「添加商品」引导流程的临时状态 |
-| `shop_edit_sessions` | 管理员「编辑商品」引导流程的临时状态 |
-| `admin_logs` | 管理员操作审计日志（谁改了什么） |
-| `broadcast_drafts` | 群发草稿与进度（支持断点续发） |
-
 ### 关键设计
 
-- **商品快照**：订单保存 `item_name`、`item_icon`、`price`，即使商品被改名/删除，历史订单也能正确显示
-- **原子扣分**：`tryDeductPoints` 用 `UPDATE ... WHERE points >= ?` 保证并发安全
-- **库存不足自动退款**：扣库存失败时立即退还积分
-- **取消自动退库存 + 退积分**：事务化处理
-- **通知管理员**：优先 `ADMIN_NOTIFY_CHAT_ID`，兜底 `MY_TELEGRAM_ID`
+- **商品快照**：订单保存 `item_name` / `item_icon` / `price`，之后改名改价不影响历史订单
+- **原子扣分**：`UPDATE users SET points = points - ? WHERE points >= ?`，并发不会超扣
+- **原子取消**：`UPDATE ... SET status='cancelled' WHERE id=? AND status='pending'`，只有真正把状态从 pending 改掉的那一次才退款，不会重复退
+- **库存不足自动退款**：扣库存失败立即退还积分
+- **取消退款链路**：退积分 → 回滚库存 → 写 `shop_order_log` → 通知用户（+ 管理员）
+- **通知管理员**：优先 `ADMIN_NOTIFY_CHAT_ID`，否则用 `MY_TELEGRAM_ID`
+
+---
+
+## 👑 管理后台
+
+### 入口
+
+- `/admin` —— 主面板（30 分钟会话）
+- 面板按钮：私聊用户管理、群聊用户管理、商城管理、系统运行状态、使用统计、操作日志、清空我的记忆、关闭菜单
+
+### 能做什么
+
+| 操作 | 位置 |
+|------|------|
+| 查/改用户积分（含流水） | 用户列表 → 场景编辑 → 积分 |
+| 调每日额度、发送频率 | 场景编辑 → 限额 / 频率 |
+| 封禁 / 解封用户 | 场景编辑 → 🚫 封禁此用户 |
+| 清除某场景 / 某群成员的 AI 记忆 | 场景编辑 → 🧹 清空此场景记忆，或 `/clearmem` |
+| 删除场景（积分保留） | 场景编辑 → 🗑️ 删除此场景 |
+| 商品增删改、上下架 | 商城管理 → 商品列表 → 商品详情 |
+| 订单发货 / 完成 / 取消退款 | 商城管理 → 待处理订单 |
+| 全部订单查询 | 商城管理 → 全部订单 |
+| 群发通知 | `/broadcast <内容>` |
+| 审计谁改了什么 | 操作日志（可翻页） |
+
+### 操作审计
+
+以下动作都会写入 `admin_logs`：添加/编辑/上下架/删除商品、订单发货/完成/取消退款、调整积分、调限额/频率、删除场景、清除记忆、封禁/解封、群发完成/取消。
 
 ---
 
@@ -467,51 +608,20 @@ stateDiagram-v2
 
 ```mermaid
 graph LR
-    Root[src/]
-
-    Root --> C[config/]
-    Root --> Core[core/]
-    Root --> T[telegram/]
-    Root --> H[handlers/]
-    Root --> A[admin/]
-    Root --> G[games/]
-    Root --> S[services/]
-    Root --> Sh[shop/]
-    Root --> U[utils/]
-    Root --> I[index.js]
+    Root[src/] --> C[config/] & Core[core/] & T[telegram/] & H[handlers/]
+    Root --> A[admin/] & G[games/] & S[services/] & Sh[shop/] & U[utils/] & I[index.js]
 
     C --> C1[constants.js]
     C --> C2[messages.js]
-
     Core --> Co1[context.js]
     Core --> Co2[db.js]
     Core --> Co3[logger.js]
-
     T --> T1[api.js]
     T --> T2[auto-delete.js]
-
     H --> H1[callback.js]
     H --> H2[message.js]
     H --> H3[ai.js]
     H --> H4[commands/]
-
-    H4 --> Cmd1[index.js]
-    H4 --> Cmd2[start.js]
-    H4 --> Cmd3[help.js]
-    H4 --> Cmd4[checkin.js]
-    H4 --> Cmd5[profile.js]
-    H4 --> Cmd6[setlang.js]
-    H4 --> Cmd7[setprompt.js]
-    H4 --> Cmd8[clear.js]
-    H4 --> Cmd9[game.js]
-    H4 --> Cmd10[shop.js]
-    H4 --> Cmd11[orders.js]
-    H4 --> Cmd12[admin/]
-    H4 --> Cmd13[points.js]
-    H4 --> Cmd14[rank.js]
-    H4 --> Cmd15[broadcast.js]
-    H4 --> Cmd16[clearmem.js]
-
     A --> A1[menus.js]
     A --> A2[user-list.js]
     A --> A3[user-edit.js]
@@ -521,29 +631,9 @@ graph LR
     A --> A7[user-rate.js]
     A --> A8[stats.js]
     A --> A9[logs.js]
-
-    G --> G1[index.js]
-    G --> G2[shared.js]
-    G --> G3[dice.js]
-    G --> G4[slots.js]
-    G --> G5[coin.js]
-    G --> G6[wheel.js]
-
-    Sh --> Sh1[index.js]
-    Sh --> Sh2[admin.js]
-    Sh --> Sh3[actions.js]
-    Sh --> Sh4[notify.js]
-    Sh --> Sh5[add.js]
-    Sh --> Sh6[edit.js]
-
-    S --> S1[users.js]
-    S --> S2[points.js]
-    S --> S3[quota.js]
-    S --> S4[time.js]
-    S --> S5[checkin.js]
-    S --> S6[admin-log.js]
-
-    U --> U1[html.js]
+    G --> G1[index.js] & G2[shared.js] & G3[dice.js] & G4[slots.js] & G5[coin.js] & G6[wheel.js]
+    Sh --> Sh1[index.js] & Sh2[admin.js] & Sh3[actions.js] & Sh4[notify.js] & Sh5[add.js] & Sh6[edit.js]
+    S --> S1[users.js] & S2[points.js] & S3[quota.js] & S4[time.js] & S5[checkin.js] & S6[admin-log.js]
 
     style Root fill:#4a90e2,color:#fff
     style G fill:#e8b84b
@@ -552,338 +642,230 @@ graph LR
     style S fill:#7cb87c,color:#fff
 ```
 
-### 完整目录树（文字版）
+文字版：
 
 ```
 tgbot/
-├── wrangler.toml                    # Cloudflare Workers 配置（GitHub 模板）
-├── wrangler.production.toml         # 生产配置（本地，勿提交）
-├── README.md                        # 项目说明
-├── CHANGELOG.md                     # 版本历史
-│
+├── package.json                 # 脚本：dev / deploy:prod / check / backup*
+├── wrangler.toml                # 开源模板配置（占位符）
+├── wrangler.production.toml     # 生产配置（本地，gitignore）
+├── .dev.vars                    # 本地开发变量（gitignore）
+├── .config-backup               # 配置备份目标仓库（gitignore）
+├── CHANGELOG.md
+├── README.md
+├── scripts/
+│   ├── backup.mjs               # D1 导出（npm run backup）
+│   ├── backup-config.mjs        # 配置备份到私有仓库（npm run backup:config）
+│   └── check.mjs                # 语法 + import 自检（npm run check）
+├── .github/workflows/
+│   ├── ci.yml                   # push / PR 自检
+│   └── deploy.yml               # 可选的 CI 自动部署（未配 Secrets 时跳过）
 └── src/
-    ├── index.js                     # 🚀 Worker 入口
-    │
-    ├── config/                      # ⚙️ 配置层
-    │   ├── constants.js             # 全局常量（含商城常量）
-    │   └── messages.js              # 用户可见文案
-    │
-    ├── core/                        # 🧱 核心基础
-    │   ├── context.js               # 用户上下文构建（userKey / sceneKey）
-    │   ├── db.js                    # 数据库 Schema（含商城表）
-    │   └── logger.js                # 日志封装
-    │
-    ├── telegram/                    # 📡 Telegram 交互层
-    │   ├── api.js                   # Bot API 封装
-    │   └── auto-delete.js           # 群聊指令类消息 5 秒自动删除
-    │
-    ├── handlers/                    # 🎯 处理器
-    │   ├── callback.js              # callback_query 总入口
-    │   ├── message.js               # 普通消息总入口
-    │   ├── ai.js                    # AI 对话流程
-    │   └── commands/                # 📖 指令实现
-    │       ├── index.js             # 指令注册表
-    │       ├── start.js
-    │       ├── help.js
-    │       ├── checkin.js
-    │       ├── profile.js
-    │       ├── setlang.js
-    │       ├── setprompt.js
-    │       ├── clear.js
-    │       ├── game.js
-    │       ├── shop.js              # /shop 入口
-    │       ├── orders.js            # /orders 入口
-    │       ├── points.js            # /points 积分流水（分页）
-    │       ├── rank.js              # /rank 积分排行榜
-    │       ├── broadcast.js         # /broadcast 管理员群发
-    │       ├── clearmem.js          # /clearmem 清除 AI 记忆
-    │       └── admin/
-    │           └── index.js         # /admin /users /users_group /stats /addpoints
-    │
-    ├── admin/                       # 👑 管理面板 UI
-    │   ├── menus.js                 # 主菜单（支持 showShop 参数）
-    │   ├── user-list.js             # 用户列表（私聊/群聊）
-    │   ├── user-edit.js             # 场景编辑 + 删除
-    │   ├── user-points.js           # 积分增减
-    │   ├── user-points-log.js       # 积分流水
-    │   ├── user-limit.js            # 每日限额
-    │   ├── user-rate.js             # 发送频率
-    │   ├── logs.js                  # 📋 管理员操作日志
-    │   └── stats.js                 # 系统统计
-    │
-    ├── games/                       # 🎮 游戏模块
-    │   ├── index.js                 # 注册表 + 分发器
-    │   ├── shared.js                # 自定义下注面板
-    │   ├── dice.js                  # 🎲 骰子猜大小
-    │   ├── slots.js                 # 🎰 欢乐老虎机
-    │   ├── coin.js                  # 🪙 抛硬币
-    │   └── wheel.js                 # 🎡 幸运转盘
-    │
-    ├── shop/                        # 🛒 积分商城
-    │   ├── index.js                 # 用户侧：首页 / 详情 / 兑换 / 我的订单
-    │   ├── admin.js                 # 管理员侧：商品/订单管理 UI
-    │   ├── add.js                   # 管理员引导式添加商品
-    │   ├── edit.js                  # 管理员引导式编辑商品字段
-    │   ├── actions.js               # 上下架/删除/发货/取消退款（用户与管理员共用）
-    │   └── notify.js                # 通知管理员
-    │
-    ├── services/                    # 🔧 业务服务层
-    │   ├── users.js                 # 用户/场景 upsert、配置读写
-    │   ├── points.js                # 积分加减、退款、流水
-    │   ├── checkin.js               # 连续签到天数与递增奖励
-    │   ├── quota.js                 # 每日额度预留、退款
-    │   ├── admin-log.js             # 管理员操作审计日志
-    │   └── time.js                  # 时区、日期键
-    │
-    └── utils/                       # 🔨 工具
-        └── html.js                  # HTML 转义
-
-scripts/
-├── backup.mjs                       # 💾 D1 一键备份（npm run backup）
-└── check.mjs                        # ✅ 代码自检（npm run check）
-
-.github/workflows/
-├── ci.yml                           # 自检（push / PR）
-└── deploy.yml                       # 自动部署到 Cloudflare Workers
+    ├── index.js                 # Worker 入口：安全校验 → 建表 → 分发
+    ├── config/                  # constants.js（常量/回调前缀）· messages.js（文案）
+    ├── core/                    # context.js（userKey/sceneKey）· db.js（Schema+迁移）· logger.js
+    ├── telegram/                # api.js（含 429 重试）· auto-delete.js
+    ├── handlers/
+    │   ├── message.js           # 消息总入口：群聊判定 → 封禁校验 → 指令/AI
+    │   ├── callback.js          # 按钮总入口：商城 → 游戏 → 积分 → 管理员
+    │   ├── ai.js                # AI 对话：配额 → 扣分 → 模型回退 → 裁剪历史
+    │   └── commands/            # 各指令实现 + commands/admin/
+    ├── admin/                   # 管理面板 UI（用户·积分·限额·频率·统计·日志）
+    ├── games/                   # 游戏注册表 + 4 个游戏
+    ├── shop/                    # 商城（用户侧·管理员侧·添加·编辑·动作·通知）
+    ├── services/                # users · points · quota · time · checkin · admin-log
+    └── utils/                   # html.js（转义）· random.js（加密随机数）
 ```
 
 ---
 
-## 🚀 部署步骤
+## 🗄️ 数据库表
 
-### 前置要求
-- Windows / macOS / Linux
-- Node.js 18+ 与 npm
-- Cloudflare 账号（免费版即可）
+全部由 `src/core/db.js` 的 `ensureSchema()` 在首次请求时自动创建（`CREATE TABLE IF NOT EXISTS`），新增字段走幂等迁移（`ALTER TABLE ... ADD COLUMN`，已存在就忽略）。
 
-### 1. 安装 Node.js
+| 表 | 用途 |
+|----|------|
+| `users` | 全局用户：积分、用户名、**封禁状态 `blocked`** |
+| `user_scenes` | 场景配置：语言、自定义 prompt、每日额度、发送频率、最后发言时间 |
+| `chat_history` | 每个场景的 AI 对话记忆（JSON） |
+| `daily_stats` | 每个场景每天的消息计数（额度控制） |
+| `daily_checkin` | 签到记录（用户 + 日期，用于计算连续天数） |
+| `points_log` | 积分流水：变动值、变动后余额、原因、时间 |
+| `admin_sessions` | 管理员解锁会话（30 分钟过期） |
+| `shop_items` | 商品：名称、说明、图标、价格、库存、分类、上下架 |
+| `shop_orders` | 订单：订单号、用户、商品快照、价格快照、状态、备注 |
+| `shop_order_log` | 订单操作日志（发货、完成、取消…） |
+| `shop_add_sessions` | 引导式「添加商品」的中间状态 |
+| `shop_edit_sessions` | 引导式「编辑商品」的中间状态 |
+| `admin_logs` | 管理员操作审计 |
+| `broadcast_drafts` | 群发草稿与进度游标（支持断点续发） |
 
-从 https://nodejs.org/ 下载 LTS 版本并安装。
+---
 
-验证：
-
-```bash
-node -v
-npm -v
-```
-
-### 2. 安装 Wrangler
-
-```bash
-npm install -g wrangler
-```
-
-### 3. 登录 Cloudflare
-
-```bash
-wrangler login
-```
-
-### 4. 创建项目
+## 🛠️ 运维命令
 
 ```bash
-mkdir tgbot
-cd tgbot
+# 部署 / 本地开发
+npm run deploy:prod                    # 部署到 Cloudflare（用 wrangler.production.toml）
+npm run dev                            # 本地预览（用 .dev.vars）
+npm run check                          # 语法 + import 自检
+
+# 日志与版本
+npx wrangler tail                      # 实时日志
+npx wrangler versions list             # Worker 版本历史
+
+# 数据库
+npx wrangler d1 execute tgbot-db --remote --command "SELECT * FROM users LIMIT 10;" -c wrangler.production.toml
+npx wrangler d1 execute tgbot-db --remote --file=some.sql -c wrangler.production.toml
 ```
 
-### 5. 准备配置文件
+### CI（可选）
 
-项目拆分为两个配置文件：
+仓库里有两个工作流，**本地部署用不到**，留着是给「想在 CI 里部署」的场景：
 
-| 文件 | 用途 | 是否提交 GitHub |
-|------|------|----------------|
-| `wrangler.toml` | GitHub 模板，只含占位符，不含真实密钥 | ✅ 提交 |
-| `wrangler.production.toml` | 生产配置，含真实 Token / ID / D1 database_id | ❌ 已加入 `.gitignore` |
-
-`wrangler.production.toml` 示例：
-
-```toml
-name = "tgbot"
-main = "src/index.js"
-compatibility_date = "2025-01-01"
-
-[vars]
-BOT_TOKEN = "你的机器人Token"
-BOT_USERNAME = "你的机器人用户名（不含 @）"
-MY_TELEGRAM_ID = "你的Telegram数字ID"
-APP_TIMEZONE = "Asia/Shanghai"
-BOT_OWNER_NAME = "管理员"
-BOT_OWNER_USERNAME = "你的管理员用户名（不含 @）"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "tgbot-db"
-database_id = "你的D1数据库ID"
-
-[ai]
-binding = "AI"
-```
-
-### 6. 创建 D1 数据库
-
-```bash
-wrangler d1 create tgbot-db
-```
-
-把输出的 `database_id` 填到 `wrangler.production.toml`。
-
-### 7. 初始化数据库表
-
-部署后第一次收到 Bot 消息时，Worker 会自动调用 `ensureSchema` 建表，无需手动执行。
-
-（可选）如需手动执行，可把 `src/core/db.js` 里的 `SCHEMA_SQL` 复制到 Cloudflare Dashboard → D1 → Console 执行；所有语句都是 `CREATE TABLE IF NOT EXISTS`，可以**重复执行**。
-
-### 8. 配置环境变量
-
-生产环境变量写在 `wrangler.production.toml` 的 `[vars]` 中：
-
-| 变量名 | 说明 | 必填 |
+| 工作流 | 触发 | 作用 |
 |--------|------|------|
-| `BOT_TOKEN` | Telegram Bot Token | ✅ |
-| `MY_TELEGRAM_ID` | 管理员 Telegram 数字 ID | ✅ |
-| `WEBHOOK_SECRET` | webhook 安全令牌（可选，需与 setWebhook 的 secret_token 一致） | 可选 |
-| `BOT_USERNAME` | 机器人用户名（不含 @） | 建议 |
-| `APP_TIMEZONE` | 时区（默认 `Asia/Shanghai`） | 可选 |
-| `BOT_OWNER_NAME` | 管理员显示名称 | 可选 |
-| `BOT_OWNER_USERNAME` | 管理员用户名 | 可选 |
+| `.github/workflows/ci.yml` | push / PR | `npm ci` + `npm run check` 自检 |
+| `.github/workflows/deploy.yml` | push 到 main / 手动 | 自检后部署；**没配 Secrets 时只打 warning 并跳过** |
 
-> 若更看重安全性，可把 `BOT_TOKEN` 改为 Worker Secret，而不是写入 `[vars]`。
-
-### 9. 部署
-
-```bash
-wrangler deploy -c wrangler.production.toml
-```
-
-### 10. 绑定 Webhook
-
-访问：
-
-```
-https://api.telegram.org/bot<你的BOT_TOKEN>/setWebhook?url=<你的Worker URL>
-```
-
-返回 `{"ok":true,...}` 即成功。
-
-### 11. 关闭群聊 Privacy Mode（重要）
-
-去 **@BotFather**：
-
-1. `/mybots` → 选择你的 bot
-2. **Bot Settings** → **Group Privacy** → **Turn off**
-3. 把 bot 从所有群里移除再重新添加
-
-### 12. 添加测试商品
-
-在 D1 Console 执行：
-
-```sql
-INSERT INTO shop_items (name, description, icon, price, stock, category, enabled) VALUES
-  ('专属称号', '在群内显示专属称号', '🏷️', 50, -1, 'virtual', 1),
-  ('AI 加速包 (10 次)', '免消耗 10 次 AI 对话额度', '⚡', 100, -1, 'service', 1),
-  ('定制表情包', '管理员为你制作 1 个专属表情', '🎨', 200, 5, 'virtual', 1);
-```
+想启用 CI 自动部署，需要在仓库 `Settings → Secrets and variables → Actions` 配置 `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`、`D1_DATABASE_ID`、`BOT_TOKEN`、`MY_TELEGRAM_ID`（可选 `WEBHOOK_SECRET`），以及非敏感的 Variables `WORKER_NAME`、`D1_DATABASE_NAME`、`BOT_USERNAME`、`APP_TIMEZONE`、`BOT_OWNER_NAME`、`BOT_OWNER_USERNAME`。
 
 ---
 
-## 📖 指令列表
+## 💾 备份与恢复
 
-### 普通用户
+### 1. 数据库（D1）
 
-| 指令 | 说明 |
-|------|------|
-| `/start` | 开始使用 |
-| `/help` | 查看指令列表 |
-| `/checkin` 或 `/sign` | 每日签到（连续签到奖励递增） |
-| `/points` | 积分流水（可翻页） |
-| `/rank` | 积分排行榜 Top 10 |
-| `/game` | 打开游戏大厅 |
-| `/profile` | 查看个人信息卡片 |
-| `/setlang <zh/en>` | 切换语言 |
-| `/setprompt <设定>` | 设置 AI 偏好 |
-| `/clear` | 清空对话历史 |
-| `/shop` | 打开积分商城（仅私聊） |
-| `/orders` | 查看我的订单，待处理可取消退款（仅私聊） |
+```bash
+npm run backup          # 导出线上库到 backups/tgbot-db-remote-<时间戳>.sql
+npm run backup:local    # 导出本地 wrangler dev 的库
+```
 
-### 管理员
+导出内容包含**结构 + 数据**。恢复：
 
-| 指令 | 说明 |
-|------|------|
-| `/admin` | 打开管理控制台 |
-| `/users` | 私聊用户管理 |
-| `/users_group` | 群聊用户管理 |
-| `/stats` | 系统统计 |
-| `/addpoints <场景ID> <数量>` | 调整用户积分 |
-| `/clearmem <群ID> [用户ID]` | 清除指定场景 / 群组 / 群成员的 AI 记忆 |
-| `/shop_admin` | 打开商城管理（仅私聊，需先 /admin） |
-| `/shop_add` | 引导式添加商品（仅私聊，需先 /admin） |
-| `/shop_edit <商品ID>` | 引导式编辑商品（仅私聊，需先 /admin） |
-| `/broadcast <内容>` | 群发给所有私聊用户（仅私聊，需先 /admin） |
+```bash
+npx wrangler d1 execute tgbot-db --remote --file=backups/tgbot-db-remote-2026-09-12T10-00-00.sql -c wrangler.production.toml
+```
 
-管理员控制台里还有：📋 操作日志、🚫 封禁/解封用户、🧹 清空场景记忆等按钮入口。
+`backups/` 已在 `.gitignore` 中。
 
-> 管理员指令需先输入 `/admin` 解锁，30 分钟内有效。
+### 2. 生产配置（含 Bot Token）
+
+```bash
+npm run backup:config
+```
+
+- 备份 `wrangler.production.toml` + `.dev.vars` 到私有仓库
+- 目标仓库来自 `.config-backup`（一行 `owner/repo`）或环境变量 `CONFIG_BACKUP_REPO`
+- **只允许私有仓库**：脚本上传前会检查目标仓库可见性，公开仓库直接中止
+- 内容没变化时跳过，不产生多余提交
+- 换电脑恢复：克隆私有仓库 → 把两个文件复制回项目根目录 → `npm install && npm run deploy:prod`
+
+### 3. 定时备份（可选）
+
+1. **Windows 计划任务**：每天执行 `npm run backup`，起始位置设为项目根目录
+2. **GitHub Actions**：配好 `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` 后，用 cron 定时 `wrangler d1 export` 并把结果上传为 artifact
+3. **Workers Cron Triggers**：`wrangler.toml` 加 `[triggers] crons = ["0 18 * * *"]`，在 `src/index.js` 的 `scheduled()` 里导出到 R2
+
+> 数据库表结构与增量迁移都由 Worker 自动完成，恢复后无需手动建表。
+
+---
+
+## 🔐 安全说明
+
+- **Bot Token 永不入库**：只存在本地 `wrangler.production.toml`（及其私有备份仓库），公开仓库里全是占位符
+- **管理员校验**：只有 `MY_TELEGRAM_ID` 能用 `/admin`，会话 30 分钟过期
+- **Webhook 校验（可选）**：设置 `WEBHOOK_SECRET` 后，缺少正确 `X-Telegram-Bot-Api-Secret-Token` 的请求直接 401
+- **封禁机制**：`users.blocked = 1` 的用户在「消息」与「按钮回调」两条链路上都被拦截
+- **审计**：积分变动（`points_log`）、订单变更（`shop_order_log`）、管理操作（`admin_logs`）全都有记录
+- **原子写**：扣分、扣库存、取消订单都用条件 UPDATE，避免并发超扣或重复退款
+- **HTML 转义**：用户可控文本（商品名、订单内容等）统一经 `escapeHtml` 处理
+- **加密随机**：游戏开奖与订单号使用 `crypto.getRandomValues`，不用 `Math.random`
+- **限流重试**：Telegram 429 / 5xx / 网络抖动自动退避重试（最多 3 次，尊重 `retry_after`），业务类 4xx 不重试
+
+> ⚠️ 上公网前建议自查一次：`wrangler.production.toml`、`.dev.vars`、`.config-backup` 都应在 `.gitignore` 中（模板已默认忽略），可用 `npm run check` 与 `git ls-files` 复核。
+
+---
+
+## ⚖️ 合规说明
+
+本项目的积分仅用于**社区互动**：
+
+- ❌ 不与法币双向兑换（积分不可提现）
+- ❌ 不承诺积分升值、分红或投资收益
+- ❌ 不涉及二级市场交易
+- ✅ 积分只能兑换平台内商品 / 服务
+- ✅ 每笔变动有完整流水
+- ✅ 管理员可随时查账并封禁异常账号
+
+若未来引入商户通兑或链上存证，需另行评估合规性：跨商户通兑要有真实商户合作，链上存证只用于透明记录、不得承诺收益，积分依然不可反向兑换法币。
 
 ---
 
 ## 🔧 常见问题
 
-### Q1: 部署时报 "Could not resolve xxx.js"
-**原因**：`import` 的路径对应的文件不存在。
-**解决**：检查文件是否创建，路径是否正确（注意大小写）。
+### Q1. 部署报 `Could not resolve "xxx.js"`
+`import` 的文件不存在或路径写错（注意大小写）。先跑 `npm run check`，它会一次性列出所有失效的 import。
 
-### Q2: 部署时报 "The symbol xxx has already been declared"
-**原因**：某个文件的代码被**粘贴了两遍**。
-**解决**：打开对应文件，删除重复部分。用 `Ctrl+Shift+F` 搜索 `import {` 检查。
+### Q2. 群里 @ 机器人不回复
+1. 确认已按快速开始第 6 步关闭 Privacy Mode（改完要把 bot 移出群再加回来）
+2. 确认 `BOT_USERNAME` 填的是不带 `@` 的用户名
+3. 群消息里确实带了 `@机器人` 或 `/指令`
 
-### Q3: 部署时报 "Expected '}' but found '...'"
-**原因**：某个对象/数组**漏了逗号**，或括号未闭合。
-**解决**：检查报错行附近。常见的是 `COMMANDS` 对象最后一项后面漏逗号。
+### Q3. 点按钮没反应 / 提示未知操作
+看实时日志 `npx wrangler tail`，确认 `callback_data` 前缀与 `src/handlers/callback.js` 的路由一致；`npm run check` 也能先排除语法问题。
 
-### Q4: 点按钮没反应
-**排查**：
-1. Dashboard → Worker → Logs（实时日志）
-2. 看有没有 `handleGameCallbacks 异常` 或 `callback 未匹配`
-3. 检查 `callback_data` 前缀与路由是否一致
+### Q4. 提示「AI 服务暂时异常，积分已退回」
+说明所有模型都调用失败。日志里会打印 `所有 AI 模型均调用失败`，常见原因是 Workers AI 未绑定（`[ai] binding = "AI"`）或额度耗尽；未绑定时机器人会明确提示并自动退分。
 
-### Q5: 群里不回复
-1. 确认已关闭 Privacy Mode
-2. 确认 `BOT_USERNAME` 环境变量填对
-3. 确认消息里确实有 `@bot` 或 `/`
+### Q5. 签到日期不对
+默认按 `APP_TIMEZONE`（`Asia/Shanghai`）判定。要换时区就改这个变量，例如 `Asia/Tokyo`。
 
-### Q6: 积分不同步
-检查是不是用了旧的单文件版本。新架构中积分基于 `userKey`（`user:<uid>`），跨私聊/群聊共享。
+### Q6. 积分在不同群里不同步
+积分按 `userKey = user:<uid>` 全局共享。若表现不一致，检查是不是手动改过 `users` 表或用了旧版单文件代码。
 
-### Q7: 签到日期不对
-- 默认 `Asia/Shanghai`（北京时间）
-- 若需要其他时区，设置环境变量 `APP_TIMEZONE=Asia/Tokyo` 等
+### Q7. 管理员收不到新订单通知
+1. 管理员必须先和 bot 私聊过（发过 `/start`），否则 Telegram 不允许主动推送
+2. 检查 `MY_TELEGRAM_ID` / `ADMIN_NOTIFY_CHAT_ID`
+3. 看日志里有没有 `通知管理员失败`
 
-### Q8: 管理员收不到商城订单通知
-1. 确认管理员**已经跟 Bot 私聊过**（发过 `/start`）
-2. 确认 `MY_TELEGRAM_ID` 或 `ADMIN_NOTIFY_CHAT_ID` 填对
-3. 看 Cloudflare 日志有没有 `通知管理员失败`
+### Q8. 群聊里点商城按钮弹「仅支持私聊」
+预期行为，商城只在私聊开放，避免群里刷单。
 
-### Q9: 群聊里点商城按钮弹「仅支持私聊」
-这是**预期行为**。商城只支持私聊。群里点任何商城按钮都会被拒绝。
+### Q9. 兑换后积分没扣 / 状态不对
+查 `points_log` 与 `shop_orders`。若积分已扣但订单没生成，说明下单环节出错——代码里已做「回滚积分 + 恢复库存」，日志搜 `商城创建订单失败`。
 
-### Q10: 兑换后积分没扣
-检查 `points_log` 表有没有记录。如果没记录，说明 `handleShopBuy` 里的 `tryDeductPoints` 出错了。
+### Q10. 群发到一半停了
+群发按时间预算分批执行，超时会提示「▶️ 继续发送」，点一下接着发剩余用户即可。失败计数一般来自被用户拉黑或账号失效。
+
+### Q11. 用户被误封了怎么解
+`/admin → 用户列表 → 该用户 → ✅ 解封此用户`。被封禁用户自己发消息只会收到「已被限制」提示。
+
+### Q12. 换了电脑，怎么快速恢复
+```bash
+git clone https://github.com/<你的账号>/tgbot.git && cd tgbot && npm install
+git clone https://github.com/<你的私有备份仓库>.git ../tgbot-config
+cp ../tgbot-config/wrangler.production.toml ../tgbot-config/.dev.vars .
+npx wrangler login && npm run deploy:prod
+```
+数据库与表结构不用管：Worker 首次请求会自动建表 / 迁移。
 
 ---
 
-## 🧩 扩展新游戏
+## 🧩 扩展指南
 
-在 `src/games/` 目录下创建一个新文件（如 `lucky.js`）：
+### 新增一个小游戏
+
+1. 新建 `src/games/lucky.js`：
 
 ```js
-// src/games/lucky.js
 import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
 
 export const LuckyGame = {
   async renderMain(token, env, chatId, userKey, messageId) {
-    // 渲染首页（选金额）
+    // 渲染选金额首页
   },
   async play(token, env, callbackId, chatId, userKey, messageId, betAmount) {
     // 开奖逻辑
@@ -891,10 +873,7 @@ export const LuckyGame = {
 };
 ```
 
-然后在 `src/games/index.js` 里：
-
-1. `import { LuckyGame } from "./lucky.js";`
-2. 在 `GAME_REGISTRY` 加一项：
+2. `src/games/index.js` 里 `import { LuckyGame } from "./lucky.js";`，并在 `GAME_REGISTRY` 注册：
 
 ```js
 lucky: {
@@ -903,223 +882,22 @@ lucky: {
 }
 ```
 
-3. 在 `renderGameCenter` 里加一个按钮：
+3. 在 `renderGameCenter` 里加一个按钮：`{ text: "🍀 幸运游戏", callback_data: "game_lucky_main" }`
 
-```js
-[{ text: "🍀 幸运游戏", callback_data: "game_lucky_main" }]
-```
+通用路由会自动处理 `game_lucky_main` / `game_lucky_bet_N` / `game_lucky_play_N`，无需改别处。
 
-**完成**！通用路由会自动处理 `game_lucky_main` / `game_lucky_bet_N` / `game_lucky_play_N`。
+### 新增一条指令
 
----
+1. 在 `src/handlers/commands/` 新建文件导出处理函数
+2. 在 `src/handlers/commands/index.js` 的 `COMMANDS` 注册（普通用户指令）
+3. 管理员指令在 `src/handlers/message.js` 加分支，并调用 `checkAdminUnlocked` 做权限校验
+4. 同步更新 `src/handlers/commands/help.js` 与本文档
 
-## 🛒 扩展商城
+### 商城扩展
 
-### 添加商品
-
-**方式 1**：D1 Console 直接 INSERT（推荐，简单）
-
-```sql
-INSERT INTO shop_items (name, description, icon, price, stock, category, enabled)
-VALUES ('新商品名', '商品说明', '🎁', 100, -1, 'virtual', 1);
-```
-
-**方式 2**：后续可加「对话式添加商品」功能（管理员在私聊里逐步输入商品信息）
-
-### 添加新订单动作
-
-在 `src/shop/actions.js` 里加一个函数，比如「退款但保留订单」：
-
-```js
-export async function actionRefundOnly(token, env, callback, orderId) {
-  const o = await env.DB.prepare("SELECT * FROM shop_orders WHERE id = ?").bind(orderId).first();
-  if (!o || o.status === "cancelled") return answerCallback(token, callback.id, "❌ 无法操作", true);
-
-  await refundPoint(env, o.user_key, o.price, `订单 ${o.order_no} 单独退款`);
-
-  await env.DB.prepare(
-    "INSERT INTO shop_order_log (order_id, action, note) VALUES (?, 'refunded_only', 'admin')"
-  ).bind(orderId).run();
-
-  await answerCallback(token, callback.id, "✅ 已退款");
-}
-```
-
-然后在 `src/shop/admin.js` 的订单详情里加按钮，在 `src/handlers/callback.js` 加路由 `shop_admin_refund_`。
-
-### 增加商品分类
-
-修改 `shop_items.category` 字段的取值，比如加 `coupon`（优惠券）、`subscription`（订阅）。前端展示时按分类过滤。
-
----
-
-## 🛠️ 常用命令
-
-```bash
-# 部署到生产环境（使用本地生产配置）
-wrangler deploy -c wrangler.production.toml
-
-# 本地预览
-wrangler dev
-
-# 查看实时日志
-wrangler tail
-
-# 操作数据库
-wrangler d1 execute tgbot-db --remote --command "SELECT * FROM users LIMIT 10;"
-
-# 导出数据（手动）
-wrangler d1 export tgbot-db --output=backup.sql --remote -c wrangler.production.toml
-
-# 备份（一键，输出到 backups/ 目录，文件名带时间戳）
-npm run backup          # 备份线上库
-npm run backup:local    # 备份本地 wrangler dev 库
-npm run backup:config   # 备份生产配置到私有仓库（含 Token）
-
-# 代码自检（语法 + import 路径）
-npm run check
-
-# 部署（生产配置）
-npm run deploy:prod
-
-# 查看 Worker 版本
-wrangler versions list
-```
-
-### 🔄 GitHub Actions（可选，本机部署用不到）
-
-日常工作流是**本地部署**：写完代码 `git push` 备份，部署执行 `npm run deploy:prod`，不需要任何 Actions 配置。仓库里的两个工作流只是给"想在 CI 里部署"的人准备的：
-
-| 工作流 | 触发时机 | 作用 |
-|--------|---------|------|
-| `.github/workflows/ci.yml` | push / PR | `npm ci` + `npm run check`（语法与 import 路径自检） |
-| `.github/workflows/deploy.yml` | push 到 main / 手动触发 | 自检通过后生成生产配置并执行 `wrangler deploy`（没配 Secrets 时自动跳过） |
-
-**启用自动部署**：到仓库 `Settings → Secrets and variables → Actions` 添加以下 Secrets：
-
-| Secret | 必填 | 说明 |
-|--------|------|------|
-| `CLOUDFLARE_API_TOKEN` | ✅ | Cloudflare API Token，权限需含 `Workers Scripts:Edit`、`D1:Edit`、`Account Settings:Read` |
-| `CLOUDFLARE_ACCOUNT_ID` | ✅ | Cloudflare 账号 ID（`wrangler whoami` 可查） |
-| `D1_DATABASE_ID` | ✅ | D1 数据库 ID |
-| `BOT_TOKEN` | ✅ | BotFather 颁发的机器人 Token |
-| `MY_TELEGRAM_ID` | ✅ | 管理员 Telegram 数字 ID |
-| `WEBHOOK_SECRET` | 可选 | 设置后 Telegram 会校验 `X-Telegram-Bot-Api-Secret-Token` |
-
-也可以在 `Settings → Variables`（非密钥，公开可见）里覆盖这些非敏感参数：
-
-| Variable | 默认值 | 说明 |
-|----------|--------|------|
-| `WORKER_NAME` | `tgbot` | Cloudflare Worker 名称 |
-| `D1_DATABASE_NAME` | `tgbot-db` | D1 数据库名称 |
-| `BOT_USERNAME` | 空 | 机器人用户名，用于群聊 @ 识别 |
-| `APP_TIMEZONE` | `Asia/Shanghai` | 额度/签到所用时区 |
-| `BOT_OWNER_NAME` | `管理员` | 展示给用户的管理员称呼 |
-| `BOT_OWNER_USERNAME` | 空 | 管理员用户名（不含 @） |
-
-> **建议只在私有生产仓库配置 Secrets 与 Variables。** 开源模板仓库保持零配置，别人 fork 后按上表填自己的值即可。
-
-没配置 Secrets 时部署工作流**不会变红**：它会打印一条 `::warning` 并跳过部署；补好 Secrets 后再推一次代码（或在 Actions 页面手动 Run workflow）即可完成自动部署。
-
-> `wrangler.production.toml` 含密钥、不进仓库，CI 部署前会用 Secrets 现场生成，因此仓库始终是安全的模板状态。
-> 数据库表结构与增量迁移由 Worker 首次请求时自动完成（`src/core/db.js`），无需在 CI 里单独执行 SQL。
-
-### 💾 数据备份与恢复
-
-`npm run backup` 会调用 [scripts/backup.mjs](scripts/backup.mjs)，
-按 `backups/tgbot-db-remote-<时间戳>.sql` 导出**结构 + 数据**（默认使用 `wrangler.production.toml`）。
-
-```bash
-# 恢复到线上库
-npx wrangler d1 execute tgbot-db --remote --file=backups/tgbot-db-remote-2026-09-12T10-00-00.sql -c wrangler.production.toml
-```
-
-**定时备份**（三选一）：
-
-1. **Windows 计划任务**：每天执行 `npm run backup`（工作目录设为项目根目录）。
-2. **GitHub Actions**（仓库 Settings → Secrets 配置 `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`）：
-
-```yaml
-name: d1-backup
-on:
-  schedule: [{ cron: "0 18 * * *" }]   # 每天 02:00（北京时间）
-  workflow_dispatch:
-jobs:
-  backup:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm ci
-      - run: npx wrangler d1 export tgbot-db --remote --output=backup.sql
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: d1-backup-${{ github.run_id }}
-          path: backup.sql
-```
-
-3. **Workers Cron Triggers**：在 `wrangler.toml` 加 `[triggers] crons = ["0 18 * * *"]`，并在 `src/index.js` 的 `scheduled()` 里调用 D1 查询把数据写进 R2/其它存储。
-
-> `backups/` 已加入 `.gitignore`，备份文件不会误提交到仓库。
-
----
-
-## 📁 目录速查
-
-| 路径 | 说明 |
-|------|------|
-| `src/index.js` | Worker 入口 |
-| `src/config/` | 常量与文案 |
-| `src/core/` | 上下文、DB Schema、日志 |
-| `src/telegram/` | Bot API 与自动删除 |
-| `src/handlers/` | 消息/回调分发 |
-| `src/handlers/commands/` | 各指令实现 |
-| `src/handlers/commands/admin/` | 管理员指令 |
-| `src/admin/` | 管理面板 UI |
-| `src/games/` | 游戏模块 |
-| `src/shop/` | 商城模块 |
-| `src/services/` | 业务服务层 |
-| `src/utils/` | 工具函数 |
-| `scripts/` | 运维脚本（D1 备份等） |
-| `backups/` | 备份输出目录（已 gitignore） |
-| `.github/workflows/` | CI/CD：代码自检与自动部署 |
-
----
-
-## ⚖️ 合规说明
-
-本项目**积分设计仅用于社区互动**，遵守以下原则：
-
-- ❌ 不与法币双向兑换（积分不可提现）
-- ❌ 不承诺积分升值或投资收益
-- ❌ 不涉及二级市场交易
-- ❌ 不承诺"持有分红"、"平台回购"
-- ✅ 积分仅可兑换平台内商品/服务
-- ✅ 每笔交易有完整流水记录
-- ✅ 管理员可随时查看、冻结异常账户
-
-**若未来引入商户通兑或链上存证，需另行评估合规性。** 特别是：
-
-- 商户联盟的**跨商户通兑**需要真实的商户合作
-- **链上存证**只用于记录透明，不应承诺任何投资收益
-- 积分**不可反向兑换为法币**
-
----
-
-## 🔐 安全说明
-
-- **BOT_TOKEN** 仅存放在本地的 `wrangler.production.toml`，已通过 `.gitignore` 排除，不写入代码或 GitHub
-- **MY_TELEGRAM_ID** 用于管理员权限校验，非管理员无法访问 `/admin`
-- **管理员会话 30 分钟自动过期**，需重新 `/admin` 解锁
-- **积分变动全部有日志**（`points_log`）
-- **订单状态变更全部有日志**（`shop_order_log`）
-- **商城仅私聊可用**，防止群聊刷单
-- **原子扣分**：用 SQL `UPDATE ... WHERE points >= ?` 防止并发超扣
-- **库存不足自动退款**：扣库存失败时立即退还积分
+- **加商品**：优先用 `/shop_add` 引导式添加；也可直接 `INSERT INTO shop_items (...)`
+- **加分类**：改 `shop_items.category` 取值（如 `coupon`、`subscription`），展示处按分类过滤
+- **加订单动作**：在 `src/shop/actions.js` 加函数 → `src/shop/admin.js` 加按钮 → `src/handlers/callback.js` 加路由。涉及钱的动作用「条件 UPDATE + 日志」保证幂等
 
 ---
 
