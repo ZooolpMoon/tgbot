@@ -27,6 +27,7 @@ import { cmdTransfer } from "./transfer.js";
 import { cmdLottery } from "./lottery.js";
 import { cmdShop } from "./shop.js";
 import { cmdOrders } from "./orders.js";
+import { cmdBag } from "./bag.js";
 import { cmdCodeNew, cmdCodeList } from "./codes.js";
 import { cmdClearMem } from "./clearmem.js";
 import { cmdBroadcast } from "./broadcast.js";
@@ -112,6 +113,11 @@ export const COMMANDS = [
     name: "/orders", aliases: ["/myorders"], feature: "shop", privateOnly: true,
     desc: "我的订单（仅私聊）", handle: cmdOrders,
     privateHint: "📜 订单查询仅支持<b>私聊</b>使用。"
+  },
+  {
+    name: "/bag", aliases: ["/backpack", "/items"], feature: "shop", privateOnly: true,
+    desc: "我的背包：查看与使用已购买的虚拟物品", handle: cmdBag,
+    privateHint: "🎒 背包仅支持<b>私聊</b>使用。"
   },
   {
     name: "/redeem", aliases: ["/use"], feature: "redeem", privateOnly: true,

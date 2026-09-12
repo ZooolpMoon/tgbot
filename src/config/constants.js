@@ -269,7 +269,9 @@ export const SHOP = {
   // 状态
   STATUS_PENDING: "pending",
   STATUS_DONE: "done",
-  STATUS_CANCELLED: "cancelled"
+  STATUS_CANCELLED: "cancelled",
+  // 已完成订单退款后进入的状态（积分已退、未使用的背包物品已回收）
+  STATUS_REFUNDED: "refunded"
 };
 
 export const SHOP_CALLBACK = {
@@ -279,8 +281,13 @@ export const SHOP_CALLBACK = {
   BUY_PREFIX: "shop_buy_",
   ORDERS_PREFIX: "shop_orders_",
   USER_CANCEL_PREFIX: "shop_ucancel_",
+  USER_REFUND_PREFIX: "shop_urefund_",
   SOLD_OUT_PREFIX: "shop_soldout_",
   NO_PTS_PREFIX: "shop_nopts_",
+  // 🎒 背包
+  BAG_PREFIX: "shop_bag",
+  BAG_PAGE_PREFIX: "shop_bag_page_",
+  BAG_USE_PREFIX: "shop_bag_use_",
 
   ADMIN_HOME: "shop_admin_home",
   ADMIN_ITEMS_PREFIX: "shop_admin_items_",
@@ -293,7 +300,8 @@ export const SHOP_CALLBACK = {
   ADMIN_ORDERS_ALL_PREFIX: "shop_admin_orders_all_",
   ADMIN_ORDER_PREFIX: "shop_admin_order_",
   ADMIN_DONE_PREFIX: "shop_admin_done_",
-  ADMIN_CANCEL_PREFIX: "shop_admin_cancel_"
+  ADMIN_CANCEL_PREFIX: "shop_admin_cancel_",
+  ADMIN_REFUND_PREFIX: "shop_admin_refund_"
 };
 
 // 管理员可编辑的商品字段
@@ -304,7 +312,9 @@ export const SHOP_EDIT_FIELDS = {
   limit: "限购",
   category: "分类",
   icon: "图标",
-  description: "说明"
+  description: "说明",
+  delivery: "发放方式",
+  use: "背包用法"
 };
 
 export const SHOP_MSG = {

@@ -61,8 +61,11 @@ import {
   actionDeleteItem,
   actionDone,
   actionCancel,
-  handleUserCancelOrder
+  actionRefund,
+  handleUserCancelOrder,
+  handleUserRefundOrder
 } from "../shop/actions.js";
+import { renderBag, handleUseBagItem } from "../shop/bag.js";
 import { startAddItem } from "../shop/add.js";
 import { renderItemEditMenu, startEditField } from "../shop/edit.js";
 import { renderPointsLog } from "./commands/points.js";
@@ -280,6 +283,48 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     return;
   }
 
+  // 用户自助退款已完成订单（仅「背包物品还没使用」的订单）
+  if (data.startsWith("shop_urefund_")) {
+    const parts = data.replace("shop_urefund_", "").split("_");
+    const orderId = parseInt(parts[0], 10);
+    const page = parseInt(parts[1], 10) || 1;
+    if (!Number.isInteger(orderId)) {
+      await answerCallback(token, callback.id, "⚠️ 订单参数无效", true);
+      return;
+    }
+    await handleUserRefundOrder(token, env, callback, userKey, orderId);
+    await renderMyOrders(token, env, chatId, userKey, msgId, page);
+    return;
+  }
+
+  // ---------- 🎒 我的背包 ----------
+  // 顺序注意：shop_bag_use_ 要排在 shop_bag_page_ 与 shop_bag_ 前面
+  if (data.startsWith("shop_bag_use_")) {
+    const parts = data.replace("shop_bag_use_", "").split("_");
+    const bagId = parseInt(parts[0], 10);
+    const page = parseInt(parts[1], 10) || 1;
+    if (!Number.isInteger(bagId)) {
+      await answerCallback(token, callback.id, "⚠️ 物品参数无效", true);
+      return;
+    }
+    await handleUseBagItem({
+      token, env, callback, chatId, userKey, messageId: msgId, bagId, page
+    });
+    return;
+  }
+  if (data.startsWith("shop_bag_page_")) {
+    const page = parseInt(data.replace("shop_bag_page_", ""), 10) || 1;
+    await renderBag(token, env, chatId, userKey, msgId, page);
+    await answerCallback(token, callback.id, `第 ${page} 页`);
+    return;
+  }
+  if (data === "shop_bag" || data.startsWith("shop_bag_")) {
+    const page = parseInt(data.replace("shop_bag_", ""), 10) || 1;
+    await renderBag(token, env, chatId, userKey, msgId, page);
+    await answerCallback(token, callback.id, "我的背包");
+    return;
+  }
+
   // ---------- 自定义群组标签（购买后自动发放的引导流程）----------
   if (data.startsWith("shop_tag_grp_")) {
     const groupChatId = data.replace("shop_tag_grp_", "");
@@ -470,6 +515,12 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   if (data.startsWith("shop_admin_cancel_")) {
     const orderId = parseInt(data.replace("shop_admin_cancel_", ""), 10);
     await actionCancel(token, env, callback, orderId, fromId);
+    await renderShopAdminOrder(token, env, chatId, msgId, orderId);
+    return;
+  }
+  if (data.startsWith("shop_admin_refund_")) {
+    const orderId = parseInt(data.replace("shop_admin_refund_", ""), 10);
+    await actionRefund(token, env, callback, orderId, fromId);
     await renderShopAdminOrder(token, env, chatId, msgId, orderId);
     return;
   }

@@ -46,7 +46,7 @@
 | 🪙 积分体系 | 全局共享积分、流水、排行榜、管理员增减与封禁 | `/points`、`/rank` | [功能详解](docs/features.md) |
 | 📅 每日签到 | 连续签到奖励递增，断签重置；支持里程碑奖励 | `/checkin` | [功能详解](docs/features.md) |
 | 🎮 小游戏 | 骰子猜大小、老虎机、抛硬币、幸运转盘 | `/game` | [功能详解](docs/features.md) |
-| 🛒 积分商城 | 商品上下架、限购、下单备注、订单状态机、取消自动退款 | `/shop`（仅私聊） | [功能详解](docs/features.md) |
+| 🛒 积分商城 | 商品上下架、限购、下单备注、订单状态机、退款、🎒 我的背包（买到的虚拟物品自己取用） | `/shop` `/orders` `/bag`（仅私聊） | [功能详解](docs/features.md) |
 | 🎟️ 兑换码 | 批量生成、次数与有效期控制、每人限兑一次 | `/code_new`、`/redeem` | [功能详解](docs/features.md) |
 | 👑 管理后台 | 用户管理、群组浏览、封禁名单、知识库、群规、功能开关、消息自动删除、审计日志、群发 | `/admin` | [后台导览](docs/admin-console.md) |
 | 👑 多管理员与角色 | 拥有者可授权「🛡️ 管理员 / ⚔️ 执法员」，权限按能力细分 | 后台 → 👑 管理员与权限 | [后台导览](docs/admin-console.md#-管理员与权限) |
@@ -218,7 +218,7 @@ Telegram 默认只把 `/命令` 和 @ 提及转给机器人。要在群里正常
 
 ## 📖 常用指令速查
 
-**用户**：`/start` 开始 · `/help` 帮助 · `/checkin` 签到 · `/points` 积分流水 · `/rank` 排行榜 · `/game` 游戏大厅 · `/lottery` 抽奖 · `/transfer` 转账 · `/profile` 我的资料 · `/shop` 商城 · `/orders` 我的订单 · `/redeem` 兑换码 · `/report` 举报（群里） · `/appeal` 申诉（私聊）
+**用户**：`/start` 开始 · `/help` 帮助 · `/checkin` 签到 · `/points` 积分流水 · `/rank` 排行榜 · `/game` 游戏大厅 · `/lottery` 抽奖 · `/transfer` 转账 · `/profile` 我的资料 · `/shop` 商城 · `/orders` 我的订单 · `/bag` 我的背包 · `/redeem` 兑换码 · `/report` 举报（群里） · `/appeal` 申诉（私聊）
 
 **管理员**：`/admin` 控制台 · `/admins` 管理员与权限（仅拥有者）· `/users` `/users_group` 用户列表 · `/stats` 统计 · `/kb` 知识库 · `/guard` `/rules` `/setrules` 群规执法 · `/ban` `/kick` `/groupban` `/mute` `/unban` `/unmute` 处置 · `/code_new` `/code_list` 兑换码 · `/broadcast` 群发 · `/shop_admin` `/shop_add` `/shop_edit` 商城管理 · `/syncmenu` 刷新输入框菜单 · 控制台 → 🗑️ 自动删除
 

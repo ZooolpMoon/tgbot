@@ -41,6 +41,7 @@ npm run backup:config  # 把生产配置备份到私有仓库（需 .config-back
 | `history.test.mjs` | AI 上下文裁剪与预算 |
 | `redeem.test.mjs` | 兑换码生成、兑换、次数与过期 |
 | `shop.test.mjs` | 订单取消退款、库存回滚、下单备注 |
+| `bag.test.mjs` | 🎒 背包：购买入库、使用（换积分 / 仅核销）、已完成订单退款、限购与排版 |
 | `schema.test.mjs` | 建表、迁移、Schema 版本跳过逻辑 |
 | `registry.test.mjs` | 命令表自洽性、权限标记、`/help` 生成 |
 | `layout.test.mjs` | 所有菜单的排版约束（两列、行数、文案与 `callback_data` 长度） |

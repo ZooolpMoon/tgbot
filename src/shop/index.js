@@ -14,19 +14,17 @@ import { SHOP } from "../config/constants.js";
 import { getOrderNote, cancelOrderNote } from "./notes.js";
 import { categoryText } from "./categories.js";
 import { formatAppTime } from "../services/time.js";
+import { addBagItem, getBagCounts } from "./bag.js";
+import {
+  DELIVERY, deliveryOf, deliverySummary, isAutoDelivery
+} from "./delivery.js";
 
 /** 自动发放类商品：下单即完成，由机器人自己把东西交付给用户（不需要管理员发货） */
-export const AUTO_DELIVERY = { GROUP_TAG: "group_tag" };
-
-/** 商品的发放方式（未知/空一律按人工发放处理） */
-export function deliveryOf(item) {
-  const value = String(item?.delivery || "").trim();
-  return value || "manual";
-}
+export const AUTO_DELIVERY = { GROUP_TAG: DELIVERY.GROUP_TAG, BAG: DELIVERY.BAG };
 
 /**
  * 商城首页键盘（纯函数，便于排版测试）。
- * 8 件商品 = 4 行，加翻页 1 行、我的订单 1 行、关闭 1 行，最多 7 行。
+ * 8 件商品 = 4 行，加翻页 1 行、我的订单 / 我的背包各 1 行、关闭 1 行，最多 8 行。
  */
 export function getShopHomeKeyboard(items, safePage, totalPages) {
   const inline_keyboard = grid(
@@ -40,6 +38,7 @@ export function getShopHomeKeyboard(items, safePage, totalPages) {
   if (navRow) inline_keyboard.push(navRow);
 
   inline_keyboard.push([{ text: "📜 我的订单", callback_data: "shop_orders_1" }]);
+  inline_keyboard.push([{ text: "🎒 我的背包", callback_data: "shop_bag_1" }]);
   inline_keyboard.push([{ text: "🔙 关闭", callback_data: "shop_close" }]);
   return { inline_keyboard };
 }
@@ -59,6 +58,7 @@ export async function renderShopHome(token, env, chatId, userKey, messageId = nu
   const safePage = clampPage(page, totalPages);
 
   const pts = await getUserPoints(env, userKey);
+  const bag = await getBagCounts(env, userKey);
   const { results } = await env.DB.prepare(
     "SELECT id, name, icon, price, stock FROM shop_items WHERE enabled = 1 ORDER BY id ASC LIMIT ? OFFSET ?"
   ).bind(pageSize, pageOffset(safePage, pageSize)).all();
@@ -68,6 +68,7 @@ export async function renderShopHome(token, env, chatId, userKey, messageId = nu
   let text = `🛒 <b>积分商城</b>\n`;
   text += `${LAYOUT.DIVIDER}\n`;
   text += `💰 <b>我的积分：</b> <code>${pts}</code>\n\n`;
+  text += `🎒 <b>我的背包：</b> ${bag.unused} 件未使用${bag.used > 0 ? `（已用 ${bag.used} 件）` : ""}\n\n`;
   text += `📦 <b>在售商品：</b> ${safePage} / ${totalPages} 页（共 ${total} 件）\n\n`;
 
   if (items.length === 0) {
@@ -97,7 +98,7 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
   }
 
   const item = await env.DB.prepare(
-    "SELECT id, name, description, icon, price, stock, category, enabled, per_user_limit, delivery FROM shop_items WHERE id = ?"
+    "SELECT id, name, description, icon, price, stock, category, enabled, per_user_limit, delivery, use_type, use_value FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   if (!item || item.enabled !== 1) {
@@ -113,7 +114,10 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
   const catText = categoryText(item.category);
   const note = await getOrderNote(env, chatId, item.id);
   const perUserLimit = Number(item.per_user_limit) || 0;
-  const autoTag = deliveryOf(item) === AUTO_DELIVERY.GROUP_TAG;
+  const delivery = deliveryOf(item);
+  const deliveryHint = delivery === AUTO_DELIVERY.GROUP_TAG
+    ? "↳ 购买后自动完成，接着选一个群设置你的标签"
+    : (delivery === AUTO_DELIVERY.BAG ? "↳ 购买后自动装进「🎒 我的背包」，随时可以用" : "");
 
   const text =
     `${item.icon} <b>${escapeHtml(item.name)}</b>\n` +
@@ -122,7 +126,8 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
     `💰 <b>价格：</b> 🪙 ${item.price}\n` +
     `📦 <b>库存：</b> ${stockText}${perUserLimit > 0 ? `\n🙋 <b>限购：</b> 每人 ${perUserLimit} 件` : ""}\n` +
     `🪙 <b>我的积分：</b> ${pts}\n` +
-    (autoTag ? `🚚 <b>发放方式：</b> 购买后自动完成，接着选一个群设置你的标签\n` : "") +
+    `🚚 <b>发放方式：</b> ${escapeHtml(deliverySummary(item))}\n` +
+    (deliveryHint ? `${deliveryHint}\n` : "") +
     `🧾 <b>下单备注：</b> ${note ? escapeHtml(note) : "（未填写）"}\n\n` +
     `📝 <b>说明：</b>\n${escapeHtml(item.description) || "（无）"}\n`;
 
@@ -159,7 +164,7 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   if (!env.DB) return answerCallback(token, callback.id, "❌ 商城未启用", true);
 
   const item = await env.DB.prepare(
-    "SELECT id, name, icon, price, stock, category, enabled, per_user_limit, delivery FROM shop_items WHERE id = ?"
+    "SELECT id, name, icon, price, stock, category, enabled, per_user_limit, delivery, use_type, use_value FROM shop_items WHERE id = ?"
   ).bind(itemId).first();
 
   if (!item || item.enabled !== 1) {
@@ -174,7 +179,7 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   const perUserLimit = Number(item.per_user_limit) || 0;
   if (perUserLimit > 0) {
     const boughtRes = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM shop_orders WHERE user_key = ? AND item_id = ? AND status <> 'cancelled'"
+      "SELECT COUNT(*) AS n FROM shop_orders WHERE user_key = ? AND item_id = ? AND status NOT IN ('cancelled', 'refunded')"
     ).bind(userKey, item.id).first();
     if ((Number(boughtRes?.n) || 0) >= perUserLimit) {
       return answerCallback(token, callback.id, `❌ 该商品每人限购 ${perUserLimit} 件，你已达到上限`, true);
@@ -204,8 +209,10 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   // 下单备注（用户在商品详情里填写过才存在）
   const note = await getOrderNote(env, chatId, item.id);
 
-  // 自动发放类商品（如「自定义群组标签」）：下单即完成，不需要管理员发货
-  const autoDelivery = deliveryOf(item) === AUTO_DELIVERY.GROUP_TAG;
+  // 自动发放类商品（自定义群组标签 / 进背包）：下单即完成，不需要管理员发货
+  const delivery = deliveryOf(item);
+  const autoDelivery = isAutoDelivery(delivery);
+  const toBag = delivery === AUTO_DELIVERY.BAG;
 
   // 创建订单
   const orderNo = "S" + Date.now().toString(36).toUpperCase() + randomInt(1679616).toString(36).padStart(4, "0").toUpperCase();
@@ -236,24 +243,53 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
   // 这里以「落库后的真实订单数」为准，多出来的那一单自动取消并退款。
   if (perUserLimit > 0 && orderId) {
     const afterRes = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM shop_orders WHERE user_key = ? AND item_id = ? AND status <> 'cancelled'"
+      "SELECT COUNT(*) AS n FROM shop_orders WHERE user_key = ? AND item_id = ? AND status NOT IN ('cancelled', 'refunded')"
     ).bind(userKey, item.id).first();
     if ((Number(afterRes?.n) || 0) > perUserLimit) {
+      // 自动发放的订单下单时就是 done，这里要连 done 一起收回（旧写法只收回 pending，
+      // 会出现「东西已经发了、积分也退了」的漏洞）
       await env.DB.prepare(
-        "UPDATE shop_orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'"
+        "UPDATE shop_orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('pending', 'done')"
       ).bind(orderId).run();
+      if (toBag) {
+        await env.DB.prepare(
+          "UPDATE user_bag_items SET status = 'refunded', used_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'unused'"
+        ).bind(orderId).run();
+      }
       if (stockDecremented) {
         await env.DB.prepare(
           "UPDATE shop_items SET stock = stock + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         ).bind(item.id).run();
       }
       await refundPoint(env, userKey, item.price, `超出限购自动退款 [${item.name}]`);
+      await env.DB.prepare(
+        "INSERT INTO shop_order_log (order_id, action, note) VALUES (?, 'cancelled', 'over_limit')"
+      ).bind(orderId).run();
       return answerCallback(token, callback.id, `❌ 该商品每人限购 ${perUserLimit} 件，本单已自动退款`, true);
     }
   }
 
   // 订单已创建，清掉备注草稿（失败时不清理，用户不用重填）
   await cancelOrderNote(env, chatId);
+
+  // 自动进背包：物品入包。失败要把订单、库存和积分一起回滚，不能让用户白花钱
+  if (toBag && orderId) {
+    try {
+      await addBagItem(env, { userKey, userId, item, orderId, note: note || "" });
+    } catch (e) {
+      logError("背包入库失败:", e);
+      await env.DB.prepare(
+        "UPDATE shop_orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('pending', 'done')"
+      ).bind(orderId).run();
+      if (stockDecremented) {
+        await env.DB.prepare(
+          "UPDATE shop_items SET stock = stock + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).bind(item.id).run();
+      }
+      await refundPoint(env, userKey, item.price, `背包入库失败自动退款 [${item.name}]`);
+      return answerCallback(token, callback.id, "❌ 入库失败，积分已退回，请稍后再试", true);
+    }
+  }
 
   await logPointChange(env, userKey, -item.price, afterDeduct, `兑换 [${item.name}] 订单 ${orderNo}`);
 
@@ -269,17 +305,30 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
     (note ? `🧾 <b>备注：</b> ${escapeHtml(note)}\n` : ``) +
     `\n` +
     (autoDelivery
-      ? `🚚 本商品<b>无需发货，已自动完成</b>，接下来选一个群设置你的标签。`
+      ? (toBag
+        ? `🎒 已自动装进「<b>我的背包</b>」，随时可以查看和使用。`
+        : `🚚 本商品<b>无需发货，已自动完成</b>，接下来选一个群设置你的标签。`)
       : `⏳ 请等待管理员处理（虚拟物品/服务由管理员人工确认发放）。`);
 
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "📜 我的订单", callback_data: "shop_orders_1" }],
-      [{ text: "🔙 返回商城", callback_data: "shop_home" }]
-    ]
-  };
+  const keyboard = toBag
+    ? {
+      inline_keyboard: [
+        [{ text: "🎒 我的背包", callback_data: "shop_bag_1" }],
+        [{ text: "📜 我的订单", callback_data: "shop_orders_1" }],
+        [{ text: "🔙 返回商城", callback_data: "shop_home" }]
+      ]
+    }
+    : {
+      inline_keyboard: [
+        [{ text: "📜 我的订单", callback_data: "shop_orders_1" }],
+        [{ text: "🔙 返回商城", callback_data: "shop_home" }]
+      ]
+    };
 
   await editMessageText(token, chatId, messageId, successText, keyboard, "HTML");
+
+  // 进背包的物品已经交付完毕，不打扰管理员
+  if (toBag) return;
 
   // 自动发放类：直接进引导流程（选群 → 填标签），不打扰管理员
   if (autoDelivery && orderId) {
@@ -330,6 +379,16 @@ export function getMyOrdersKeyboard(orders, safePage, totalPages) {
       ]);
       continue;
     }
+    // 背包商品还没使用：可以自助退款（物品退回库存，积分原路返还）
+    if (o.status === "done" && o.delivery === AUTO_DELIVERY.BAG && Number(o.bag_unused) > 0) {
+      inline_keyboard.push([
+        {
+          text: compactLabel(`↩️ 退款 ${o.order_no}`, 30),
+          callback_data: `shop_urefund_${o.id}_${safePage}`
+        }
+      ]);
+      continue;
+    }
     // 自动发放类商品（群标签）还没设置完：给一个回到设置流程的入口，钱不白花
     if (o.status === "done" && o.delivery === AUTO_DELIVERY.GROUP_TAG && Number(o.tag_applied) === 0) {
       inline_keyboard.push([
@@ -369,7 +428,8 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
   const { results } = await env.DB.prepare(
     `SELECT o.id, o.order_no, o.item_name, o.item_icon, o.price, o.status, o.created_at,
             COALESCE(i.delivery, 'manual') AS delivery,
-            (SELECT COUNT(*) FROM user_group_tags t WHERE t.order_id = o.id) AS tag_applied
+            (SELECT COUNT(*) FROM user_group_tags t WHERE t.order_id = o.id) AS tag_applied,
+            (SELECT COUNT(*) FROM user_bag_items b WHERE b.order_id = o.id AND b.status = 'unused') AS bag_unused
        FROM shop_orders o
        LEFT JOIN shop_items i ON i.id = o.item_id
       WHERE o.user_key = ? ORDER BY o.id DESC LIMIT ? OFFSET ?`
@@ -378,7 +438,8 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
   const statusMap = {
     pending: "⏳ 待处理",
     done: "✅ 已完成",
-    cancelled: "❌ 已取消"
+    cancelled: "❌ 已取消",
+    refunded: "↩️ 已退款"
   };
 
   let text = `📜 <b>我的订单</b>\n`;
@@ -392,6 +453,9 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
       text += `${o.item_icon} <b>${escapeHtml(o.item_name)}</b>\n`;
       text += `🧾 <code>${o.order_no}</code> · 🪙 ${o.price}\n`;
       text += `📌 状态：${statusMap[o.status] || o.status}\n`;
+      if (o.status === "done" && o.delivery === AUTO_DELIVERY.BAG && Number(o.bag_unused) > 0) {
+        text += `🎒 还在背包里，未使用时可自助退款\n`;
+      }
       text += `🕒 ${escapeHtml(formatAppTime(env, o.created_at))}\n\n`;
     });
   }

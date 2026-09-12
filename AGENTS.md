@@ -127,7 +127,13 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 会随数据量增长的菜单（用户列表、任务列表、商品 / 订单列表）**必须分页**，并把键盘抽成纯函数（如 `getUserListKeyboard`），方便 `test/layout.test.mjs` 直接校验排版。
 - **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。
 - **新增引导式会话表必须登记**：新表要 (1) 读取时带 `updated_at >= datetime('now','-30 minutes')`，(2) 加进 `services/sessions.js` 的 `GUIDE_SESSION_TABLES`（否则会和别的流程抢消息），(3) 在 `services/daily.js` 里兜底清理。参考 `group_tag_sessions`。
-- **商城商品的发放方式**：`shop_items.delivery` 决定下单后谁来交付——`manual`（默认，管理员发货）或 `group_tag`（机器人自动发放）。加新的自动发放类型时，在 `shop/index.js` 的 `handleShopBuy` 里分支：订单直接写 `status='done'`、**不要**通知管理员发货，然后调用对应的引导流程；这类流程都必须是「可重新进入」的——用户已经付过钱，会话过期不能变成死路（在「我的订单」里给入口，参考 `shop/tags.js` 与 `getMyOrdersKeyboard`）。
+- **商城的发放方式与背包（v3.3.0）**：`shop_items.delivery` 决定下单后谁来交付——`manual`（默认，管理员确认发放）、`group_tag`（自动发放群组标签）、`bag`（自动进「🎒 我的背包」，用户自己用）。
+  - 加新的自动发放类型时，在 `shop/index.js` 的 `handleShopBuy` 里分支：订单直接写 `status='done'`、**不要**通知管理员发货，然后把东西交付出去（进背包 / 进引导流程）；这类流程都必须「可重新进入」——用户已经付过钱，会话过期不能变成死路（在「我的订单」里给入口，参考 `shop/tags.js` 与 `getMyOrdersKeyboard`）。
+  - **发放方式与用法的读写统一走 `shop/delivery.js`**（`deliveryOf` / `parseDelivery` / `useTypeOf` / `parseUseType`…），不要在别处再写一份映射。
+  - 背包物品的用法（`use_type` / `use_value`）在**下单时快照**进 `user_bag_items`，之后改商品配置不影响已经买到的物品；背包的渲染与使用在 `shop/bag.js`。
+  - 使用与退款都要**原子状态流转**（`UPDATE ... WHERE status = 'unused'` / `WHERE status = 'done'`）：只有真正改到状态的那一次才发奖或退款。`points` 类型的物品要「先占物品再发分」，发分失败把物品退回背包（别让用户白丢一件）。
+  - **已完成订单退款**走 `actions.js` 的 `refundDoneOrder`：`done → refunded` + 收回还没使用的背包物品 + 退积分 + 回滚库存 + 写 `shop_order_log`；物品**已经用过**的一律不退（用户与管理员都一样）。限购统计要同时排除 `cancelled` 与 `refunded`。
+  - 订单状态多了 `refunded`：凡是列 `statusMap` 的地方（我的订单、管理端订单列表与详情、订单键盘）都要补上。
 - **群组标签**（`services/group-tags.js` + `shop/tags.js`）：走 Telegram 的 `setChatMemberTag`，两个硬前提缺一不可——**机器人在那个群是管理员且有 `can_manage_tags`**，且**目标用户在那个群是「普通成员」**（群主 / 管理员都不行，Telegram 会回 `CHAT_CREATOR_REQUIRED`；群主的名字归「管理员头衔」管）。所以选群和收标签两处都要用 `checkTagTarget()` 前置校验，别等 Telegram 报错。标签 0~16 字符、**不允许 emoji**（服务端先校验再请求）。群名与权限检查结果缓存在 `bot_chats`（权限 1 小时），群列表来自 `user_scenes` 里的 group / supergroup。机器人已退出的群用 `getChat` 探到后隐藏，不要让用户点了才发现。
 - **时区：库里存 UTC，给人看的一律过 `formatAppTime()`**（`services/time.js`）：`CURRENT_TIMESTAMP` / `datetime('now')` 都是 UTC，比较、去重、到期判定也都按 UTC 做，别去改存储格式；只在展示时换算到 `APP_TIMEZONE`（默认 `Asia/Shanghai`，即北京时间 UTC+8）。新增任何显示 `created_at` / `updated_at` / `until_at` 的文案都要套一层，**不要再硬编码「UTC」或直接用 `toISOString()`**。
 - **定时任务要区分「日报时段」**：`runScheduledTasks` 的 `cron` 参数决定这次该干什么——只有每天一次的 `DAILY_SUMMARY_CRON`（`0 16 * * *` = 北京 00:00）推每日概况，每 2 分钟那条兜底 cron 只做清理与长延时删除；再用全局设置 `daily.last_summary_date` 兜底去重，保证**同一天只推一条**。v3.1.2 修过「概况一直弹」，新增定时推送时照这个模式来。

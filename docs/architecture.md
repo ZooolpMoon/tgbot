@@ -84,7 +84,7 @@ src/
 │   ├── history.js           # AI 上下文裁剪
 │   └── daily.js             # 定时任务：清理、日报、索引维护、到期通知
 ├── games/                   # 游戏注册表 + 4 个游戏
-├── shop/                    # 商城：用户侧 / 管理侧 / 添加 / 编辑 / 订单动作 / 备注 / 通知
+├── shop/                    # 商城：用户侧 / 管理侧 / 添加 / 编辑 / 订单动作 / 备注 / 通知 / 发放方式 / 背包
 └── utils/                   # html.js（转义）· random.js（加密随机）· layout.js（菜单排版与分页）
 
 test/                        # 测试用例（node:test）
@@ -135,6 +135,7 @@ docs/                        # 本目录
 | | `shop_orders` | 订单：订单号、用户、商品与价格快照、状态、备注 |
 | | `shop_order_log` | 订单操作日志 |
 | | `shop_add_sessions` / `shop_edit_sessions` / `shop_order_drafts` | 商品添加 / 编辑 / 下单备注引导状态 |
+| | `user_bag_items` | 🎒 背包：买到的物品（状态、用法快照、来源订单） |
 | 兑换码 | `redeem_codes` | 面额、次数上限、已用次数、过期日、启停 |
 | | `redeem_logs` | 兑换记录（`UNIQUE(code_id, user_key)` 保证每人一次） |
 | 知识库 | `kb_docs` | 文档：作用域、标题、来源、正文、分块数、启停 |

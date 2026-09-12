@@ -12,7 +12,7 @@ const EXPECTED_TABLES = [
   "admin_sessions", "shop_items", "shop_orders", "shop_order_log",
   "shop_add_sessions", "shop_edit_sessions", "admin_logs", "broadcast_drafts",
   "redeem_codes", "redeem_logs", "shop_order_drafts",
-  "bot_chats", "group_tag_sessions", "user_group_tags"
+  "bot_chats", "group_tag_sessions", "user_group_tags", "user_bag_items"
 ];
 
 test("SCHEMA_SQL 覆盖全部预期的表", { skip: !hasSqlite && "需要 node:sqlite" }, () => {
@@ -102,9 +102,12 @@ test("数据迁移：实物分类归入虚拟、已发货订单归入已完成",
 
 test("商城已不再提供实物分类与发货动作", () => {
   const fields = Object.keys(SHOP_EDIT_FIELDS);
-  assert.deepEqual(fields, ["name", "price", "stock", "limit", "category", "icon", "description"]);
+  assert.deepEqual(fields, ["name", "price", "stock", "limit", "category", "icon", "description", "delivery", "use"]);
   assert.equal(SHOP.STATUS_SHIPPED, undefined, "不应再定义 shipped 状态");
   assert.equal(SHOP_CALLBACK.ADMIN_SHIP_PREFIX, undefined, "不应再定义发货回调前缀");
+  assert.equal(SHOP.STATUS_REFUNDED, "refunded", "已完成订单退款后应落到 refunded 状态");
+  assert.equal(SHOP_CALLBACK.USER_REFUND_PREFIX, "shop_urefund_");
+  assert.equal(SHOP_CALLBACK.ADMIN_REFUND_PREFIX, "shop_admin_refund_");
 });
 
 test("ensureSchema 写入 Schema 版本，且已是最新时跳过建表", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {

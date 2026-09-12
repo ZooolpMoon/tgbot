@@ -79,11 +79,14 @@ export function seedUser(db, userKey = "user:1", points = 100) {
   return userKey;
 }
 
-/** 造一个测试商品 */
-export function seedItem(db, { name = "测试商品", price = 10, stock = 5, enabled = 1 } = {}) {
+/** 造一个测试商品（delivery / use_type / use_value 用于背包与自动发放场景） */
+export function seedItem(db, {
+  name = "测试商品", price = 10, stock = 5, enabled = 1,
+  delivery = "manual", useType = "none", useValue = 0
+} = {}) {
   db.exec(
-    `INSERT INTO shop_items (name, description, icon, price, stock, category, enabled)
-     VALUES ('${name}', '说明', '🎁', ${price}, ${stock}, 'virtual', ${enabled})`
+    `INSERT INTO shop_items (name, description, icon, price, stock, category, enabled, delivery, use_type, use_value)
+     VALUES ('${name}', '说明', '🎁', ${price}, ${stock}, 'virtual', ${enabled}, '${delivery}', '${useType}', ${useValue})`
   );
   return Number(db.get("SELECT id FROM shop_items ORDER BY id DESC LIMIT 1").id);
 }

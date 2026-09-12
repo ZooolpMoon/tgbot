@@ -127,7 +127,9 @@ CREATE TABLE IF NOT EXISTS shop_items (
   stock         INTEGER DEFAULT -1,
   category      TEXT    DEFAULT 'virtual',
   per_user_limit INTEGER DEFAULT 0,        -- 每人限购数量，0 = 不限
-  delivery      TEXT    DEFAULT 'manual',  -- manual = 管理员人工发放；group_tag = 购买后自动设置群组标签
+  delivery      TEXT    DEFAULT 'manual',  -- manual = 管理员人工发放；group_tag = 购买后自动设置群组标签；bag = 购买后自动进背包
+  use_type      TEXT    DEFAULT 'none',    -- 仅进背包的商品的用法：none = 使用后通知管理员核销；points = 使用后换成积分
+  use_value     INTEGER DEFAULT 0,         -- use_type = points 时，使用后兑换的积分数
   enabled       INTEGER DEFAULT 1,
   created_at    TEXT    DEFAULT CURRENT_TIMESTAMP,
   updated_at    TEXT    DEFAULT CURRENT_TIMESTAMP
@@ -170,6 +172,9 @@ CREATE TABLE IF NOT EXISTS shop_add_sessions (
   category    TEXT DEFAULT 'virtual',
   icon        TEXT DEFAULT '',
   description TEXT DEFAULT '',
+  delivery    TEXT DEFAULT 'manual',   -- 发放方式：manual / group_tag / bag
+  use_type    TEXT DEFAULT 'none',     -- 仅 delivery = bag 用到：none / points
+  use_value   INTEGER DEFAULT 0,       -- use_type = points 时兑换的积分数
   updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -180,6 +185,33 @@ CREATE TABLE IF NOT EXISTS shop_edit_sessions (
   field      TEXT    NOT NULL,
   updated_at TEXT    DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ==========================================
+-- 🎒 背包（v3.3.0）
+--
+-- 发放方式 delivery = 'bag' 的商品下单后自动进这张表，
+-- 用户在「🎒 我的背包」里查看并使用；未使用的物品可以随订单一起退款回收。
+-- use_type / use_value 是**下单时的快照**：之后管理员改商品配置，不影响已买到的物品。
+-- ==========================================
+
+-- 背包物品：一条 = 用户拥有的一件未使用（或已使用/已回收）的物品
+CREATE TABLE IF NOT EXISTS user_bag_items (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_key    TEXT    NOT NULL,
+  user_id     TEXT,
+  item_id     INTEGER NOT NULL,
+  item_name   TEXT    NOT NULL,
+  item_icon   TEXT    DEFAULT '🎁',
+  order_id    INTEGER NOT NULL DEFAULT 0,
+  status      TEXT    NOT NULL DEFAULT 'unused',  -- unused = 在背包里 / used = 已使用 / refunded = 随订单退回
+  use_type    TEXT    NOT NULL DEFAULT 'none',    -- 下单时的用法快照：none / points
+  use_value   INTEGER NOT NULL DEFAULT 0,         -- use_type = points 时兑换的积分数
+  note        TEXT    DEFAULT '',
+  obtained_at TEXT    DEFAULT CURRENT_TIMESTAMP,
+  used_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bag_user ON user_bag_items(user_key, status, id DESC);
+CREATE INDEX IF NOT EXISTS idx_bag_order ON user_bag_items(order_id);
 
 -- ==========================================
 -- 📋 审计与运营
@@ -449,7 +481,8 @@ let schemaPromise = null;
  */
 // v2.9.0 移除「每日任务」后不再建 daily_task_defs / task_edit_sessions / daily_tasks
 // （老库里这三张表会保留但不再使用，需要清理可手动 DROP）
-export const SCHEMA_VERSION = 17;
+// v3.3.0：商城「背包」（user_bag_items）+ 商品发放方式 bag + 背包物品用法 use_type/use_value
+export const SCHEMA_VERSION = 18;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 
@@ -490,6 +523,14 @@ const MIGRATIONS = [
           '· 重新购买可以修改；每个群只能有一个标签',
           '🏷️', 500, -1, 'virtual', 0, 1, 'group_tag'
    WHERE NOT EXISTS (SELECT 1 FROM shop_items WHERE delivery = 'group_tag')`
+  ,
+  // v3.3.0：背包（user_bag_items 表在 SCHEMA_SQL 里建）
+  // 商品多两个「背包物品用法」字段；「添加商品」引导会话多了发放方式与用法
+  "ALTER TABLE shop_items ADD COLUMN use_type TEXT DEFAULT 'none'",
+  "ALTER TABLE shop_items ADD COLUMN use_value INTEGER DEFAULT 0",
+  "ALTER TABLE shop_add_sessions ADD COLUMN delivery TEXT DEFAULT 'manual'",
+  "ALTER TABLE shop_add_sessions ADD COLUMN use_type TEXT DEFAULT 'none'",
+  "ALTER TABLE shop_add_sessions ADD COLUMN use_value INTEGER DEFAULT 0"
 ];
 
 /**

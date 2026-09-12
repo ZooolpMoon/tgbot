@@ -1,7 +1,8 @@
 // ==========================================
 // 🛒 商城 - 管理员引导式添加商品
 //
-// 6 步引导：名称 → 价格 → 库存 → 分类 → 说明 → 图标。
+// 引导步骤：名称 → 价格 → 库存 → 分类 → 说明 → 图标 → 发放方式
+//          →（发放方式 = 进背包时）背包用法 →（用法 = 换积分时）积分数。
 // 会话存在 shop_add_sessions，30 分钟不操作自动失效。
 // ==========================================
 
@@ -10,6 +11,9 @@ import { escapeHtml } from "../utils/html.js";
 import { logAdminAction } from "../services/admin-log.js";
 import { clearGuideSessions } from "../services/sessions.js";
 import { CATEGORY_MAP, categoryText, parseCategory } from "./categories.js";
+import {
+  DELIVERY, USE_TYPE, deliveryText, parseDelivery, parseUseType, useTypeText
+} from "./delivery.js";
 
 /** 各字段的输入上限，防止一条超长消息把商品记录撑爆 */
 const LIMITS = {
@@ -32,8 +36,8 @@ export async function startAddItem(token, env, chatId) {
 
   await env.DB.batch([
     env.DB.prepare(`
-      INSERT INTO shop_add_sessions (chat_id, step, name, price, stock, category, icon, description, updated_at)
-      VALUES (?, 1, '', 0, -1, 'virtual', '', '', CURRENT_TIMESTAMP)
+      INSERT INTO shop_add_sessions (chat_id, step, name, price, stock, category, icon, description, delivery, use_type, use_value, updated_at)
+      VALUES (?, 1, '', 0, -1, 'virtual', '', '', 'manual', 'none', 0, CURRENT_TIMESTAMP)
       ON CONFLICT(chat_id) DO UPDATE SET
         step = 1,
         name = '',
@@ -42,6 +46,9 @@ export async function startAddItem(token, env, chatId) {
         category = 'virtual',
         icon = '',
         description = '',
+        delivery = 'manual',
+        use_type = 'none',
+        use_value = 0,
         updated_at = CURRENT_TIMESTAMP
     `).bind(chatId)
   ]);
@@ -161,33 +168,125 @@ export async function handleAddItemInput({ env, token, chatId, userText, adminId
     return true;
   }
 
-  // 第 6 步：图标并保存
-  const icon = text === "-" ? "🛍️" : text.slice(0, LIMITS.ICON);
-  await env.DB.prepare(
-    "UPDATE shop_add_sessions SET icon = ?, step = 7, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?"
-  ).bind(icon, chatId).run();
+  // 第 6 步：图标 → 进入发放方式
+  if (step === 6) {
+    const icon = text === "-" ? "🛍️" : text.slice(0, LIMITS.ICON);
+    await env.DB.prepare(
+      "UPDATE shop_add_sessions SET icon = ?, step = 7, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?"
+    ).bind(icon, chatId).run();
+    await sendMessage(
+      token,
+      chatId,
+      "✅ 图标已记录。\n请选择<b>发放方式</b>：\n" +
+      "1 管理员人工发放（下单后等管理员确认）\n" +
+      "2 自动发放 · 群组标签（下单后选群设置标签）\n" +
+      "3 自动发放 · 进背包（下单后进「🎒 我的背包」，用户自己用）\n" +
+      "（直接回复 1/2/3 或名称）",
+      "HTML"
+    );
+    return true;
+  }
 
+  // 第 7 步：发放方式
+  if (step === 7) {
+    const delivery = parseDelivery(text);
+    if (!delivery) {
+      await sendMessage(token, chatId, "⚠️ 发放方式无效，请回复：1 人工发放 / 2 自动·群标签 / 3 自动·进背包");
+      return true;
+    }
+    // 不是进背包就不用再问用法，直接保存
+    if (delivery !== DELIVERY.BAG) {
+      await env.DB.prepare(
+        "UPDATE shop_add_sessions SET delivery = ?, use_type = 'none', use_value = 0, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?"
+      ).bind(delivery, chatId).run();
+      return finishAddItem({ env, token, chatId, adminId });
+    }
+    await env.DB.prepare(
+      "UPDATE shop_add_sessions SET delivery = ?, step = 8, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?"
+    ).bind(delivery, chatId).run();
+    await sendMessage(
+      token,
+      chatId,
+      "✅ 发放方式：进背包。\n请选择物品在背包里的<b>用法</b>：\n" +
+      "1 仅核销（用户点「使用」后通知管理员处理）\n" +
+      "2 使用后兑换成积分\n" +
+      "（直接回复 1/2）",
+      "HTML"
+    );
+    return true;
+  }
+
+  // 第 8 步：背包用法
+  if (step === 8) {
+    const useType = parseUseType(text);
+    if (!useType) {
+      await sendMessage(token, chatId, "⚠️ 用法无效，请回复：1 仅核销 / 2 使用后兑换成积分");
+      return true;
+    }
+    if (useType !== USE_TYPE.POINTS) {
+      await env.DB.prepare(
+        "UPDATE shop_add_sessions SET use_type = ?, use_value = 0, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?"
+      ).bind(useType, chatId).run();
+      return finishAddItem({ env, token, chatId, adminId });
+    }
+    await env.DB.prepare(
+      "UPDATE shop_add_sessions SET use_type = ?, step = 9, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?"
+    ).bind(useType, chatId).run();
+    await sendMessage(
+      token, chatId,
+      "✅ 用法：使用后兑换成积分。\n请输入<b>使用后兑换的积分数</b>（正整数，例如 100）：",
+      "HTML"
+    );
+    return true;
+  }
+
+  // 第 9 步：兑换积分数 → 保存
+  const useValue = Number.parseInt(text, 10);
+  if (!Number.isInteger(useValue) || useValue <= 0) {
+    await sendMessage(token, chatId, "⚠️ 积分数必须是大于 0 的整数，请重新输入：");
+    return true;
+  }
+  await env.DB.prepare(
+    "UPDATE shop_add_sessions SET use_value = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?"
+  ).bind(useValue, chatId).run();
+  return finishAddItem({ env, token, chatId, adminId });
+}
+
+/** 发放方式与背包用法都收齐了：把草稿写进 shop_items 并结束会话 */
+async function finishAddItem({ env, token, chatId, adminId = null }) {
   const s = await env.DB.prepare(
     "SELECT * FROM shop_add_sessions WHERE chat_id = ?"
   ).bind(chatId).first();
+  if (!s) return true;
+
+  const delivery = String(s.delivery || DELIVERY.MANUAL);
+  const useType = delivery === DELIVERY.BAG ? String(s.use_type || USE_TYPE.NONE) : USE_TYPE.NONE;
+  const useValue = (delivery === DELIVERY.BAG && useType === USE_TYPE.POINTS) ? (Number(s.use_value) || 0) : 0;
 
   await env.DB.prepare(`
-    INSERT INTO shop_items (name, description, icon, price, stock, category, enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `).bind(s.name, s.description, s.icon, s.price, s.stock, s.category).run();
+    INSERT INTO shop_items
+      (name, description, icon, price, stock, category, enabled, delivery, use_type, use_value, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).bind(
+    s.name, s.description, s.icon, s.price, s.stock, s.category,
+    delivery, useType, useValue
+  ).run();
 
   await env.DB.prepare("DELETE FROM shop_add_sessions WHERE chat_id = ?").bind(chatId).run();
 
   await logAdminAction(env, {
     adminId, chatId, action: "shop_item_add",
-    detail: `${s.icon} ${s.name} 价格 ${s.price} 库存 ${s.stock}`
+    detail: `${s.icon} ${s.name} 价格 ${s.price} 库存 ${s.stock} 发放 ${delivery}`
   });
 
   const catText = categoryText(s.category);
+  const useLine = delivery === DELIVERY.BAG
+    ? `🎒 背包用法：${useType === USE_TYPE.POINTS ? `${useTypeText(USE_TYPE.POINTS)}（🪙 ${useValue}）` : useTypeText(USE_TYPE.NONE)}\n`
+    : "";
   await sendMessage(
     token,
     chatId,
-    `🎉 <b>商品添加成功！</b>\n-------------------------\n${escapeHtml(s.icon)} <b>${escapeHtml(s.name)}</b>\n💰 价格：${s.price}\n📦 库存：${s.stock === -1 ? "不限" : s.stock}\n📂 分类：${catText}\n📝 说明：${escapeHtml(s.description) || "（无）"}`,
+    `🎉 <b>商品添加成功！</b>\n-------------------------\n${escapeHtml(s.icon)} <b>${escapeHtml(s.name)}</b>\n💰 价格：${s.price}\n📦 库存：${s.stock === -1 ? "不限" : s.stock}\n📂 分类：${catText}\n🚚 发放方式：${deliveryText(delivery)}\n${useLine}📝 说明：${escapeHtml(s.description) || "（无）"}`,
     "HTML"
   );
   return true;

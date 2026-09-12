@@ -20,6 +20,7 @@
 | `/clear` | — | 清空当前场景的对话记忆 |
 | `/shop` | `/store` | 积分商城（仅私聊） |
 | `/orders` | `/myorders` | 我的订单（仅私聊） |
+| `/bag` | `/backpack` `/items` | 我的背包：查看与使用已购买的虚拟物品（仅私聊） |
 | `/redeem` | `/use` | 用兑换码领积分（仅私聊） |
 | `/transfer` | `/pay` `/give` | 把积分转给其他用户（可回复对方消息后只写金额） |
 | `/lottery` | `/draw` `/choujiang` | 每日抽奖：每天 1 次免费，也可花积分抽 |
