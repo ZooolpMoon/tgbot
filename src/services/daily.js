@@ -48,6 +48,10 @@ export async function cleanupStaleData(env) {
     "DELETE FROM task_edit_sessions WHERE updated_at <= datetime('now', '-1 day')"
   ).run();
 
+  const kbSessions = await env.DB.prepare(
+    "DELETE FROM kb_sessions WHERE updated_at <= datetime('now', '-1 day')"
+  ).run();
+
   const expiredCodes = await env.DB.prepare(
     "UPDATE redeem_codes SET enabled = 0 WHERE enabled = 1 AND expires_at IS NOT NULL AND expires_at < ?"
   ).bind(today).run();
@@ -59,6 +63,7 @@ export async function cleanupStaleData(env) {
     addSessions: addSessions.meta.changes,
     editSessions: editSessions.meta.changes,
     taskSessions: taskSessions.meta.changes,
+    kbSessions: kbSessions.meta.changes,
     expiredCodes: expiredCodes.meta.changes
   };
 }

@@ -29,6 +29,8 @@ import { cmdOrders } from "./orders.js";
 import { cmdCodeNew, cmdCodeList } from "./codes.js";
 import { cmdClearMem } from "./clearmem.js";
 import { cmdBroadcast } from "./broadcast.js";
+import { cmdKb } from "./kb.js";
+import { cmdBan, cmdUnban } from "./ban.js";
 import { cmdShopEdit } from "../../shop/edit.js";
 import { startAddItem, cancelAddItem } from "../../shop/add.js";
 import {
@@ -138,6 +140,18 @@ export const COMMANDS = [
   {
     name: "/clearmem", aliases: ["/clearmemory"], scope: "admin",
     desc: "清除指定场景 / 群组 / 群成员的 AI 记忆", usage: "/clearmem <群ID> [用户ID]", handle: cmdClearMem
+  },
+  {
+    name: "/kb", aliases: ["/knowledge"], scope: "admin",
+    desc: "知识库（上传资料 / 让 AI 依据资料回答）", handle: cmdKb
+  },
+  {
+    name: "/ban", scope: "admin",
+    desc: "把用户加入封禁名单", usage: "/ban <用户ID> [原因]", handle: cmdBan
+  },
+  {
+    name: "/unban", scope: "admin",
+    desc: "把用户移出封禁名单", usage: "/unban <用户ID>", handle: cmdUnban
   },
   {
     name: "/code_new", scope: "admin",

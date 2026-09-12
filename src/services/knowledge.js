@@ -1,0 +1,470 @@
+// ==========================================
+// 📚 知识库（RAG）
+//
+// 流程：
+//   管理员上传文档 → 切成小块（chunk）→ Workers AI 生成向量存进 D1
+//   用户提问 → 问题向量化 → 与库内向量算余弦相似度 → 取 Top K 拼进系统提示词
+//
+// 为什么不用 Vectorize：项目当前只绑定 D1 + Workers AI，为了让「不额外开服务」
+// 也能跑起来，这里把向量以 base64(Float32Array) 存在 D1，检索时在 Worker 内算相似度。
+// 因此对单库容量做了上限（默认每个作用域 400 块），够放群规、产品手册这类资料；
+// 需要更大规模时再迁到 Vectorize（见 README「知识库」一节的说明）。
+//
+// 作用域（scope_key）：
+//   'global' —— 全局知识库（所有场景都能检索到）
+//   场景键    —— 本群/本私聊专属知识库，只有该场景能检索到
+// 检索时会同时取「本场景 + 全局」的块。
+// ==========================================
+
+import { KB } from "../config/constants.js";
+import { logError, logWarn } from "../core/logger.js";
+
+/** 全局作用域标识 */
+export const KB_GLOBAL_SCOPE = "global";
+
+// ==========================================
+// 文本处理
+// ==========================================
+
+/** 统一换行、去掉首尾空白；顺手把全角空格换成半角，便于匹配 */
+export function normalizeText(text) {
+  return String(text ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u3000/g, " ")
+    .trim();
+}
+
+/**
+ * 把长文本切成检索用的块。
+ * 优先按空行（段落）切，段落太长再按字符硬切并保留少量重叠，
+ * 避免答案正好被切在切口上导致检索不到。
+ * @returns {string[]}
+ */
+export function chunkText(text, { maxChars = KB.CHUNK_CHARS, overlap = KB.CHUNK_OVERLAP } = {}) {
+  const clean = normalizeText(text);
+  if (!clean) return [];
+
+  const paragraphs = clean
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const chunks = [];
+  let buffer = "";
+
+  const flush = () => {
+    const value = buffer.trim();
+    if (value) chunks.push(value);
+    buffer = "";
+  };
+
+  for (const paragraph of paragraphs) {
+    // 超长段落：单独硬切，切口之间留 overlap 个字符的重叠
+    if (paragraph.length > maxChars) {
+      flush();
+      const step = Math.max(1, maxChars - overlap);
+      for (let start = 0; start < paragraph.length; start += step) {
+        chunks.push(paragraph.slice(start, start + maxChars).trim());
+        if (start + maxChars >= paragraph.length) break;
+      }
+      continue;
+    }
+
+    if (buffer && buffer.length + paragraph.length + 2 > maxChars) flush();
+    buffer = buffer ? `${buffer}\n\n${paragraph}` : paragraph;
+  }
+  flush();
+
+  return chunks.filter(Boolean).slice(0, KB.MAX_CHUNKS_PER_DOC);
+}
+
+// ==========================================
+// 向量编解码与相似度
+// ==========================================
+
+/** Float32Array → base64（Worker 与 Node 都有 btoa） */
+export function encodeEmbedding(vector) {
+  const f32 = Float32Array.from(vector || []);
+  const bytes = new Uint8Array(f32.buffer);
+  let binary = "";
+  const STEP = 0x8000;
+  for (let i = 0; i < bytes.length; i += STEP) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + STEP));
+  }
+  return btoa(binary);
+}
+
+/** base64 → Float32Array（解不开时返回空数组，调用方按「无向量」处理） */
+export function decodeEmbedding(encoded) {
+  const raw = String(encoded || "");
+  if (!raw) return new Float32Array(0);
+  try {
+    const binary = atob(raw);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Float32Array(bytes.buffer, 0, Math.floor(bytes.length / 4));
+  } catch {
+    return new Float32Array(0);
+  }
+}
+
+/** 余弦相似度；任一向量为空或维度不同则返回 0 */
+export function cosineSimilarity(a, b) {
+  if (!a || !b) return 0;
+  const n = Math.min(a.length, b.length);
+  if (n === 0) return 0;
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * 关键词兜底打分：用「二元字组」重合度衡量。
+ * 中文没有词边界，字符二元组是简单可靠的做法；
+ * 没有 AI 绑定或向量缺失时用它保证知识库仍然可用。
+ */
+export function bigramScore(query, content) {
+  const q = normalizeText(query).replace(/\s+/g, "").toLowerCase();
+  const c = normalizeText(content).replace(/\s+/g, "").toLowerCase();
+  if (q.length < 2 || !c) return 0;
+
+  const grams = new Set();
+  for (let i = 0; i < q.length - 1; i++) grams.add(q.slice(i, i + 2));
+  if (grams.size === 0) return 0;
+
+  let hit = 0;
+  for (const g of grams) if (c.includes(g)) hit++;
+  return hit / grams.size;
+}
+
+// ==========================================
+// 向量化（Workers AI）
+// ==========================================
+
+/** 当前使用的向量模型，可用 KB_EMBED_MODEL 覆盖（换模型后需要重建索引） */
+export function resolveEmbedModel(env) {
+  const custom = env?.KB_EMBED_MODEL ? String(env.KB_EMBED_MODEL).trim() : "";
+  return custom || KB.EMBED_MODEL;
+}
+
+/**
+ * 批量生成向量。
+ * @returns {Promise<Float32Array[]|null>} 成功返回与输入等长的数组；不可用时返回 null
+ */
+async function embedTexts(env, texts) {
+  if (!env?.AI || !Array.isArray(texts) || texts.length === 0) return null;
+
+  const model = resolveEmbedModel(env);
+  const vectors = [];
+
+  for (let i = 0; i < texts.length; i += KB.EMBED_BATCH) {
+    const batch = texts.slice(i, i + KB.EMBED_BATCH);
+    const res = await env.AI.run(model, { text: batch });
+    const data = Array.isArray(res?.data) ? res.data : null;
+    if (!data || data.length !== batch.length) return null;
+
+    for (const item of data) {
+      const vec = Array.isArray(item) ? item : item?.embedding;
+      if (!Array.isArray(vec) || vec.length === 0) return null;
+      vectors.push(Float32Array.from(vec));
+    }
+  }
+
+  return vectors;
+}
+
+/** 生成单个文本的向量（检索时用），失败返回 null */
+async function embedOne(env, text) {
+  try {
+    const [vec] = (await embedTexts(env, [text])) || [];
+    return vec || null;
+  } catch (e) {
+    logWarn("知识库向量化失败（本次降级为关键词检索）：", e?.message || e);
+    return null;
+  }
+}
+
+// ==========================================
+// 文档入库
+// ==========================================
+
+/** 把一批 SQL 语句按固定大小分批执行，避免单次 batch 过大 */
+async function runBatched(env, statements, batchSize = 20) {
+  for (let i = 0; i < statements.length; i += batchSize) {
+    await env.DB.batch(statements.slice(i, i + batchSize));
+  }
+}
+
+/** 统计某个作用域已入库的分块数（用于容量上限判断） */
+export async function countChunks(env, scopeKey) {
+  if (!env?.DB) return 0;
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM kb_chunks WHERE scope_key = ?"
+  ).bind(scopeKey).first();
+  return Number(row?.n) || 0;
+}
+
+/**
+ * 写入 / 更新一篇文档：切块 → 向量化 → 落库。
+ * docId 传了就是「替换这篇文档的内容」，否则新建。
+ * @returns {Promise<{ok:boolean, error?:string, id?:number, chunks?:number}>}
+ */
+export async function ingestDocument(env, {
+  scopeKey = KB_GLOBAL_SCOPE,
+  title,
+  content,
+  source = "",
+  createdBy = "",
+  docId = null
+} = {}) {
+  if (!env?.DB) return { ok: false, error: "未绑定数据库" };
+
+  const name = normalizeText(title).slice(0, 80);
+  if (!name) return { ok: false, error: "文档标题不能为空" };
+
+  const body = normalizeText(content);
+  if (!body) return { ok: false, error: "文档内容不能为空" };
+  if (body.length > KB.MAX_DOC_CHARS) {
+    return { ok: false, error: `文档过长（${body.length} 字，上限 ${KB.MAX_DOC_CHARS} 字），请拆分后再上传` };
+  }
+
+  const chunks = chunkText(body);
+  if (chunks.length === 0) return { ok: false, error: "切块后没有可用内容" };
+
+  // 容量保护：同一个作用域的块数有上限，避免检索时加载过多向量
+  const existing = docId ? Number((await getDocumentRow(env, docId))?.chunk_count || 0) : 0;
+  const used = await countChunks(env, scopeKey);
+  const projected = used - existing + chunks.length;
+  if (projected > KB.MAX_TOTAL_CHUNKS) {
+    return {
+      ok: false,
+      error: `知识库容量已满（${used}/${KB.MAX_TOTAL_CHUNKS} 块），请删除旧文档或精简内容`
+    };
+  }
+
+  // 没有绑定 AI 时：仍然存文本（关键词检索可用），但不写向量
+  let vectors = null;
+  try {
+    vectors = await embedTexts(env, chunks);
+  } catch (e) {
+    logError("知识库向量化失败：", e);
+    return { ok: false, error: "向量化失败（Workers AI 不可用），本次未入库，请稍后重试" };
+  }
+  if (!vectors) {
+    logWarn("知识库未生成向量（未绑定 Workers AI？），将退化为关键词检索");
+  }
+
+  let id = docId ? Number(docId) : null;
+
+  if (id) {
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE kb_docs SET title = ?, content = ?, source = ?, chunk_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+      ).bind(name, body, String(source || ""), chunks.length, id),
+      env.DB.prepare("DELETE FROM kb_chunks WHERE doc_id = ?").bind(id)
+    ]);
+  } else {
+    const inserted = await env.DB.prepare(
+      "INSERT INTO kb_docs (scope_key, title, source, content, enabled, chunk_count, created_by) VALUES (?, ?, ?, ?, 1, ?, ?)"
+    ).bind(scopeKey, name, String(source || ""), body, chunks.length, String(createdBy || "")).run();
+    id = Number(inserted?.meta?.last_row_id) || null;
+    if (!id) return { ok: false, error: "写入文档失败" };
+  }
+
+  const statements = chunks.map((chunk, index) => {
+    const vec = vectors?.[index];
+    return env.DB.prepare(
+      "INSERT INTO kb_chunks (doc_id, scope_key, seq, content, dim, embedding) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(
+      id,
+      scopeKey,
+      index,
+      chunk,
+      vec ? vec.length : 0,
+      vec ? encodeEmbedding(vec) : ""
+    );
+  });
+  await runBatched(env, statements);
+
+  return { ok: true, id, chunks: chunks.length, embedded: Boolean(vectors) };
+}
+
+// ==========================================
+// 文档管理
+// ==========================================
+
+/** 读取文档行（内部用，含正文） */
+async function getDocumentRow(env, id) {
+  if (!env?.DB) return null;
+  return env.DB.prepare("SELECT * FROM kb_docs WHERE id = ?").bind(id).first();
+}
+
+/** 分页列出某个作用域的文档（不含正文，列表用） */
+export async function listDocuments(env, scopeKey, page = 1, pageSize = 6) {
+  if (!env?.DB) return { rows: [], total: 0, page: 1, totalPages: 1 };
+
+  const countRes = await env.DB.prepare(
+    "SELECT COUNT(*) AS total FROM kb_docs WHERE scope_key = ?"
+  ).bind(scopeKey).first();
+  const total = Number(countRes?.total) || 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, Math.floor(Number(page) || 1)), totalPages);
+
+  const { results } = await env.DB.prepare(
+    "SELECT id, title, source, enabled, chunk_count, created_at, updated_at FROM kb_docs WHERE scope_key = ? ORDER BY id DESC LIMIT ? OFFSET ?"
+  ).bind(scopeKey, pageSize, (safePage - 1) * pageSize).all();
+
+  return { rows: results || [], total, page: safePage, totalPages };
+}
+
+/** 单篇文档（含正文，详情页用） */
+export async function getDocument(env, id) {
+  return getDocumentRow(env, id);
+}
+
+/** 启用 / 停用文档（停用后不参与检索，但内容保留） */
+export async function setDocumentEnabled(env, id, enabled) {
+  if (!env?.DB) return false;
+  const res = await env.DB.prepare(
+    "UPDATE kb_docs SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+  ).bind(enabled ? 1 : 0, id).run();
+  return Number(res?.meta?.changes) > 0;
+}
+
+/** 删除文档及其全部分块 */
+export async function deleteDocument(env, id) {
+  if (!env?.DB) return false;
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM kb_chunks WHERE doc_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM kb_docs WHERE id = ?").bind(id)
+  ]);
+  return true;
+}
+
+/** 作用域概览：文档数 + 分块数（管理面板顶部展示） */
+export async function kbStats(env, scopeKey) {
+  if (!env?.DB) return { docs: 0, chunks: 0 };
+  const [docRes, chunkRes] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS n FROM kb_docs WHERE scope_key = ?").bind(scopeKey).first(),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM kb_chunks WHERE scope_key = ?").bind(scopeKey).first()
+  ]);
+  return { docs: Number(docRes?.n) || 0, chunks: Number(chunkRes?.n) || 0 };
+}
+
+// ==========================================
+// 检索
+// ==========================================
+
+/** 取出候选块（本场景 + 全局），带文档标题 */
+async function loadCandidateChunks(env, scopeKey) {
+  const scopes = scopeKey && scopeKey !== KB_GLOBAL_SCOPE
+    ? [scopeKey, KB_GLOBAL_SCOPE]
+    : [KB_GLOBAL_SCOPE];
+
+  const placeholders = scopes.map(() => "?").join(", ");
+  const { results } = await env.DB.prepare(
+    `SELECT c.id, c.doc_id, c.seq, c.content, c.dim, c.embedding, d.title
+     FROM kb_chunks c
+     JOIN kb_docs d ON d.id = c.doc_id
+     WHERE d.enabled = 1 AND c.scope_key IN (${placeholders})
+     ORDER BY c.id ASC
+     LIMIT ?`
+  ).bind(...scopes, KB.MAX_TOTAL_CHUNKS * 2).all();
+
+  return results || [];
+}
+
+/**
+ * 检索知识库。
+ * 有向量时用「余弦相似度 + 关键词加成」，没有向量时退化为关键词匹配。
+ *
+ * @param {string} sceneKey 当前场景键（检索时会同时带上全局知识）
+ * @param {string} query 用户的问题
+ * @returns {Promise<Array<{docId:number,title:string,content:string,score:number}>>}
+ */
+export async function searchKnowledge(env, sceneKey, query, options = {}) {
+  const question = normalizeText(query);
+  if (!env?.DB || question.length < 2) return [];
+
+  let rows = [];
+  try {
+    rows = await loadCandidateChunks(env, sceneKey);
+  } catch (e) {
+    logError("读取知识库失败：", e);
+    return [];
+  }
+  if (rows.length === 0) return [];
+
+  const queryVec = await embedOne(env, question);
+  const hasVectors = Boolean(queryVec);
+  const topK = Math.max(1, Math.floor(Number(options.topK) || KB.TOP_K));
+  const minScore = Number.isFinite(Number(options.minScore))
+    ? Number(options.minScore)
+    : (hasVectors ? KB.MIN_SCORE : KB.MIN_SCORE_KEYWORD);
+
+  const scored = rows.map((row) => {
+    const keyword = bigramScore(question, row.content);
+    let score = keyword;
+
+    if (hasVectors && Number(row.dim) === queryVec.length) {
+      const vec = decodeEmbedding(row.embedding);
+      if (vec.length === queryVec.length) {
+        // 语义相似度为主，关键词命中作为加成，避免同义改写的问法漏检
+        score = cosineSimilarity(queryVec, vec) + 0.15 * keyword;
+      }
+    }
+
+    return {
+      docId: Number(row.doc_id),
+      title: String(row.title || ""),
+      content: String(row.content || ""),
+      score
+    };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  // 同一篇文档最多取 2 块，给更多文档留出机会
+  const perDoc = new Map();
+  const hits = [];
+  for (const item of scored) {
+    if (item.score < minScore) break;
+    const used = perDoc.get(item.docId) || 0;
+    if (used >= 2) continue;
+    perDoc.set(item.docId, used + 1);
+    hits.push(item);
+    if (hits.length >= topK) break;
+  }
+  return hits;
+}
+
+/**
+ * 把检索结果拼成提示词片段（限制总长度，避免挤占模型上下文）。
+ * @returns {string} 没有命中时返回空串
+ */
+export function buildKnowledgeContext(hits, maxChars = KB.MAX_CONTEXT_CHARS) {
+  if (!Array.isArray(hits) || hits.length === 0) return "";
+
+  const blocks = [];
+  let used = 0;
+  for (const hit of hits) {
+    const block = `【资料：${hit.title}】\n${hit.content}`;
+    if (used + block.length > maxChars) {
+      const rest = maxChars - used;
+      if (rest > 80) blocks.push(block.slice(0, rest));
+      break;
+    }
+    blocks.push(block);
+    used += block.length;
+  }
+
+  return blocks.join("\n\n");
+}

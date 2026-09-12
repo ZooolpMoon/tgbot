@@ -86,6 +86,31 @@ export const PAGING = {
 };
 
 // ==========================================
+// 📚 知识库（RAG）参数
+// 检索时把问题与库内分块做余弦相似度；向量存在 D1，因此对容量做了上限。
+// ==========================================
+
+export const KB = {
+  // 每个分块的最大字符数与相邻分块的重叠字符数
+  CHUNK_CHARS: 600,
+  CHUNK_OVERLAP: 80,
+  // 单篇文档最多切多少块 / 单个作用域（本群或全局）最多多少块
+  MAX_CHUNKS_PER_DOC: 400,
+  MAX_TOTAL_CHUNKS: 400,
+  // 单篇文档正文上限（字符）与上传文件大小上限（字节）
+  MAX_DOC_CHARS: 200000,
+  MAX_FILE_BYTES: 512 * 1024,
+  // 每次检索取回的资料条数、相似度阈值与拼进提示词的最大长度
+  TOP_K: 4,
+  MIN_SCORE: 0.30,
+  MIN_SCORE_KEYWORD: 0.12,
+  MAX_CONTEXT_CHARS: 2000,
+  // 向量模型（可用环境变量 KB_EMBED_MODEL 覆盖；换模型后需要重建索引）
+  EMBED_MODEL: "@cf/baai/bge-m3",
+  EMBED_BATCH: 8
+};
+
+// ==========================================
 // 👑 管理员回调数据（callback_data）
 // 前缀统一为 admin_ / shop_ / game_ / rank_ / points_，分发时按前缀路由。
 // 注意：新增前缀时不要与已有前缀互为前缀关系，否则会被提前匹配。
@@ -101,6 +126,12 @@ export const ADMIN_CALLBACK = {
   USERS_GROUP_PREFIX: "admin_users_group_",
   // 一级「用户管理」菜单（二级才是私聊 / 群组用户列表）
   USERS_HOME: "admin_users_home",
+  // 群组用户 → 群列表 → 群成员
+  USER_GROUPS_PREFIX: "admin_groups_",
+  GROUP_MEMBERS_PREFIX: "admin_group_m_",
+  // 封禁名单
+  BANNED_PREFIX: "admin_banned_",
+  UNBAN_PREFIX: "admin_unban_",
   GROUP_INFO_PREFIX: "admin_group_info_",
   MANAGE_USER_PREFIX: "admin_manage_user_",
   MENU_PTS_PREFIX: "admin_menu_pts_",
@@ -132,6 +163,17 @@ export const ADMIN_CALLBACK = {
   TASK_DEL_PREFIX: "admin_task_d_",
   TASK_DELOK_PREFIX: "admin_task_dok_",
   TASK_DETAIL_PREFIX: "admin_task_",
+
+  // ---------- 📚 知识库 ----------
+  KB_HOME: "admin_kb",
+  KB_ADD: "admin_kb_add",
+  KB_TEST: "admin_kb_test",
+  KB_LIST_PREFIX: "admin_kb_list_",
+  KB_DOC_PREFIX: "admin_kb_doc_",
+  KB_TOGGLE_PREFIX: "admin_kb_t_",
+  KB_DEL_PREFIX: "admin_kb_d_",
+  KB_DELOK_PREFIX: "admin_kb_dok_",
+
   BROADCAST_CONFIRM: "admin_broadcast_confirm",
   BROADCAST_CANCEL: "admin_broadcast_cancel",
   BROADCAST_CONTINUE: "admin_broadcast_continue"

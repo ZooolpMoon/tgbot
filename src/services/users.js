@@ -3,6 +3,7 @@
 // ==========================================
 
 import { DEFAULTS } from "../config/constants.js";
+import { buildUserKey } from "../core/context.js";
 
 /**
  * 解析「每日额度」字段。
@@ -183,4 +184,145 @@ export async function setUserBlocked(env, userKey, blocked) {
     "UPDATE users SET blocked = ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ?"
   ).bind(value, userKey).run();
   return value === 1;
+}
+
+// ==========================================
+// 🚫 封禁名单（按用户 ID 操作）
+// ==========================================
+
+/**
+ * 把某个 Telegram 用户 ID 加入封禁名单。
+ * 用户从没和机器人说过话时也会建档（积分给 0，避免白送初始积分）。
+ * @returns {Promise<{ok:boolean, error?:string, existed?:boolean}>}
+ */
+export async function banUserById(env, userId, { createdBy = "" } = {}) {
+  const id = String(userId ?? "").trim();
+  if (!env.DB) return { ok: false, error: "未绑定数据库" };
+  if (!/^\d+$/.test(id)) return { ok: false, error: "用户 ID 必须是纯数字（Telegram 数字 ID）" };
+
+  const userKey = buildUserKey(id);
+  const existed = Boolean(
+    await env.DB.prepare("SELECT 1 AS ok FROM users WHERE user_key = ?").bind(userKey).first()
+  );
+
+  await env.DB.prepare(`
+    INSERT INTO users (user_key, user_id, first_name, points, blocked, updated_at)
+    VALUES (?, ?, '未命名', 0, 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_key) DO UPDATE SET blocked = 1, updated_at = CURRENT_TIMESTAMP
+  `).bind(userKey, id).run();
+
+  return { ok: true, userKey, existed, createdBy };
+}
+
+/**
+ * 把某个用户 ID 移出封禁名单。
+ * @returns {Promise<{ok:boolean, error?:string, userKey?:string}>}
+ */
+export async function unbanUserById(env, userId) {
+  const id = String(userId ?? "").trim();
+  if (!env.DB) return { ok: false, error: "未绑定数据库" };
+  if (!/^\d+$/.test(id)) return { ok: false, error: "用户 ID 必须是纯数字（Telegram 数字 ID）" };
+
+  const userKey = buildUserKey(id);
+
+  // 注意：SQLite 的 changes 统计的是「命中行数」，把 blocked 从 0 再设成 0 也算 1 行，
+  // 所以这里必须先查状态，才能区分「真的解封了」和「本来就不在名单里」。
+  const row = await env.DB.prepare(
+    "SELECT blocked FROM users WHERE user_key = ?"
+  ).bind(userKey).first();
+  if (!row) return { ok: false, error: "找不到该用户（可能从未与机器人交互过）", userKey };
+  if (Number(row.blocked) !== 1) return { ok: false, error: "该用户不在封禁名单里", userKey };
+
+  await env.DB.prepare(
+    "UPDATE users SET blocked = 0, updated_at = CURRENT_TIMESTAMP WHERE user_key = ?"
+  ).bind(userKey).run();
+
+  return { ok: true, userKey };
+}
+
+/** 按场景行 ID（user_scenes.id）封禁 / 解封背后的用户，供管理面板复用 */
+export async function toggleBlockBySceneRow(env, rowId, next) {
+  if (!env.DB) return { ok: false, error: "未绑定数据库" };
+  const scene = await env.DB.prepare(
+    "SELECT user_key, user_id, first_name FROM user_scenes WHERE id = ?"
+  ).bind(rowId).first();
+  if (!scene) return { ok: false, error: "场景不存在" };
+
+  await env.DB.prepare(
+    "UPDATE users SET blocked = ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ?"
+  ).bind(next ? 1 : 0, scene.user_key).run();
+
+  return { ok: true, userKey: scene.user_key, userId: scene.user_id, firstName: scene.first_name };
+}
+
+/** 分页列出封禁名单（含积分与名字，便于辨认） */
+export async function listBlockedUsers(env, page = 1, pageSize = 6) {
+  if (!env.DB) return { rows: [], total: 0, page: 1, totalPages: 1 };
+
+  const countRes = await env.DB.prepare(
+    "SELECT COUNT(*) AS total FROM users WHERE COALESCE(blocked, 0) = 1"
+  ).first();
+  const total = Number(countRes?.total) || 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, Math.floor(Number(page) || 1)), totalPages);
+
+  const { results } = await env.DB.prepare(
+    `SELECT id, user_key, user_id, first_name, username, points, updated_at
+     FROM users WHERE COALESCE(blocked, 0) = 1
+     ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`
+  ).bind(pageSize, (safePage - 1) * pageSize).all();
+
+  return { rows: results || [], total, page: safePage, totalPages };
+}
+
+// ==========================================
+// 👥 群组维度浏览（群列表 → 群成员）
+// ==========================================
+
+/** 分页列出所有出现过的群（按人数与最近活跃排序） */
+export async function listGroupChats(env, page = 1, pageSize = 6) {
+  if (!env.DB) return { rows: [], total: 0, page: 1, totalPages: 1 };
+
+  const countRes = await env.DB.prepare(
+    "SELECT COUNT(DISTINCT chat_id) AS total FROM user_scenes WHERE chat_type IN ('group','supergroup')"
+  ).first();
+  const total = Number(countRes?.total) || 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, Math.floor(Number(page) || 1)), totalPages);
+
+  const { results } = await env.DB.prepare(
+    `SELECT chat_id, COUNT(*) AS members, MAX(updated_at) AS updated_at
+     FROM user_scenes
+     WHERE chat_type IN ('group','supergroup')
+     GROUP BY chat_id
+     ORDER BY updated_at DESC
+     LIMIT ? OFFSET ?`
+  ).bind(pageSize, (safePage - 1) * pageSize).all();
+
+  return { rows: results || [], total, page: safePage, totalPages };
+}
+
+/** 分页列出某个群里的成员场景（点进去就是场景编辑） */
+export async function listScenesByChat(env, chatId, page = 1, pageSize = 6) {
+  if (!env.DB) return { rows: [], total: 0, page: 1, totalPages: 1 };
+
+  const countRes = await env.DB.prepare(
+    "SELECT COUNT(*) AS total FROM user_scenes WHERE chat_id = ? AND chat_type IN ('group','supergroup')"
+  ).bind(chatId).first();
+  const total = Number(countRes?.total) || 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(1, Math.floor(Number(page) || 1)), totalPages);
+
+  const { results } = await env.DB.prepare(
+    `SELECT s.id, s.user_id, s.user_key, s.first_name, s.username, s.updated_at,
+            COALESCE(u.points, 0) AS points,
+            COALESCE(u.blocked, 0) AS blocked
+     FROM user_scenes s
+     LEFT JOIN users u ON u.user_key = s.user_key
+     WHERE s.chat_id = ? AND s.chat_type IN ('group','supergroup')
+     ORDER BY s.updated_at DESC
+     LIMIT ? OFFSET ?`
+  ).bind(chatId, pageSize, (safePage - 1) * pageSize).all();
+
+  return { rows: results || [], total, page: safePage, totalPages };
 }

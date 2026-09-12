@@ -38,7 +38,11 @@ const ACTION_LABELS = {
   task_delete: "🗑️ 删除每日任务",
   task_enable: "✅ 启用每日任务",
   task_disable: "🚫 停用每日任务",
-  task_bonus: "🏆 修改全勤奖"
+  task_bonus: "🏆 修改全勤奖",
+  kb_doc_add: "📚 新增知识库文档",
+  kb_doc_enable: "✅ 启用知识库文档",
+  kb_doc_disable: "🚫 停用知识库文档",
+  kb_doc_delete: "🗑️ 删除知识库文档"
 };
 
 /** 把数据库里的动作键翻译成中文（未知动作原样显示，方便排查新功能） */

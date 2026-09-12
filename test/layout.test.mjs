@@ -18,7 +18,10 @@ import { getUserPointsKeyboard } from "../src/admin/user-points.js";
 import { getUserLimitKeyboard } from "../src/admin/user-limit.js";
 import { getUserRateKeyboard } from "../src/admin/user-rate.js";
 import { getUserListKeyboard } from "../src/admin/user-list.js";
+import { getGroupListKeyboard, getGroupMembersKeyboard } from "../src/admin/user-groups.js";
+import { getBannedListKeyboard } from "../src/admin/user-banned.js";
 import { getTaskListKeyboard } from "../src/admin/tasks.js";
+import { getKnowledgeHomeKeyboard, getDocumentListKeyboard } from "../src/admin/knowledge.js";
 
 import { getShopAdminHomeKeyboard, getShopAdminItemsKeyboard, getShopAdminOrdersKeyboard } from "../src/shop/admin.js";
 import { getShopHomeKeyboard, getMyOrdersKeyboard } from "../src/shop/index.js";
@@ -99,7 +102,7 @@ test("群聊里的管理菜单不显示商城入口，排版同样紧凑", () =>
 test("主菜单包含全部管理入口", () => {
   const flat = getAdminMainKeyboard(true).inline_keyboard.flat().map((b) => b.callback_data);
   for (const expect of [
-    "admin_users_home", "shop_admin_home",
+    "admin_users_home", "admin_kb", "shop_admin_home",
     "admin_codes_1", "admin_tasks", "admin_feat_home", "admin_logs_1",
     "admin_status", "admin_stats", "admin_close"
   ]) {
@@ -116,7 +119,45 @@ test("用户管理二级菜单：私聊 / 群组用户 + 返回主菜单", () =>
 
   const rows = kb.inline_keyboard;
   assert.deepEqual(rows[0].map((b) => b.callback_data), ["admin_users_private_1", "admin_users_group_1"]);
-  assert.deepEqual(rows[1].map((b) => b.callback_data), ["admin_main_menu"]);
+  assert.deepEqual(rows[1].map((b) => b.callback_data), ["admin_banned_1", "admin_main_menu"]);
+});
+
+test("群组用户：群列表 → 群成员，两级都不超过 8 行", () => {
+  const groups = Array.from({ length: 6 }, (_, i) => ({
+    chat_id: `-10012345678${i}`, members: i + 1, updated_at: "2026-09-12 10:00:00"
+  }));
+  const groupKb = getGroupListKeyboard(groups, 1, 1);
+  assertCompact(groupKb, { maxRows: 6, label: "群列表" });
+  // 按钮回调里要能带回群 ID（页码用结尾的 _1）
+  const first = groupKb.inline_keyboard[0][0];
+  assert.equal(first.callback_data, "admin_group_m_-100123456780_1");
+
+  const members = Array.from({ length: 6 }, (_, i) => ({
+    id: i + 1, first_name: `成员名字很长${i}`, user_id: String(1000 + i), points: 100, blocked: i % 2
+  }));
+  const memberKb = getGroupMembersKeyboard(members, 1, 1, "-100123456780");
+  assertCompact(memberKb, { maxRows: 5, label: "群成员列表" });
+  assert.ok(memberKb.inline_keyboard.flat().some((b) => b.text.startsWith("🚫")));
+});
+
+test("封禁名单：每行一个解封按钮，页面不会太长", () => {
+  const rows = Array.from({ length: 5 }, (_, i) => ({
+    id: i + 1, first_name: `被封禁用户${i}`, user_id: String(2000 + i), points: 0
+  }));
+  const kb = getBannedListKeyboard(rows, 1, 1);
+  assertCompact(kb, { maxRows: 7, label: "封禁名单" });
+  assert.equal(kb.inline_keyboard[0].length, 1, "解封按钮每行一个，避免误触");
+  assert.equal(kb.inline_keyboard[0][0].callback_data, "admin_unban_1_1");
+});
+
+test("知识库面板：首页与文档列表排版紧凑", () => {
+  assertCompact(getKnowledgeHomeKeyboard(), { maxRows: 4, label: "知识库首页" });
+
+  const docs = Array.from({ length: 6 }, (_, i) => ({
+    id: i + 1, title: `很长的文档标题${i}`, enabled: 1, chunk_count: 12
+  }));
+  const listKb = getDocumentListKeyboard(docs, 1, 1);
+  assertCompact(listKb, { maxRows: 6, label: "文档列表" });
 });
 
 test("功能开关首页：三级入口都是两列网格", () => {

@@ -18,6 +18,13 @@ import { handleGameCallbacks } from "../games/index.js";
 
 // ---- 用户管理 ----
 import { renderUserListMenu } from "../admin/user-list.js";
+import { renderGroupListMenu, renderGroupMembersMenu } from "../admin/user-groups.js";
+import { renderBannedListMenu, handleUnban } from "../admin/user-banned.js";
+import {
+  renderKnowledgeHome, renderDocumentList, renderDocumentDetail,
+  startAddDocument, startKnowledgeTest, handleDocumentToggle,
+  handleDocumentDelete, handleDocumentDeleteConfirm
+} from "../admin/knowledge.js";
 import {
   renderUserEditMenu,
   handleDeleteScene,
@@ -366,6 +373,69 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     if (data === ADMIN_CALLBACK.USERS_HOME) {
       await renderUserManageMenu(token, chatId, msgId);
       await answerCallback(token, callback.id, "用户管理");
+    }
+
+    // ---------- 群组用户：群列表 → 群成员 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.GROUP_MEMBERS_PREFIX)) {
+      // 形如 admin_group_m_-1001234567890_2：群 ID 可能是负数，用最后一个下划线切页码
+      const rest = String(data).replace(ADMIN_CALLBACK.GROUP_MEMBERS_PREFIX, "");
+      const sep = rest.lastIndexOf("_");
+      const targetChat = sep === -1 ? rest : rest.slice(0, sep);
+      const page = Number.parseInt(sep === -1 ? "1" : rest.slice(sep + 1), 10) || 1;
+      await renderGroupMembersMenu(token, env, chatId, msgId, targetChat, page);
+      await answerCallback(token, callback.id, `群 ${targetChat}`);
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.USER_GROUPS_PREFIX)) {
+      const page = Number.parseInt(String(data).replace(ADMIN_CALLBACK.USER_GROUPS_PREFIX, ""), 10) || 1;
+      await renderGroupListMenu(token, env, chatId, msgId, page);
+      await answerCallback(token, callback.id, `群组第 ${page} 页`);
+    }
+
+    // ---------- 封禁名单 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.UNBAN_PREFIX)) {
+      await handleUnban({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.BANNED_PREFIX)) {
+      const page = Number.parseInt(String(data).replace(ADMIN_CALLBACK.BANNED_PREFIX, ""), 10) || 1;
+      await renderBannedListMenu(token, env, chatId, msgId, page);
+      await answerCallback(token, callback.id, `封禁名单第 ${page} 页`);
+    }
+
+    // ---------- 知识库（RAG）----------
+    else if (data === ADMIN_CALLBACK.KB_HOME) {
+      await renderKnowledgeHome(token, env, chatId, msgId, uctx);
+      await answerCallback(token, callback.id, "知识库");
+    }
+    else if (data === ADMIN_CALLBACK.KB_ADD) {
+      await startAddDocument({ env, token, chatId, uctx });
+      await answerCallback(token, callback.id, "开始添加文档");
+    }
+    else if (data === ADMIN_CALLBACK.KB_TEST) {
+      await startKnowledgeTest({ env, token, chatId, uctx });
+      await answerCallback(token, callback.id, "请输入要测试的问题");
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.KB_LIST_PREFIX)) {
+      const page = Number.parseInt(String(data).replace(ADMIN_CALLBACK.KB_LIST_PREFIX, ""), 10) || 1;
+      await renderDocumentList(token, env, chatId, msgId, uctx, page);
+      await answerCallback(token, callback.id, `文档第 ${page} 页`);
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.KB_TOGGLE_PREFIX)) {
+      await handleDocumentToggle({ env, token, callback, chatId, msgId, data, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.KB_DELOK_PREFIX)) {
+      await handleDocumentDeleteConfirm({ env, token, callback, chatId, msgId, data, uctx, adminId: fromId });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.KB_DEL_PREFIX)) {
+      await handleDocumentDelete({ env, token, callback, chatId, msgId, data });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.KB_DOC_PREFIX)) {
+      const docId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.KB_DOC_PREFIX, ""), 10);
+      if (Number.isInteger(docId)) {
+        await renderDocumentDetail(token, env, chatId, msgId, docId);
+        await answerCallback(token, callback.id, `文档 #${docId}`);
+      } else {
+        await answerCallback(token, callback.id, "⚠️ 文档参数无效", true);
+      }
     }
 
     // ---------- 用户列表 ----------

@@ -30,6 +30,7 @@ const { handleMessage } = await import("../src/handlers/message.js");
 const { cmdCheckin } = await import("../src/handlers/commands/checkin.js");
 const { handleCallback } = await import("../src/handlers/callback.js");
 const { handleModPoints } = await import("../src/admin/user-points.js");
+const { cmdBan, cmdUnban } = await import("../src/handlers/commands/ban.js");
 const { isCodeExpired } = await import("../src/services/redeem.js");
 const { parseMaxDaily, parseRateLimit } = await import("../src/services/users.js");
 const { DEFAULTS } = await import("../src/config/constants.js");
@@ -303,6 +304,140 @@ test("点击「用户管理」进入二级菜单：私聊用户 / 群组用户",
     ["admin_users_private_1", "admin_users_group_1"]
   );
   assert.ok(String(edited.body.text).includes("用户管理"));
+
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+// ---------- 8. 封禁名单 ----------
+
+test("/ban 建档并封禁，/unban 解封，重复解封会提示", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  // 封禁一个从没说过话的用户：应自动建档，且积分保持 0
+  await cmdBan({
+    env, ctx, token: "T", chatId: "1", isGroupCtx: false,
+    rawText: "/ban 123456 广告刷屏", myId: "999"
+  });
+  const row = db.get("SELECT * FROM users WHERE user_key = 'user:123456'");
+  assert.ok(row, "应自动创建用户档案");
+  assert.equal(row.blocked, 1);
+  assert.equal(row.points, 0, "封禁建档不应白送初始积分");
+  assert.ok(textCalls().some((t) => t.includes("已加入封禁名单")));
+  assert.equal(db.get("SELECT action FROM admin_logs ORDER BY id DESC LIMIT 1").action, "user_block");
+
+  // 已在名单里时再解封
+  resetCalls();
+  await cmdUnban({ env, ctx, token: "T", chatId: "1", isGroupCtx: false, rawText: "/unban 123456", myId: "999" });
+  assert.equal(db.get("SELECT blocked FROM users WHERE user_key = 'user:123456'").blocked, 0);
+  assert.ok(textCalls().some((t) => t.includes("已解封")));
+
+  // 再解封一次应提示不在名单里
+  resetCalls();
+  await cmdUnban({ env, ctx, token: "T", chatId: "1", isGroupCtx: false, rawText: "/unban 123456", myId: "999" });
+  assert.ok(textCalls().some((t) => t.includes("不在封禁名单")));
+
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("/ban 参数校验：非法 ID 与封禁自己都会被拒绝", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  await cmdBan({ env, ctx, token: "T", chatId: "1", isGroupCtx: false, rawText: "/ban abc", myId: "999" });
+  assert.ok(textCalls().some((t) => t.includes("纯数字")));
+
+  resetCalls();
+  await cmdBan({ env, ctx, token: "T", chatId: "1", isGroupCtx: false, rawText: "/ban 999", myId: "999" });
+  assert.ok(textCalls().some((t) => t.includes("不能封禁管理员自己")));
+  assert.equal(db.count("users", "user_key = 'user:999'"), 0, "不应给自己建档");
+
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("封禁名单面板：列表显示被封禁用户，点按钮立即解封", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  seedUser(db, "user:555", 30);
+  db.exec("UPDATE users SET blocked = 1, first_name = '捣乱的人' WHERE user_key = 'user:555'");
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  const adminCtx = {
+    chatId: "1", userId: "999", chatType: "private",
+    userKey: "user:999", sceneKey: "private:999",
+    username: "admin", firstName: "管理员"
+  };
+  const call = (data) => handleCallback({
+    env, ctx, token: "TEST_TOKEN", myId: "999", uctx: adminCtx,
+    payload: {
+      callback_query: {
+        id: "cb", from: { id: 999 }, data,
+        message: { message_id: 7, chat: { id: 1, type: "private" } }
+      }
+    }
+  });
+
+  await call("admin_banned_1");
+  const listText = apiCalls.filter((c) => c.method === "editMessageText").at(-1).body.text;
+  assert.ok(listText.includes("捣乱的人"), "列表应显示被封禁用户");
+  const unbanBtn = apiCalls.filter((c) => c.method === "editMessageText").at(-1)
+    .body.reply_markup.inline_keyboard.flat().find((b) => b.callback_data.startsWith("admin_unban_"));
+  assert.ok(unbanBtn, "应有解封按钮");
+
+  await call(unbanBtn.callback_data);
+  assert.equal(db.get("SELECT blocked FROM users WHERE user_key = 'user:555'").blocked, 0);
+
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+// ---------- 9. 群组用户两级浏览 ----------
+
+test("群组用户：先看群列表，再看群成员", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  seedUser(db, "user:111", 50);
+  db.exec(`INSERT INTO user_scenes (scene_key, user_key, chat_id, chat_type, user_id, first_name)
+           VALUES ('group:-100:user:111', 'user:111', '-100', 'supergroup', '111', '群成员甲')`);
+  db.exec(`INSERT INTO user_scenes (scene_key, user_key, chat_id, chat_type, user_id, first_name)
+           VALUES ('group:-200:user:999', 'user:999', '-200', 'supergroup', '999', '管理员')`);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  const adminCtx = {
+    chatId: "1", userId: "999", chatType: "private",
+    userKey: "user:999", sceneKey: "private:999"
+  };
+  const call = (data) => handleCallback({
+    env, ctx, token: "TEST_TOKEN", myId: "999", uctx: adminCtx,
+    payload: {
+      callback_query: {
+        id: "cb", from: { id: 999 }, data,
+        message: { message_id: 8, chat: { id: 1, type: "private" } }
+      }
+    }
+  });
+
+  await call("admin_groups_1");
+  const groupKb = apiCalls.filter((c) => c.method === "editMessageText").at(-1).body.reply_markup.inline_keyboard;
+  const groupButtons = groupKb.flat().filter((b) => b.callback_data.startsWith("admin_group_m_"));
+  assert.equal(groupButtons.length, 2, "应列出两个群");
+
+  const target = groupButtons.find((b) => b.callback_data.includes("-100"));
+  await call(target.callback_data);
+  const memberText = apiCalls.filter((c) => c.method === "editMessageText").at(-1).body.text;
+  assert.ok(memberText.includes("群成员甲"), "群成员列表应包含该群成员");
+  assert.ok(!memberText.includes("管理员"), "不应混入其他群的成员");
 
   await Promise.all(ctx.pending);
   db.close();

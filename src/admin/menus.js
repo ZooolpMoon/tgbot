@@ -14,7 +14,8 @@ import { ADMIN_CALLBACK } from "../config/constants.js";
 export function getAdminMainKeyboard(showShop = true) {
   const buttons = [
     // 用户管理是一级入口，点进去再选「私聊用户 / 群组用户」
-    { text: "👥 用户管理", callback_data: ADMIN_CALLBACK.USERS_HOME }
+    { text: "👥 用户管理", callback_data: ADMIN_CALLBACK.USERS_HOME },
+    { text: "📚 知识库", callback_data: ADMIN_CALLBACK.KB_HOME }
   ];
 
   if (showShop) {
@@ -50,7 +51,10 @@ export function getUserManageKeyboard() {
         { text: "💬 私聊用户", callback_data: `${ADMIN_CALLBACK.USERS_PRIVATE_PREFIX}1` },
         { text: "👥 群组用户", callback_data: `${ADMIN_CALLBACK.USERS_GROUP_PREFIX}1` }
       ],
-      [{ text: "🔙 返回主菜单", callback_data: ADMIN_CALLBACK.MAIN_MENU }]
+      [
+        { text: "🚫 封禁名单", callback_data: `${ADMIN_CALLBACK.BANNED_PREFIX}1` },
+        { text: "🔙 返回主菜单", callback_data: ADMIN_CALLBACK.MAIN_MENU }
+      ]
     ]
   };
 }
@@ -59,7 +63,8 @@ const USER_MENU_TEXT =
   `👥 <b>用户管理</b>\n` +
   `${LAYOUT.DIVIDER}\n` +
   `💬 <b>私聊用户</b> —— 每个私聊用户一个场景，可改积分、限额、频率、功能开关\n` +
-  `👥 <b>群组用户</b> —— 群聊里每个成员各是一个场景（同一用户在不同群互不影响）\n\n` +
+  `👥 <b>群组用户</b> —— 先选群，再看群成员（同一用户在不同群互不影响）\n` +
+  `🚫 <b>封禁名单</b> —— 查看被封禁用户并一键解封（添加封禁用 <code>/ban &lt;用户ID&gt;</code>）\n\n` +
   `积分是<b>全局共享</b>的，其余配置都是<b>场景独立</b>的。`;
 
 /** 新发一条管理员主菜单（/admin 指令用） */

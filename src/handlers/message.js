@@ -21,17 +21,39 @@ import { handleEditItemInput } from "../shop/edit.js";
 import { renderShopItem } from "../shop/index.js";
 import { getPendingNoteRequest, saveOrderNote, cancelOrderNote } from "../shop/notes.js";
 import { isTaskGuideActive, handleTaskGuideInput, cancelTaskGuide } from "../admin/tasks.js";
+import {
+  ingestUploadedDocument, isKnowledgeGuideActive, handleKnowledgeInput, cancelKnowledgeGuide
+} from "../admin/knowledge.js";
 
 /** 处理 message / edited_message 更新 */
 export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx }) {
   const message = payload.message || payload.edited_message;
   let userText = (message.text || "").trim();
-  if (!userText) return;
 
   const chatId = uctx.chatId;
   const userKey = uctx.userKey;
   const sceneKey = uctx.sceneKey;
   const userId = uctx.userId;
+
+  // ---------- 管理员上传知识库文件（.txt / .md）：在文本判定之前处理 ----------
+  // 只处理管理员发的「文档」消息，图片 / 语音等仍然走原来的忽略逻辑
+  if (!userText && message.document && myId && userId === myId) {
+    const handled = await ingestUploadedDocument({
+      env, token, chatId, uctx, document: message.document, adminId: userId
+    });
+    if (handled) return;
+
+    // 管理员发了不支持的文件类型时给个提示，避免以为机器人没反应
+    await sendMessage(
+      token, chatId,
+      "ℹ️ 只支持把 <code>.txt</code> / <code>.md</code> 等文本文件直接存进知识库。\n" +
+      "其他格式（图片、压缩包、PDF）请转换成文本后，用「📚 知识库 → ➕ 添加文档」粘贴进来。",
+      "HTML"
+    );
+    return;
+  }
+
+  if (!userText) return;
 
   // ---------- 群聊里：只处理 @BOT 或 /指令 ----------
   const botUsername = env.BOT_USERNAME ? env.BOT_USERNAME.replace(/^@/, "").trim().toLowerCase() : null;
@@ -58,7 +80,12 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
       }
     }
 
-    if (!isMentioned && !isCommandLike) return;
+    // 管理员正在填知识库引导表单时，群里不 @ 也要放行（否则粘贴正文会被静默丢掉）
+    if (!isMentioned && !isCommandLike) {
+      const adminGuideActive = Boolean(myId && userId === myId)
+        && await isKnowledgeGuideActive(env, chatId);
+      if (!adminGuideActive) return;
+    }
 
     if (isMentioned) {
       if (botUsername) {
@@ -115,6 +142,18 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   if (!isGroupCtx && isMaster && !isCommandLike) {
     if (await handleAddItemInput({ env, token, chatId, userText, adminId: userId })) return;
     if (await handleEditItemInput({ env, token, chatId, userText, adminId: userId })) return;
+  }
+
+  // ---------- 知识库引导式输入（添加文档 / 检索测试，私聊与群聊都支持）----------
+  if (isMaster && (await isKnowledgeGuideActive(env, chatId))) {
+    if (isCommandLike) {
+      if (/^\/(cancel|取消)$/i.test(command)) {
+        await cancelKnowledgeGuide({ env, token, chatId });
+        return;
+      }
+    } else if (await handleKnowledgeInput({ env, token, chatId, uctx, userText, adminId: userId })) {
+      return;
+    }
   }
 
   // ---------- 每日任务管理的引导式输入（管理员，私聊）----------

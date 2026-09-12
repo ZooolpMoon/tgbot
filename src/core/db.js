@@ -268,6 +268,48 @@ CREATE TABLE IF NOT EXISTS daily_tasks (
   PRIMARY KEY (user_key, date_str, task)
 );
 CREATE INDEX IF NOT EXISTS idx_daily_tasks_key ON daily_tasks(user_key, date_str);
+
+-- ==========================================
+-- 📚 知识库（RAG）
+-- scope_key = 'global' 为全局知识，其余按场景隔离（例如 group:<群ID>:user:<管理员ID>）
+-- ==========================================
+
+-- 文档：一次上传对应一条记录，正文会切成多个 chunk
+CREATE TABLE IF NOT EXISTS kb_docs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope_key   TEXT    NOT NULL,
+  title       TEXT    NOT NULL,
+  source      TEXT    DEFAULT '',
+  content     TEXT    NOT NULL,
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  chunk_count INTEGER NOT NULL DEFAULT 0,
+  created_by  TEXT    DEFAULT '',
+  created_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kb_docs_scope ON kb_docs(scope_key, id DESC);
+
+-- 文档分块：embedding 存 base64(Float32Array)，检索时在 Worker 内做余弦相似度
+CREATE TABLE IF NOT EXISTS kb_chunks (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id    INTEGER NOT NULL,
+  scope_key TEXT    NOT NULL,
+  seq       INTEGER NOT NULL DEFAULT 0,
+  content   TEXT    NOT NULL,
+  dim       INTEGER NOT NULL DEFAULT 0,
+  embedding TEXT    NOT NULL DEFAULT '',
+  created_at TEXT   DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_scope ON kb_chunks(scope_key, id);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id, seq);
+
+-- 知识库引导式操作状态（添加文档 / 检索测试），30 分钟过期
+CREATE TABLE IF NOT EXISTS kb_sessions (
+  chat_id    TEXT PRIMARY KEY,
+  step       TEXT NOT NULL,
+  draft      TEXT DEFAULT '',
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 let schemaReady = false;
@@ -278,7 +320,7 @@ let schemaPromise = null;
  * Worker 冷启动时先读这个标记，已是最新就跳过建表与迁移，
  * 避免每次冷启动都跑几十条语句（D1 对单次调用的查询数有限制）。
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 

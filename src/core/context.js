@@ -19,6 +19,15 @@ export function buildSceneKey(chatId, userId, chatType) {
 }
 
 /**
+ * 群级共享键（不区分成员）。
+ * 知识库要用它：群知识库属于整个群，而不是「管理员在该群的个人场景」，
+ * 否则其他成员检索不到同一份资料。
+ */
+export function buildGroupScopeKey(chatId) {
+  return `group:${String(chatId || "").trim()}`;
+}
+
+/**
  * 从 Telegram 更新对象解析统一上下文。
  * 回调消息与普通消息共用；缺少 chat/from 等必要字段时返回 null，上层直接忽略。
  */
