@@ -30,6 +30,21 @@ npm run check          # 提交前的语法 / import 自检
 > 也就是说 GitHub 上只有代码，**这份含 Bot Token 的配置需要你另行备份**（密码管理器 / 私有存储），
 > 否则换电脑时需要重新向 BotFather 取 Token 并重建配置。
 
+### 🔐 生产配置怎么备份
+
+用一条命令把配置备份到**私有** GitHub 仓库（不会走公网 git 端口，用的是 GitHub API，github.com 被墙也能用）：
+
+```bash
+npm run backup:config
+```
+
+- 备份内容：`wrangler.production.toml` + `.dev.vars`
+- 目标仓库：默认 `ZooolpMoon/tgbot-config`（可用环境变量 `CONFIG_BACKUP_REPO` 覆盖）
+- 凭据：优先读 `GITHUB_TOKEN`，否则复用本机 Git 凭据管理器里 `git push` 用的那份
+- **安全兜底**：脚本会先检查目标仓库是不是私有，不是私有就直接中止，避免把 Token 推到公开仓库
+
+恢复时：克隆该私有仓库，把两个文件复制回项目根目录，然后 `npm install && npm run deploy:prod`。
+
 ---
 
 ## 📑 目录
@@ -959,6 +974,7 @@ wrangler d1 export tgbot-db --output=backup.sql --remote -c wrangler.production.
 # 备份（一键，输出到 backups/ 目录，文件名带时间戳）
 npm run backup          # 备份线上库
 npm run backup:local    # 备份本地 wrangler dev 库
+npm run backup:config   # 备份生产配置到私有仓库（含 Token）
 
 # 代码自检（语法 + import 路径）
 npm run check

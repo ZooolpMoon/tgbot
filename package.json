@@ -11,6 +11,7 @@
     "tail": "wrangler tail",
     "backup": "node scripts/backup.mjs",
     "backup:local": "node scripts/backup.mjs --local",
+    "backup:config": "node scripts/backup-config.mjs",
     "check": "node scripts/check.mjs"
   },
   "devDependencies": {
