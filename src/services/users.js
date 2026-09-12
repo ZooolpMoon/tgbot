@@ -179,6 +179,10 @@ export async function isUserBlocked(env, userKey) {
 /** 设置封禁状态，返回设置后的结果 */
 export async function setUserBlocked(env, userKey, blocked) {
   if (!env.DB || !userKey) return false;
+  // 机器人管理员永远不进封禁名单：封了自己会让「谁能进后台」变得不可预期
+  if (env.MY_TELEGRAM_ID && String(userKey) === buildUserKey(env.MY_TELEGRAM_ID)) {
+    return false;
+  }
   const value = blocked ? 1 : 0;
   await env.DB.prepare(
     "UPDATE users SET blocked = ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ?"
@@ -199,6 +203,9 @@ export async function banUserById(env, userId, { createdBy = "" } = {}) {
   const id = String(userId ?? "").trim();
   if (!env.DB) return { ok: false, error: "未绑定数据库" };
   if (!/^\d+$/.test(id)) return { ok: false, error: "用户 ID 必须是纯数字（Telegram 数字 ID）" };
+  if (env.MY_TELEGRAM_ID && id === String(env.MY_TELEGRAM_ID)) {
+    return { ok: false, error: "不能封禁机器人管理员自己" };
+  }
 
   const userKey = buildUserKey(id);
   const existed = Boolean(

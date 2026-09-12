@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 196 个用例）
+2. `npm test` 通过（当前 209 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -78,6 +78,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - **回答模式**（`KB.ANSWER_MODE` / `KB_ANSWER_MODE`）：默认 `hybrid` —— 资料没覆盖时允许模型用自己的知识回答；**不要把它改回「资料没有就一律说未提及」**，那会让接了 AI 的机器人明明能答却拒答。严格问答用 `strict` 模式实现
   - **相关度门槛**：综合分 < `KB.STRONG_SCORE`（0.45）时必须有真实关键词重叠才注入，避免无关资料把模型带偏；「检索测试」是调试工具，调用时传 `minScore:0, strongScore:0` 以列出全部候选
 - **封禁是用户级**（`users.blocked`）：`/ban <用户ID>`、场景编辑里的封禁按钮都会影响该用户在所有场景；名单在「用户管理 → 🚫 封禁名单」
+  - **机器人管理员不可被封禁**（`setUserBlocked` / `banUserById` 直接拒绝，面板显示「管理员不可封禁」）：封了自己会让「谁能进后台」变得不可预期
 - **群规执法**（`services/guard.js` + `admin/guard.js`）：
   - **只认 `/指令`，没有自然语言入口**：`封禁 / 拉黑 / 踢了 / 闭嘴` 在日常聊天里太常见，靠关键词拦截会误伤普通发言；别再把 `detectAction` 接回 `message.js`。举报走 `/report`（必须回复违规消息）、申诉走 `/appeal`（私聊）
   - **理由必须校验通过**（内置违规类型 → 本群群规文本 → 本群知识库），不通过绝不执行；这是「能自动执法」的安全底线，不要为了方便跳过
@@ -85,6 +86,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 群组处置要求机器人是本群管理员且有 `can_restrict_members`；执行前用 `getBotGroupRights` 检查
   - 确认回调 `guard_*` 要放在 callback.js 的**管理员校验之前**（本群管理员也要能点）
   - 权限：机器人管理员 或 本群管理员（creator/administrator）。本群管理员靠注册表里的 `groupAdmin: true` 放行（跳过 `/admin` 解锁），**记录里的 `operator_id` 必须是发起人**，否则确认卡片只有机器人管理员能点
+  - **机器人管理员不可被处置**：命令入口（`requestPunishmentFromCommand`）、举报入口与 `executePunishment` 都要拦，别删掉这层兜底
   - 发给管理员私聊的卡片（举报 / 预警）`operator_id` 留空，只有机器人管理员能确认——成员不该能批准自己的举报
   - 面板与引导式编辑在 `admin/guard-panel.js`（群规正文 / 默认处置 / 默认时长 / 开关 / 处置记录），会话存 `guard_sessions`，同样是 30 分钟过期 + 定时任务兜底
 - **消息自动删除**（`services/auto-delete.js` + `telegram/auto-delete.js` + `admin/auto-delete.js`）：
@@ -94,6 +96,8 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 私聊不删除；带按钮的卡片要留时间点击，默认必须是 0
 - **输入框命令菜单**（`services/command-menu.js`）：菜单由命令注册表自动生成，**加命令不用改这里**；用内容哈希（`commands.version`）判断是否需要调用 Telegram，且每个 isolate 只检查一次。改完注册表想立刻看到菜单，用 `/syncmenu`
 - **引导式输入会话**（`shop_add_sessions` / `shop_edit_sessions` / `task_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts`）读取时都要带 `updated_at >= datetime('now','-30 minutes')`，并保证 `services/daily.js` 里有对应清理
+- **引导会话必须互斥**：开新引导流程前先 `clearGuideSessions(env, chatId)`（`services/sessions.js`），否则残留会话会吞掉后续所有文本（现象是「点了按钮没反应」）。群里也要放行管理员正在填的引导文本（见 `message.js` 的 `adminGuideActive`）
+- **`editMessageText` 不能传 null message_id**：引导流程里刷新卡片时 messageId 往往是空的，必须 `messageId ? editMessageText(...) : sendMessageWithKeyboard(...)`，否则 Telegram 直接报错、用户只看到一句「修改成功」
 - **文档解析**（`services/text-extract.js`）：`.docx` 走 zip + `word/document.xml`；`.pdf` 是**尽力抽取**文本层，扫不出文字必须明确提示（不要假装成功）。新增格式时在 `detectFileKind` 里登记，并补 `admin-extra.test.mjs` 的用例
 - **知识库索引**：`kb_chunks.model` 记录向量模型，换 `KB_EMBED_MODEL` 后靠「重建索引」（面板按钮 / 定时任务）分批补建，不要写一次性全量重建
 - **处置相关改动**：任何「撤销/申诉通过」都要走 `revokePunishment`，它会同时解除机器人封禁与群内限制并记 `revoked`；处置记录状态多了 `revoked`，展示文案在 `guard-panel.js` 的 `STATUS_TEXT`

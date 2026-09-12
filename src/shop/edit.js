@@ -17,6 +17,7 @@ import { escapeHtml } from "../utils/html.js";
 import { grid } from "../utils/layout.js";
 import { SHOP_EDIT_FIELDS } from "../config/constants.js";
 import { logAdminAction } from "../services/admin-log.js";
+import { clearGuideSessions } from "../services/sessions.js";
 import { CATEGORY_MAP, CATEGORY_TEXT, categoryText, parseCategory } from "./categories.js";
 
 const SESSION_TTL_MINUTES = 30;
@@ -87,9 +88,10 @@ export async function startEditField({ env, token, chatId, itemId, field }) {
   ).bind(itemId).first();
   if (!item) return sendMessage(token, chatId, `❌ 商品 #${itemId} 不存在。`);
 
-  // 避免与「添加商品」流程互相干扰
+  // 开新流程前先清掉其它引导会话（含「添加商品」），避免互相抢消息
+  await clearGuideSessions(env, chatId);
+
   await env.DB.batch([
-    env.DB.prepare("DELETE FROM shop_add_sessions WHERE chat_id = ?").bind(chatId),
     env.DB.prepare(`
       INSERT INTO shop_edit_sessions (chat_id, item_id, field, updated_at)
       VALUES (?, ?, ?, CURRENT_TIMESTAMP)

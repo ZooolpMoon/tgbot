@@ -15,6 +15,7 @@ import {
   listTaskDefs, getTaskDef, createTaskDef, updateTaskDef, deleteTaskDef,
   getTaskBonus, setTaskBonus
 } from "../services/tasks.js";
+import { clearGuideSessions } from "../services/sessions.js";
 import { logAdminAction } from "../services/admin-log.js";
 
 const MAX_POINTS = 1000;
@@ -144,10 +145,17 @@ export async function renderTaskAdmin(token, env, chatId, messageId = null, page
 export async function renderTaskDetail(token, env, chatId, messageId, taskId) {
   if (!env.DB) return;
 
+  // messageId 为空时（引导流程里同步结果）要新发一条，不能拿 null 去 editMessageText
+  const deliver = (text, keyboard) => (messageId
+    ? editMessageText(token, chatId, messageId, text, keyboard, "HTML")
+    : sendMessageWithKeyboard(token, chatId, text, keyboard, "HTML"));
+
   const def = await getTaskDef(env, taskId);
   if (!def) {
-    return editMessageText(token, chatId, messageId, "❌ 任务不存在（可能已被删除）。",
-      { inline_keyboard: [[{ text: "🔙 返回任务列表", callback_data: ADMIN_CALLBACK.TASKS_PREFIX }]] });
+    return deliver(
+      "❌ 任务不存在（可能已被删除）。",
+      { inline_keyboard: [[{ text: "🔙 返回任务列表", callback_data: ADMIN_CALLBACK.TASKS_PREFIX }]] }
+    );
   }
 
   const allDefs = await listTaskDefs(env);
@@ -182,7 +190,7 @@ export async function renderTaskDetail(token, env, chatId, messageId, taskId) {
     ]
   };
 
-  return editMessageText(token, chatId, messageId, text, keyboard, "HTML");
+  return deliver(text, keyboard);
 }
 
 // ---------- 引导式：添加任务 ----------
@@ -190,11 +198,8 @@ export async function renderTaskDetail(token, env, chatId, messageId, taskId) {
 export async function startTaskAdd({ env, token, chatId }) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
 
-  // 商城添加/编辑是另外两套引导流程，开始任务引导前先清掉，避免互相抢消息
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM shop_add_sessions WHERE chat_id = ?").bind(chatId),
-    env.DB.prepare("DELETE FROM shop_edit_sessions WHERE chat_id = ?").bind(chatId)
-  ]);
+  // 其它引导流程（商城添加/编辑、知识库、群规）会抢走接下来的文本，先清掉
+  await clearGuideSessions(env, chatId);
   await setSession(env, chatId, "add:trigger", null, {});
 
   const text =
@@ -247,6 +252,8 @@ const FIELD_PROMPTS = {
 export async function startTaskFieldEdit({ env, token, chatId, taskId, field }) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
 
+  await clearGuideSessions(env, chatId);
+
   const def = await getTaskDef(env, taskId);
   if (!def) return sendMessage(token, chatId, "❌ 任务不存在。");
 
@@ -266,6 +273,8 @@ export async function startTaskFieldEdit({ env, token, chatId, taskId, field }) 
 /** 全勤奖：当天所有启用任务都完成后额外发放的积分 */
 export async function startTaskBonusEdit({ env, token, chatId }) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
+
+  await clearGuideSessions(env, chatId);
 
   const bonus = await getTaskBonus(env);
   await setSession(env, chatId, "bonus", null, null);

@@ -42,9 +42,12 @@ export async function logPointChange(env, userKey, changeAmount, balanceAfter, r
  */
 export async function tryDeductPoints(env, userKey, amount) {
   if (!env.DB) return null;
+  // 负数扣分等于凭空加分：任何调用方都不该传负数，这里直接拒绝（0 允许，用于免费商品）
+  const cost = Math.floor(Number(amount));
+  if (!Number.isFinite(cost) || cost < 0) return null;
   const res = await env.DB.prepare(
     "UPDATE users SET points = points - ? WHERE user_key = ? AND points >= ? RETURNING points"
-  ).bind(amount, userKey, amount).first();
+  ).bind(cost, userKey, cost).first();
   return res && Number.isFinite(Number(res.points)) ? Number(res.points) : null;
 }
 

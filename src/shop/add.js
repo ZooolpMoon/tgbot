@@ -8,6 +8,7 @@
 import { sendMessage } from "../telegram/api.js";
 import { escapeHtml } from "../utils/html.js";
 import { logAdminAction } from "../services/admin-log.js";
+import { clearGuideSessions } from "../services/sessions.js";
 import { CATEGORY_MAP, categoryText, parseCategory } from "./categories.js";
 
 /** 各字段的输入上限，防止一条超长消息把商品记录撑爆 */
@@ -26,9 +27,10 @@ export { CATEGORY_MAP };
 export async function startAddItem(token, env, chatId) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
 
+  // 开新流程前先清掉其它引导会话（否则残留的会话会抢走接下来的文本）
+  await clearGuideSessions(env, chatId);
+
   await env.DB.batch([
-    // 添加与编辑是两套流程，开始其中一个就清掉另一个，避免互相抢消息
-    env.DB.prepare("DELETE FROM shop_edit_sessions WHERE chat_id = ?").bind(chatId),
     env.DB.prepare(`
       INSERT INTO shop_add_sessions (chat_id, step, name, price, stock, category, icon, description, updated_at)
       VALUES (?, 1, '', 0, -1, 'virtual', '', '', CURRENT_TIMESTAMP)

@@ -29,6 +29,7 @@ import {
 import {
   renderUserEditMenu,
   handleDeleteScene,
+  confirmDeleteScene,
   handleToggleBlock,
   handleClearSceneMemory
 } from "../admin/user-edit.js";
@@ -654,23 +655,27 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     else if (data.startsWith(ADMIN_CALLBACK.TASK_DEL_PREFIX)) {
       await handleTaskDelete({ env, token, callback, chatId, msgId, data });
     }
-    else if (data.startsWith(ADMIN_CALLBACK.TASK_DETAIL_PREFIX)) {
-      const taskId = parseInt(data.replace(ADMIN_CALLBACK.TASK_DETAIL_PREFIX, ""), 10);
-      if (Number.isInteger(taskId)) {
-        await renderTaskDetail(token, env, chatId, msgId, taskId);
-        await answerCallback(token, callback.id, `任务 #${taskId}`);
-      } else {
-        await answerCallback(token, callback.id, "⚠️ 任务参数无效", true);
-      }
+    // 注意：TASK_DETAIL_PREFIX（admin_task_）是其他几个任务回调的前缀，
+    // 必须要求后面全是数字，否则将来新增的 admin_task_* 按钮会被这条分支截胡
+    else if (
+      data.startsWith(ADMIN_CALLBACK.TASK_DETAIL_PREFIX)
+      && /^\d+$/.test(data.slice(ADMIN_CALLBACK.TASK_DETAIL_PREFIX.length))
+    ) {
+      const taskId = Number.parseInt(data.slice(ADMIN_CALLBACK.TASK_DETAIL_PREFIX.length), 10);
+      await renderTaskDetail(token, env, chatId, msgId, taskId);
+      await answerCallback(token, callback.id, `任务 #${taskId}`);
     }
 
     // ---------- 删除场景 ----------
-    else if (data.startsWith(ADMIN_CALLBACK.DELUSER_PREFIX)) {
+    else if (data.startsWith(ADMIN_CALLBACK.DELUSER_DONE_PREFIX)) {
       await handleDeleteScene({
         env, token, callback, chatId, msgId, data,
         renderUserListMenu,
         adminId: fromId
       });
+    }
+    else if (data.startsWith(ADMIN_CALLBACK.DELUSER_PREFIX)) {
+      await confirmDeleteScene({ env, token, callback, chatId, msgId, data });
     }
 
     // ---------- 状态 ----------

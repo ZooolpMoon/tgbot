@@ -26,6 +26,7 @@ import { buildUserKey } from "../core/context.js";
 import { setUserBlocked } from "./users.js";
 import { bigramScore, searchKnowledge } from "./knowledge.js";
 import { logError } from "../core/logger.js";
+import { escapeHtml } from "../utils/html.js";
 
 // ==========================================
 // 处置动作
@@ -665,6 +666,12 @@ export async function executePunishment({ env, token, record, action, durationMi
 
   const chatId = String(record.chat_id);
   const userId = String(record.user_id);
+
+  // 硬性兜底：机器人管理员永远不会被处置（即使有人翻出旧的待确认卡片）
+  if (env.MY_TELEGRAM_ID && userId === String(env.MY_TELEGRAM_ID)) {
+    return { ok: false, error: "不能处置机器人管理员" };
+  }
+
   const finalAction = action || record.action;
   const duration = Math.max(0, Math.floor(durationMin ?? record.duration_min) || 0);
   const now = Math.floor(Date.now() / 1000);
@@ -721,13 +728,14 @@ export async function executePunishment({ env, token, record, action, durationMi
 /** 生成处置结果的群内公告文案 */
 export function buildPunishmentNotice({ record, action, durationMin, untilAt, byWhom = "管理员" }) {
   const label = ACTIONS[action]?.label || action;
-  const name = record.user_label || record.user_id;
+  // user_label / reason / matched_rule 都可能是用户或管理员输入的原文，必须转义
+  const name = escapeHtml(record.user_label || record.user_id);
   let text = `🛡️ <b>群规处置</b>\n-------------------------\n`;
   text += `👤 <b>对象：</b> ${name}\n`;
   text += `⚖️ <b>处置：</b> ${label}${action === "mute" || (action === "group_ban" && durationMin > 0) ? `（${formatDuration(durationMin)}）` : ""}\n`;
-  if (record.reason) text += `📌 <b>理由：</b> ${record.reason}\n`;
-  if (record.matched_rule) text += `📜 <b>依据：</b> ${record.matched_rule}\n`;
-  text += `👑 <b>执行：</b> ${byWhom}\n`;
+  if (record.reason) text += `📌 <b>理由：</b> ${escapeHtml(record.reason)}\n`;
+  if (record.matched_rule) text += `📜 <b>依据：</b> ${escapeHtml(record.matched_rule)}\n`;
+  text += `👑 <b>执行：</b> ${escapeHtml(byWhom)}\n`;
   if (untilAt > 0) {
     const untilText = new Date(untilAt * 1000).toISOString().replace("T", " ").slice(0, 16);
     text += `⏰ <b>到期：</b> ${untilText} UTC\n`;

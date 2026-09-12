@@ -20,6 +20,7 @@ import { escapeHtml } from "../utils/html.js";
 import { grid, compactLabel, clampPage, pagerRow, pageInfoText, LAYOUT } from "../utils/layout.js";
 import { ADMIN_CALLBACK, KB } from "../config/constants.js";
 import { buildGroupScopeKey } from "../core/context.js";
+import { clearGuideSessions } from "../services/sessions.js";
 import {
   KB_GLOBAL_SCOPE, ingestDocument, listDocuments, getDocument,
   setDocumentEnabled, deleteDocument, kbStats, searchKnowledge,
@@ -330,6 +331,8 @@ export async function handleDocCopy({ env, token, callback, chatId, msgId, data,
 export async function startAddDocument({ env, token, chatId, uctx }) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
 
+  // 其它引导流程会抢走接下来的文本，先清掉
+  await clearGuideSessions(env, chatId);
   const scope = resolveKbScope(uctx);
   await setSession(env, chatId, "add:title", { scope: scope.scopeKey });
 
@@ -347,6 +350,7 @@ export async function startAddDocument({ env, token, chatId, uctx }) {
 export async function startKnowledgeTest({ env, token, chatId, uctx }) {
   if (!env.DB) return sendMessage(token, chatId, "❌ 未绑定数据库。");
 
+  await clearGuideSessions(env, chatId);
   const scope = resolveKbScope(uctx);
   await setSession(env, chatId, "test:query", { scope: scope.scopeKey });
 

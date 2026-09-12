@@ -170,6 +170,7 @@ export const ADMIN_CALLBACK = {
   MENU_RATE_PREFIX: "admin_menu_rate_",
   SETRATE_PREFIX: "admin_setrate_",
   DELUSER_PREFIX: "admin_deluser_confirm_",
+  DELUSER_DONE_PREFIX: "admin_deluser_do_",
   BLOCK_PREFIX: "admin_block_",
   CLEARMEM_PREFIX: "admin_clearmem_",
   LOGS_PREFIX: "admin_logs_",

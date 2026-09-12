@@ -89,11 +89,16 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
       }
     }
 
-    // 管理员正在填「知识库 / 群规」引导表单时，群里不 @ 也要放行（否则粘贴正文会被静默丢掉）
+    // 管理员正在填「知识库 / 群规 / 每日任务」引导表单时，群里不 @ 也要放行
+    // （否则粘贴正文会被静默丢掉——每日任务在群里改不了就是这个原因）
     if (!isMentioned && !isCommandLike) {
       const isBotAdmin = Boolean(myId && userId === myId);
       const adminGuideActive = isBotAdmin
-        && ((await isKnowledgeGuideActive(env, chatId)) || (await isGuardGuideActive(env, chatId)));
+        && (
+          (await isKnowledgeGuideActive(env, chatId))
+          || (await isGuardGuideActive(env, chatId))
+          || (await isTaskGuideActive(env, chatId))
+        );
       if (!adminGuideActive) {
         // 静默预警：普通群聊发言（没 @机器人）同样可能违规，
         // 这里只私聊提醒管理员，不公开任何内容，也不打断群聊。
@@ -207,8 +212,8 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     }
   }
 
-  // ---------- 每日任务管理的引导式输入（管理员，私聊）----------
-  if (!isGroupCtx && isMaster && (await isTaskGuideActive(env, chatId))) {
+  // ---------- 每日任务管理的引导式输入（管理员，私聊与群聊都支持）----------
+  if (isMaster && (await isTaskGuideActive(env, chatId))) {
     if (isCommandLike) {
       if (/^\/(cancel|取消)$/i.test(command)) {
         await cancelTaskGuide({ env, token, chatId });

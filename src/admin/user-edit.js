@@ -7,6 +7,7 @@ import { getDateKey } from "../services/time.js";
 import { escapeHtml } from "../utils/html.js";
 import { setUserBlocked, parseMaxDaily, parseRateLimit } from "../services/users.js";
 import { LAYOUT } from "../utils/layout.js";
+import { ADMIN_CALLBACK } from "../config/constants.js";
 import { logAdminAction } from "../services/admin-log.js";
 
 /**
@@ -46,6 +47,8 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
   const pts = Number.isFinite(Number(scene.points)) ? Number(scene.points) : 0;
   const rate = parseRateLimit(scene.rate_limit_sec);
   const blocked = Number(scene.blocked) === 1;
+  // 机器人管理员不能被封禁：封了以后「谁能进后台」会变得不可预期（自己把自己锁在门外）
+  const isBotAdmin = Boolean(env.MY_TELEGRAM_ID && String(scene.user_id) === String(env.MY_TELEGRAM_ID));
 
   const sourceText = (scene.chat_type === "group" || scene.chat_type === "supergroup")
     ? `👥 群聊成员 (群: <code>${escapeHtml(scene.chat_id)}</code>)`
@@ -90,7 +93,7 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
       ],
       [
         {
-          text: blocked ? "✅ 解封" : "🚫 封禁",
+          text: isBotAdmin ? "🛡️ 管理员不可封禁" : (blocked ? "✅ 解封" : "🚫 封禁"),
           callback_data: `admin_block_${scene.id}`
         },
         { text: "🧹 清空记忆", callback_data: `admin_clearmem_${scene.id}` }
@@ -106,11 +109,51 @@ export async function renderUserEditMenu(token, env, chatId, messageId, rowId) {
 }
 
 /**
+ * 删除场景第一步：先弹确认，避免手滑直接把对话记忆删掉。
+ * 真正的删除走 handleDeleteScene（admin_deluser_do_<行ID>）。
+ */
+export async function confirmDeleteScene({ env, token, callback, chatId, msgId, data }) {
+  const rowId = parseInt(String(data).replace("admin_deluser_confirm_", ""), 10);
+  if (!env.DB || !Number.isInteger(rowId)) return;
+
+  const scene = await env.DB.prepare(
+    "SELECT id, scene_key, chat_type, chat_id, user_id, first_name FROM user_scenes WHERE id = ?"
+  ).bind(rowId).first();
+
+  if (!scene) {
+    await answerCallback(token, callback.id, "❌ 场景不存在", true);
+    return;
+  }
+
+  const who = scene.first_name || scene.user_id || scene.scene_key;
+  const isGroup = scene.chat_type === "group" || scene.chat_type === "supergroup";
+
+  await answerCallback(token, callback.id, "请确认删除");
+  await editMessageText(
+    token, chatId, msgId,
+    `🗑️ <b>确认删除这个场景？</b>\n` +
+    `${LAYOUT.DIVIDER}\n` +
+    `👤 <b>对象：</b> ${escapeHtml(who)}\n` +
+    `🧩 <b>场景键：</b> <code>${escapeHtml(scene.scene_key)}</code>\n` +
+    (isGroup ? `🏠 <b>群：</b> <code>${escapeHtml(scene.chat_id)}</code>\n` : ``) +
+    `\n删除后：该场景的<b>对话记忆</b>与<b>今日用量</b>会被清空；\n` +
+    `全局积分与用户档案<b>保留</b>（用户下次发言会重新建档）。`,
+    {
+      inline_keyboard: [
+        [{ text: "🗑️ 确认删除", callback_data: `${ADMIN_CALLBACK.DELUSER_DONE_PREFIX}${scene.id}` }],
+        [{ text: "🔙 再想想", callback_data: `admin_manage_user_${scene.id}` }]
+      ]
+    },
+    "HTML"
+  );
+}
+
+/**
  * 删除场景：同时清掉该场景的对话记忆与今日用量，
  * 但保留 users 里的全局积分（积分是跨场景共享的）。
  */
 export async function handleDeleteScene({ env, token, callback, chatId, msgId, data, renderUserListMenu, adminId = null }) {
-  const rowId = parseInt(data.replace("admin_deluser_confirm_", ""), 10);
+  const rowId = parseInt(String(data).replace(ADMIN_CALLBACK.DELUSER_DONE_PREFIX, ""), 10);
   if (!env.DB || !Number.isInteger(rowId)) return;
 
   const scene = await env.DB.prepare(
@@ -155,6 +198,12 @@ export async function handleToggleBlock({ env, token, callback, chatId, msgId, d
 
   if (!scene) {
     await answerCallback(token, callback.id, "❌ 场景不存在", true);
+    return;
+  }
+
+  // 不允许封禁机器人管理员自己（否则会把自己写进封禁名单，后台状态变得不可预期）
+  if (env.MY_TELEGRAM_ID && String(scene.user_id) === String(env.MY_TELEGRAM_ID)) {
+    await answerCallback(token, callback.id, "🛡️ 不能封禁机器人管理员自己", true);
     return;
   }
 

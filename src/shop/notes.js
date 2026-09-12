@@ -7,6 +7,8 @@
 //   pending = 0  表示备注已保存，等待用户点「确认兑换」
 // ==========================================
 
+import { clearGuideSessions } from "../services/sessions.js";
+
 const MAX_NOTE_LENGTH = 300;
 
 // 进入「等待输入备注」状态后，超过这个时间就不再拦截消息，
@@ -16,6 +18,10 @@ const PENDING_NOTE_TTL_MINUTES = 30;
 /** 用户点了「填写备注」：进入等待输入状态（同一商品保留原备注） */
 export async function beginOrderNote(env, chatId, itemId) {
   if (!env.DB) return "";
+
+  // 备注也是「等文本输入」的流程：先清掉其它引导会话，免得消息被抢先吃掉
+  await clearGuideSessions(env, chatId);
+
   const current = await env.DB.prepare(
     "SELECT item_id, note FROM shop_order_drafts WHERE chat_id = ?"
   ).bind(chatId).first();

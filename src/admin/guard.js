@@ -140,6 +140,15 @@ export async function handleReportRequest({ env, token, chatId, uctx, message, r
     return true;
   }
 
+  // 举报机器人管理员同样不受理（避免出现「管理员把自己封了」的卡片）
+  if (env.MY_TELEGRAM_ID && String(replied.id) === String(env.MY_TELEGRAM_ID)) {
+    await deliver({
+      token, chatId, ctx, env, kind: "notice",
+      text: "🛡️ 不能举报机器人管理员。"
+    });
+    return true;
+  }
+
   const reason = String(rawText || "")
     .replace(new RegExp(`@${env.BOT_USERNAME || ""}`, "gi"), " ")
     .replace(/^\/report(@\w+)?/i, " ")
@@ -192,6 +201,15 @@ export async function handleReportRequest({ env, token, chatId, uctx, message, r
 export async function requestPunishmentFromCommand({
   env, token, chatId, uctx, userId, userLabel, action, reason, durationMin, operatorId, ctx = null
 }) {
+  // 机器人管理员不能被处置：否则「谁能把限制解除」会变得不可控
+  if (env.MY_TELEGRAM_ID && String(userId) === String(env.MY_TELEGRAM_ID)) {
+    await sendAutoDelete(
+      token, chatId, "🛡️ 不能处置机器人管理员。", "HTML", true, ctx,
+      { kind: "guard", env, sceneKey: `group:${chatId}` }
+    );
+    return;
+  }
+
   const settings = await getGroupGuard(env, chatId);
   const reasonText = String(reason || "").trim();
 

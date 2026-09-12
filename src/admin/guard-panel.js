@@ -23,6 +23,7 @@ import {
 import { resolveAlertKeywords, DEFAULT_ALERT_KEYWORDS } from "../services/guard.js";
 import { listRuleVersions, getRuleVersion, revokePunishment, getPunishment } from "../services/guard.js";
 import { kbStats } from "../services/knowledge.js";
+import { clearGuideSessions } from "../services/sessions.js";
 import { logAdminAction } from "../services/admin-log.js";
 import { logError } from "../core/logger.js";
 
@@ -246,6 +247,8 @@ export async function handleGuardPanelCallback({ env, token, callback, chatId, m
   // ---------- 编辑 / 追加群规 ----------
   if (data === ADMIN_CALLBACK.GUARD_EDIT_RULES || data === ADMIN_CALLBACK.GUARD_APPEND_RULES) {
     const append = data === ADMIN_CALLBACK.GUARD_APPEND_RULES;
+    // 其它引导流程会抢走接下来的正文，先清掉
+    await clearGuideSessions(env, chatId);
     await setSession(env, chatId, append ? "rules:append" : "rules:replace");
     await answerCallback(token, callback.id, append ? "请发送要追加的内容" : "请发送新的群规正文");
     await sendMessage(
@@ -402,6 +405,7 @@ export async function handleGuardPanelCallback({ env, token, callback, chatId, m
 
   // ---------- 预警关键词（引导式编辑）----------
   if (data === ADMIN_CALLBACK.GUARD_ALERT_KEYWORDS) {
+    await clearGuideSessions(env, chatId);
     await setSession(env, chatId, "alert:keywords");
     const settings = await getGroupGuard(env, chatId);
     const current = settings.alert_keywords

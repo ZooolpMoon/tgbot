@@ -5,6 +5,7 @@
 
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { getTodayTasks } from "../../services/tasks.js";
+import { escapeHtml } from "../../utils/html.js";
 
 /** /tasks 指令实现 */
 export async function cmdTasks({ env, ctx, token, chatId, userKey, isGroupCtx }) {
@@ -21,8 +22,9 @@ export async function cmdTasks({ env, ctx, token, chatId, userKey, isGroupCtx })
   text += `🪙 <b>今日已得：</b> ${earned} 积分\n\n`;
 
   for (const task of tasks) {
-    text += `${task.done ? "✅" : "⬜️"} <b>${task.label}</b> · +${task.points}\n`;
-    if (!task.done) text += `    └ ${task.hint}\n`;
+    // 任务名称与提示由管理员输入，必须转义，否则一个 "<" 会让整条消息发不出去
+    text += `${task.done ? "✅" : "⬜️"} <b>${escapeHtml(task.label)}</b> · +${task.points}\n`;
+    if (!task.done) text += `    └ ${escapeHtml(task.hint)}\n`;
   }
 
   text += `\n${allDone
