@@ -16,12 +16,12 @@ import { reserveDailyQuota, refundDailyQuota } from "../services/quota.js";
 import { tryDeductPoints, refundPoint, logPointChange } from "../services/points.js";
 import { resolveHistoryBudget, clampMessage, trimHistory } from "../services/history.js";
 import { isFeatureEnabled } from "../services/features.js";
-import { buildToolPrompt, buildToolResultText, parseToolCall, runTool } from "../services/ai-tools.js";
+import { buildDataContext, detectToolIntent, runTool } from "../services/ai-tools.js";
 import {
   searchKnowledge, buildKnowledgeContext, buildKnowledgeInstruction,
   resolveAnswerMode, KB_GLOBAL_SCOPE
 } from "../services/knowledge.js";
-import { logError, logInfo, logWarn } from "../core/logger.js";
+import { logError, logWarn } from "../core/logger.js";
 
 /**
  * AI 对话主流程。
@@ -117,11 +117,24 @@ export async function handleAIRequest({
     baseSystemPrompt += `\n【用户个性化要求】：${userConfig.customPrompt}`;
   }
 
-  // ---------- 🛠️ 工具调用说明（v3.0.0）----------
-  // 打开开关时告诉模型「可以查数据」，它需要时会输出一行 JSON，我们在下面解释执行
+  // ---------- 🛠️ 实时数据预取（v3.0.0）----------
+  // 识别「我有多少分 / 签到几天 / 排行榜 / 群规」这类明确问题，直接查好塞进上下文。
+  // 不把工具名交给模型（实测模型会把它当成指令或资料讲给用户听）。
   const toolsEnabled = await isFeatureEnabled(env, sceneKey, "ai_tools");
   if (toolsEnabled) {
-    baseSystemPrompt += buildToolPrompt();
+    try {
+      const wanted = detectToolIntent(userText, { isGroupCtx });
+      if (wanted.length > 0) {
+        const results = [];
+        for (const tool of wanted) {
+          results.push(await runTool(env, tool, {}, { userKey, chatId, isGroupCtx }));
+        }
+        const context = buildDataContext(results);
+        if (context) baseSystemPrompt += context;
+      }
+    } catch (e) {
+      logError("预取实时数据失败（本次按普通对话回答）：", e);
+    }
   }
 
   // ---------- 知识库检索（RAG）----------
@@ -175,7 +188,7 @@ export async function handleAIRequest({
     return;
   }
 
-  let { text: replyText, model: usedModel, fallback } = await runAIWithFallback(env, messages);
+  const { text: replyText, model: usedModel, fallback } = await runAIWithFallback(env, messages);
 
   if (!replyText) {
     await rollback(env, pointsCharged, quotaReserved, userKey, sceneKey, chargedDateStr || todayStr, previousLastMsgTime);
@@ -184,25 +197,6 @@ export async function handleAIRequest({
   }
   if (fallback) logWarn(`主模型不可用，已回退到 ${usedModel}`);
 
-  // ---------- 🛠️ 工具调用：只允许一轮 ----------
-  // 模型按约定输出 {"tool":...} 时，我们执行这个只读工具，把结果喂回去再要一次最终回答。
-  if (toolsEnabled) {
-    const call = parseToolCall(replyText);
-    if (call) {
-      const outcome = await runTool(env, call.name, call.args, { userKey, chatId, isGroupCtx });
-      logInfo(`AI 工具调用：${call.name}（${outcome.ok ? "成功" : `失败：${outcome.error}`}）`);
-      const followUp = [
-        ...messages,
-        { role: "assistant", content: replyText },
-        { role: "user", content: `${buildToolResultText(call, outcome)}\n请基于上面的数据用自然语言回答用户刚才的问题，不要再输出 JSON。` }
-      ];
-      const second = await runAIWithFallback(env, followUp);
-      if (second.text) {
-        replyText = second.text;
-        usedModel = second.model;
-      }
-    }
-  }
 
   // 记录积分流水（扣分）
   if (env.DB && pointsCharged) {
