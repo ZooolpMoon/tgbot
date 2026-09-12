@@ -1,6 +1,6 @@
 {
   "name": "tgbot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Telegram AI Bot on Cloudflare Workers",
