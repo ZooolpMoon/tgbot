@@ -597,7 +597,12 @@ tgbot/
         └── html.js                  # HTML 转义
 
 scripts/
-└── backup.mjs                       # 💾 D1 一键备份（npm run backup）
+├── backup.mjs                       # 💾 D1 一键备份（npm run backup）
+└── check.mjs                        # ✅ 代码自检（npm run check）
+
+.github/workflows/
+├── ci.yml                           # 自检（push / PR）
+└── deploy.yml                       # 自动部署到 Cloudflare Workers
 ```
 
 ---
@@ -928,9 +933,42 @@ wrangler d1 export tgbot-db --output=backup.sql --remote -c wrangler.production.
 npm run backup          # 备份线上库
 npm run backup:local    # 备份本地 wrangler dev 库
 
+# 代码自检（语法 + import 路径）
+npm run check
+
+# 部署（生产配置）
+npm run deploy:prod
+
 # 查看 Worker 版本
 wrangler versions list
 ```
+
+### 🔄 CI/CD 自动部署（GitHub Actions）
+
+仓库内置两个工作流：
+
+| 工作流 | 触发时机 | 作用 |
+|--------|---------|------|
+| `.github/workflows/ci.yml` | push / PR | `npm ci` + `npm run check`（语法与 import 路径自检） |
+| `.github/workflows/deploy.yml` | push 到 main / 手动触发 | 自检通过后生成生产配置并执行 `wrangler deploy` |
+
+**启用自动部署**：到仓库 `Settings → Secrets and variables → Actions` 添加以下 Secrets：
+
+| Secret | 必填 | 说明 |
+|--------|------|------|
+| `CLOUDFLARE_API_TOKEN` | ✅ | Cloudflare API Token，权限需含 `Workers Scripts:Edit`、`D1:Edit`、`Account Settings:Read` |
+| `CLOUDFLARE_ACCOUNT_ID` | ✅ | Cloudflare 账号 ID（`wrangler whoami` 可查） |
+| `D1_DATABASE_ID` | ✅ | D1 数据库 ID |
+| `BOT_TOKEN` | ✅ | BotFather 颁发的机器人 Token |
+| `MY_TELEGRAM_ID` | ✅ | 管理员 Telegram 数字 ID |
+| `WEBHOOK_SECRET` | 可选 | 设置后 Telegram 会校验 `X-Telegram-Bot-Api-Secret-Token` |
+
+也可在 `Settings → Variables` 里加 `BOT_USERNAME`、`APP_TIMEZONE`、`BOT_OWNER_NAME`、`BOT_OWNER_USERNAME` 覆盖默认值。
+
+没配置 Secrets 时部署工作流**不会变红**：它会打印一条 `::warning` 并跳过部署；补好 Secrets 后再推一次代码（或在 Actions 页面手动 Run workflow）即可完成自动部署。
+
+> `wrangler.production.toml` 含密钥、不进仓库，CI 部署前会用 Secrets 现场生成，因此仓库始终是安全的模板状态。
+> 数据库表结构与增量迁移由 Worker 首次请求时自动完成（`src/core/db.js`），无需在 CI 里单独执行 SQL。
 
 ### 💾 数据备份与恢复
 
@@ -994,6 +1032,7 @@ jobs:
 | `src/utils/` | 工具函数 |
 | `scripts/` | 运维脚本（D1 备份等） |
 | `backups/` | 备份输出目录（已 gitignore） |
+| `.github/workflows/` | CI/CD：代码自检与自动部署 |
 
 ---
 

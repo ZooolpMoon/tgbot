@@ -1,0 +1,89 @@
+name: 部署到 Cloudflare Workers
+
+# 推送到 main 分支即自动部署；也可以在 Actions 页面手动触发
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cf-deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 代码自检
+        run: npm run check
+
+      # 没有配置 Secrets 时给出提示并跳过部署，避免工作流变红
+      - name: 检查部署所需的 Secrets
+        id: guard
+        run: |
+          missing=""
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then missing="$missing CLOUDFLARE_API_TOKEN"; fi
+          if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then missing="$missing CLOUDFLARE_ACCOUNT_ID"; fi
+          if [ -z "${{ secrets.D1_DATABASE_ID }}" ]; then missing="$missing D1_DATABASE_ID"; fi
+          if [ -z "${{ secrets.BOT_TOKEN }}" ]; then missing="$missing BOT_TOKEN"; fi
+          if [ -z "${{ secrets.MY_TELEGRAM_ID }}" ]; then missing="$missing MY_TELEGRAM_ID"; fi
+          if [ -n "$missing" ]; then
+            echo "::warning title=跳过部署::缺少仓库 Secrets:$missing（Settings → Secrets and variables → Actions 添加后重新运行即可）"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 生产配置含密钥，未提交到仓库，这里由 Secrets 现场生成
+      - name: 生成 wrangler.production.toml
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          MY_TELEGRAM_ID: ${{ secrets.MY_TELEGRAM_ID }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          BOT_USERNAME: ${{ vars.BOT_USERNAME || 'Zooolp_bot' }}
+          APP_TIMEZONE: ${{ vars.APP_TIMEZONE || 'Asia/Shanghai' }}
+          BOT_OWNER_NAME: ${{ vars.BOT_OWNER_NAME || '管理员' }}
+          BOT_OWNER_USERNAME: ${{ vars.BOT_OWNER_USERNAME || 'Zooolp_admin' }}
+        run: |
+          cat > wrangler.production.toml <<EOF
+          name = "tgbot"
+          main = "src/index.js"
+          compatibility_date = "2025-01-01"
+
+          [vars]
+          BOT_TOKEN = "${BOT_TOKEN}"
+          BOT_USERNAME = "${BOT_USERNAME}"
+          MY_TELEGRAM_ID = "${MY_TELEGRAM_ID}"
+          WEBHOOK_SECRET = "${WEBHOOK_SECRET}"
+          APP_TIMEZONE = "${APP_TIMEZONE}"
+          BOT_OWNER_NAME = "${BOT_OWNER_NAME}"
+          BOT_OWNER_USERNAME = "${BOT_OWNER_USERNAME}"
+
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "tgbot-db"
+          database_id = "${D1_DATABASE_ID}"
+
+          [ai]
+          binding = "AI"
+          EOF
+
+      # 数据库表结构与增量迁移由 Worker 首次请求时自动完成（src/core/db.js）
+      - name: 部署 Worker
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy --config wrangler.production.toml

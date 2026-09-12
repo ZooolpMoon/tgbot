@@ -10,9 +10,10 @@
     "deploy:prod": "wrangler deploy -c wrangler.production.toml",
     "tail": "wrangler tail",
     "backup": "node scripts/backup.mjs",
-    "backup:local": "node scripts/backup.mjs --local"
+    "backup:local": "node scripts/backup.mjs --local",
+    "check": "node scripts/check.mjs"
   },
   "devDependencies": {
-    "wrangler": "^3.0.0"
+    "wrangler": "^4.131.1"
   }
 }
