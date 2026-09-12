@@ -9,7 +9,6 @@ import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { getDateKey } from "../../services/time.js";
 import { adjustPoints, logPointChange } from "../../services/points.js";
 import { computeCheckinStreak, calcCheckinReward } from "../../services/checkin.js";
-import { completeTask } from "../../services/tasks.js";
 
 /** /checkin 指令实现 */
 export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx, uctx }) {
@@ -83,5 +82,4 @@ export async function cmdCheckin({ env, ctx, token, chatId, userKey, isGroupCtx,
 
   await sendAutoDelete(token, chatId, msg, "HTML", isGroupCtx, ctx);
 
-  await completeTask(env, userKey, "checkin", { sceneKey: uctx?.sceneKey || null, chatId, token });
 }

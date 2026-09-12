@@ -23,7 +23,6 @@ test("按名称与别名都能解析到同一条命令", () => {
   assert.equal(resolveCommand("/sign").name, "/checkin");
   assert.equal(resolveCommand("/SIGN@MyBot").name, "/checkin", "应忽略 @botname 且大小写不敏感");
   assert.equal(resolveCommand("/sign 额外参数").name, "/checkin");
-  assert.equal(resolveCommand("/tasks").name, "/tasks");
   assert.equal(resolveCommand("/not-a-command"), null);
   assert.equal(resolveCommand("普通消息"), null, "非指令不参与解析");
 });
@@ -49,7 +48,6 @@ test("功能开关标记：受开关控制的命令都标了 feature", () => {
   assert.equal(byName["/game"].feature, "game");
   assert.equal(byName["/checkin"].feature, "checkin");
   assert.equal(byName["/shop"].feature, "shop");
-  assert.equal(byName["/tasks"].feature, "tasks");
   assert.equal(byName["/redeem"].feature, "redeem");
   assert.equal(byName["/points"].feature, undefined, "积分流水不受功能开关控制");
 });
@@ -57,7 +55,6 @@ test("功能开关标记：受开关控制的命令都标了 feature", () => {
 test("帮助文案由命令表生成，且按身份/场景裁剪", () => {
   const userPrivate = buildHelpText({ isMaster: false, isGroupCtx: false });
   assert.match(userPrivate, /指令列表/);
-  assert.match(userPrivate, /\/tasks/);
   assert.match(userPrivate, /\/shop/);
   assert.match(userPrivate, /\/redeem/);
   assert.doesNotMatch(userPrivate, /\/broadcast/, "普通用户不应看到管理命令细节");

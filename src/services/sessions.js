@@ -3,7 +3,7 @@
 //
 // 管理员/用户点开一个引导流程后，后续的纯文本会被该流程消费。
 // 如果同一个会话里残留了两个以上的流程状态，message.js 里靠前的那个
-// 会把消息全部吃掉——现象是「点了添加任务，输入却没反应」。
+// 会把消息全部吃掉——现象是「点了按钮，接下来的输入却没有任何反应」。
 // 因此：**开始任何新流程前，先清掉同会话里的其它流程状态**。
 //
 // 各流程的 30 分钟有效期与定时清理仍在各自模块 / services/daily.js 里，
@@ -18,7 +18,6 @@
 export const GUIDE_SESSION_TABLES = [
   "shop_add_sessions",
   "shop_edit_sessions",
-  "task_edit_sessions",
   "kb_sessions",
   "guard_sessions"
 ];

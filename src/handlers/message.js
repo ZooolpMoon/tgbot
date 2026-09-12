@@ -24,7 +24,6 @@ import { handleAddItemInput } from "../shop/add.js";
 import { handleEditItemInput } from "../shop/edit.js";
 import { renderShopItem } from "../shop/index.js";
 import { getPendingNoteRequest, saveOrderNote, cancelOrderNote } from "../shop/notes.js";
-import { isTaskGuideActive, handleTaskGuideInput, cancelTaskGuide } from "../admin/tasks.js";
 import { logError } from "../core/logger.js";
 import {
   ingestUploadedDocument, isKnowledgeGuideActive, handleKnowledgeInput, cancelKnowledgeGuide
@@ -89,15 +88,13 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
       }
     }
 
-    // 管理员正在填「知识库 / 群规 / 每日任务」引导表单时，群里不 @ 也要放行
-    // （否则粘贴正文会被静默丢掉——每日任务在群里改不了就是这个原因）
+    // 管理员正在填「知识库 / 群规」引导表单时，群里不 @ 也要放行（否则粘贴正文会被静默丢掉）
     if (!isMentioned && !isCommandLike) {
       const isBotAdmin = Boolean(myId && userId === myId);
       const adminGuideActive = isBotAdmin
         && (
           (await isKnowledgeGuideActive(env, chatId))
           || (await isGuardGuideActive(env, chatId))
-          || (await isTaskGuideActive(env, chatId))
         );
       if (!adminGuideActive) {
         // 静默预警：普通群聊发言（没 @机器人）同样可能违规，
@@ -208,18 +205,6 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
         return;
       }
     } else if (await handleGuardGuideInput({ env, token, chatId, userText, uctx, adminId: userId })) {
-      return;
-    }
-  }
-
-  // ---------- 每日任务管理的引导式输入（管理员，私聊与群聊都支持）----------
-  if (isMaster && (await isTaskGuideActive(env, chatId))) {
-    if (isCommandLike) {
-      if (/^\/(cancel|取消)$/i.test(command)) {
-        await cancelTaskGuide({ env, token, chatId });
-        return;
-      }
-    } else if (await handleTaskGuideInput({ env, token, chatId, userText, adminId: userId })) {
       return;
     }
   }

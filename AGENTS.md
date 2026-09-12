@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 214 个用例）
+2. `npm test` 通过（当前 193 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -64,7 +64,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - 目录职责：
   - `src/config/`：常量、文案、任务触发器
   - `src/core/`：上下文、DB Schema、日志
-  - `src/services/`：业务服务（users/points/quota/checkin/redeem/tasks/features/settings/auto-delete/daily/admin-log/history）
+  - `src/services/`：业务服务（users/points/quota/checkin/redeem/features/settings/auto-delete/daily/admin-log/history）
   - `src/handlers/`：消息与回调入口
   - `src/admin/`：管理面板 UI
   - `src/shop/`：商城（`categories.js` 统一定义商品分类映射）
@@ -95,7 +95,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 设置存 `scene_settings` 的 `autodelete.<kind>`，两级：本场景 → 全局。群聊作用域会归一成 `group:<群ID>`（**不要用成员级 sceneKey**，否则每个成员一份设置）
   - 私聊不删除；带按钮的卡片要留时间点击，默认必须是 0
 - **输入框命令菜单**（`services/command-menu.js`）：菜单由命令注册表自动生成，**加命令不用改这里**；用内容哈希（`commands.version`）判断是否需要调用 Telegram，且每个 isolate 只检查一次。改完注册表想立刻看到菜单，用 `/syncmenu`
-- **引导式输入会话**（`shop_add_sessions` / `shop_edit_sessions` / `task_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts`）读取时都要带 `updated_at >= datetime('now','-30 minutes')`，并保证 `services/daily.js` 里有对应清理
+- **引导式输入会话**（`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts`）读取时都要带 `updated_at >= datetime('now','-30 minutes')`，并保证 `services/daily.js` 里有对应清理
 - **引导会话必须互斥**：开新引导流程前先 `clearGuideSessions(env, chatId)`（`services/sessions.js`），否则残留会话会吞掉后续所有文本（现象是「点了按钮没反应」）。群里也要放行管理员正在填的引导文本（见 `message.js` 的 `adminGuideActive`）
 - **`editMessageText` 不能传 null message_id**：引导流程里刷新卡片时 messageId 往往是空的，必须 `messageId ? editMessageText(...) : sendMessageWithKeyboard(...)`，否则 Telegram 直接报错、用户只看到一句「修改成功」
 - **文档解析**（`services/text-extract.js`）：`.docx` 走 zip + `word/document.xml`；`.pdf` 是**尽力抽取**文本层，扫不出文字必须明确提示（不要假装成功）。新增格式时在 `detectFileKind` 里登记，并补 `admin-extra.test.mjs` 的用例
@@ -105,7 +105,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - **加功能开关**：在 `src/services/features.js` 的 `FEATURES` 里加一项即可。开关是**三级**的（全局 → 群聊场景 / 私聊场景覆盖），入口在 `src/admin/features.js`；新增开关不用改管理端代码。
 - **菜单排版**：统一用 `src/utils/layout.js`（`grid` / `compactLabel` / `clampPage` / `pagerRow` / `validateKeyboard`），不要再各写一份 `grid()`。约定：单行 ≤ 2 个按钮、整个菜单 ≤ 8 行、按钮文案 ≤ 32 字、`callback_data` ≤ 64 字节。
   - 会随数据量增长的菜单（用户列表、任务列表、商品 / 订单列表）**必须分页**，并把键盘抽成纯函数（如 `getUserListKeyboard`），方便 `test/layout.test.mjs` 直接校验排版。
-- **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `task_edit_sessions` / `shop_order_drafts` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。
+- **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。
 - **改 Schema 时注意**：迁移里**不要**写会清空 `scene_settings` 里非 `global` 记录的语句——那会抹掉场景级功能开关（v2.1.0 踩过一次，已在 v2.2.0 修掉并有回归测试）。
 - **改 Schema**：
   1. 在 `SCHEMA_SQL` 里加表/索引（`CREATE TABLE IF NOT EXISTS`）
@@ -114,7 +114,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   4. 用一次性标记（如 `task.seeded`）避免「管理员删掉的数据又被灌回来」
 - **涉及积分的操作**：原子条件 UPDATE（`WHERE points >= ?` / `WHERE status = 'pending'`）+ `points_log` 流水，失败要补偿回滚。
 - **用户可控文本**：进 HTML 消息前一律 `escapeHtml()`（usage 占位符也要转义，否则 Telegram 会当标签）。
-  - **常量也未必安全**：`config/tasks.js` 的提示里就带着 `<兑换码>` 这种占位符，直接塞进 HTML 消息会让 Telegram 拒收整条消息（v2.8.2 踩过：「添加任务」因此完全点不动）。任何要进 HTML 消息的文案都要过一遍 `escapeHtml()`
+  - **常量也未必安全**：配置文案里可能带 `<占位符>`，直接塞进 HTML 消息会让 Telegram 拒收整条消息（v2.8.2 踩过一次：引导文案里的 `<兑换码>` 让整个「添加任务」点不动）。任何要进 HTML 消息的文案都要过一遍 `escapeHtml()`
   - `test/bugfix.test.mjs` 里有一道**出站 HTML 体检**：模拟 Telegram 实体解析，所有出站消息只要残留未转义尖括号就测试失败——新增消息文案时它会兜底
 - **随机**：用 `src/utils/random.js`（`crypto.getRandomValues`），不要用 `Math.random`。
 - **Telegram API**：统一走 `src/telegram/api.js`（自带 429/5xx 退避重试）。

@@ -1,7 +1,7 @@
 // ==========================================
 // 🗄️ 全局设置
 // 这张表（沿用历史表名 scene_settings）按 scene_key 分行：
-//   scene_key = 'global'      全局设置：feature.<key> 功能开关、task.<name> 任务设置、schema.version
+//   scene_key = 'global'      全局设置：feature.<key> 功能开关、任务与知识库等模块的全局参数、schema.version
 //   scene_key = 具体场景键     v2.2.0 起的场景级覆盖（同一个键优先于全局）
 // 因此本模块只读写 global 行，场景级覆盖请用 services/features.js。
 // ==========================================

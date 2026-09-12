@@ -80,7 +80,7 @@ test("一次查询即可拿到「场景 + 全局」两层设置", { skip: !hasSq
   const env = { DB: db };
   await setFeature(env, GLOBAL_SCOPE, "shop", false);
   await setFeature(env, PRIVATE, "shop", true);
-  await setFeature(env, GLOBAL_SCOPE, "tasks", false);
+  await setFeature(env, GLOBAL_SCOPE, "game", false);
 
   let queries = 0;
   const counting = {
@@ -90,7 +90,7 @@ test("一次查询即可拿到「场景 + 全局」两层设置", { skip: !hasSq
 
   const map = await getFeatureMap({ DB: counting }, PRIVATE);
   assert.equal(map.shop, true, "场景覆盖生效");
-  assert.equal(map.tasks, false, "全局设置生效");
+  assert.equal(map.game, false, "全局设置生效");
   assert.equal(queries, 1, "应只查一次数据库");
   db.close();
 });

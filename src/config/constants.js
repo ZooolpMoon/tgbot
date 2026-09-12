@@ -191,16 +191,6 @@ export const ADMIN_CALLBACK = {
   AUTO_DELETE_KIND_PREFIX: "admin_autodel_k_",
   AUTO_DELETE_SET_PREFIX: "admin_autodel_s_",
 
-  TASKS_PREFIX: "admin_tasks",
-  TASK_ADD: "admin_task_add",
-  TASK_BONUS: "admin_task_bonus",
-  TASK_PICK_PREFIX: "admin_task_pick_",
-  TASK_FIELD_PREFIX: "admin_task_f_",
-  TASK_TOGGLE_PREFIX: "admin_task_t_",
-  TASK_DEL_PREFIX: "admin_task_d_",
-  TASK_DELOK_PREFIX: "admin_task_dok_",
-  TASK_DETAIL_PREFIX: "admin_task_",
-
   // ---------- 📚 知识库 ----------
   KB_HOME: "admin_kb",
   KB_ADD: "admin_kb_add",

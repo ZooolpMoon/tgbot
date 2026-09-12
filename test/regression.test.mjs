@@ -25,7 +25,6 @@ globalThis.fetch = async (url, opts = {}) => {
 
 const { handleAddItemInput } = await import("../src/shop/add.js");
 const { handleEditItemInput } = await import("../src/shop/edit.js");
-const { isTaskGuideActive, handleTaskGuideInput } = await import("../src/admin/tasks.js");
 const { handleMessage } = await import("../src/handlers/message.js");
 const { cmdCheckin } = await import("../src/handlers/commands/checkin.js");
 const { handleCallback } = await import("../src/handlers/callback.js");
@@ -89,24 +88,6 @@ test("过期 30 分钟的商品编辑会话不再拦截消息", { skip: !hasSqli
   db.exec(`UPDATE shop_edit_sessions SET updated_at = CURRENT_TIMESTAMP WHERE chat_id = '1'`);
   assert.equal(await handleEditItemInput({ env, token: "T", chatId: "1", userText: "新名字" }), true);
   assert.equal(db.get("SELECT name FROM shop_items WHERE id = ?", itemId).name, "新名字");
-  db.close();
-});
-
-test("过期 30 分钟的每日任务引导会话不再拦截消息", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
-  const db = createTestDB();
-  const env = makeEnv(db);
-  resetCalls();
-
-  db.exec(`INSERT INTO task_edit_sessions (chat_id, task_id, step, draft, updated_at)
-           VALUES ('1', NULL, 'add:label', '{"trigger":"chat"}', datetime('now', '-2 hours'))`);
-
-  assert.equal(await isTaskGuideActive(env, "1"), false, "过期会话不应被视为进行中");
-  assert.equal(await handleTaskGuideInput({ env, token: "T", chatId: "1", userText: "正常聊天内容" }), false);
-
-  // 会话内草稿是脏 JSON 时也不能抛异常
-  db.exec(`INSERT INTO task_edit_sessions (chat_id, task_id, step, draft, updated_at)
-           VALUES ('2', NULL, 'add:label', '不是 JSON', CURRENT_TIMESTAMP)`);
-  assert.equal(await handleTaskGuideInput({ env, token: "T", chatId: "2", userText: "任务名" }), true);
   db.close();
 });
 
@@ -184,55 +165,6 @@ test("兑换码过期判断：当天仍可用，昨天已过期", () => {
   assert.equal(isCodeExpired("2026-09-12", today), false);
   assert.equal(isCodeExpired("2026-09-11", today), true);
   assert.equal(isCodeExpired("2026-09-13", today), false);
-});
-
-// ---------- 5. 任务列表翻页回调 ----------
-
-test("管理员任务列表可以翻页，且每页按钮不超过 8 行", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
-  const db = createTestDB();
-  seedUser(db, "user:999", 0);
-  const env = makeEnv(db);
-  const ctx = makeCtx();
-
-  // 造 8 个任务 → 每页 6 个，共 2 页
-  for (let i = 1; i <= 8; i++) {
-    db.exec(`INSERT INTO daily_task_defs (trigger, label, hint, points, enabled, sort_order)
-             VALUES ('chat', '任务${i}', '提示${i}', 1, 1, ${i})`);
-  }
-  // 管理员已解锁
-  db.exec(`INSERT INTO admin_sessions (chat_id, expires_at) VALUES ('1', ${Math.floor(Date.now() / 1000) + 600})`);
-
-  const started = Date.now();
-  await handleCallback({
-    env, ctx, token: "TEST_TOKEN", myId: "999",
-    uctx: {
-      chatId: "1", userId: "999", chatType: "private",
-      userKey: "user:999", sceneKey: "private:999",
-      username: "admin", firstName: "管理员"
-    },
-    payload: {
-      callback_query: {
-        id: "cb1",
-        from: { id: 999 },
-        data: "admin_tasks_p2",
-        message: { message_id: 5, chat: { id: 1, type: "private" } }
-      }
-    }
-  });
-  const elapsed = Date.now() - started;
-
-  const edited = apiCalls.filter((c) => c.method === "editMessageText").at(-1);
-  assert.ok(edited, "应该编辑了任务列表消息");
-  assert.ok(String(edited.body.text).includes("2 / 2"), `第 2 页文案不对：${edited.body.text.slice(0, 80)}`);
-
-  const keyboard = edited.body.reply_markup?.inline_keyboard || [];
-  assert.ok(keyboard.length <= 8, `任务列表有 ${keyboard.length} 行`);
-  for (const row of keyboard) assert.ok(row.length <= 2, "单行按钮不能超过 2 个");
-  assert.ok(elapsed < 3000, `翻页耗时 ${elapsed}ms`);
-
-  // 后台任务（用户资料刷新等）跑完再关闭数据库
-  await Promise.all(ctx.pending);
-  db.close();
 });
 
 // ---------- 6. 管理员调整积分：原子夹断 ----------

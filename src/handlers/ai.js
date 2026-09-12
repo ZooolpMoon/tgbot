@@ -15,7 +15,6 @@ import { getDateKey } from "../services/time.js";
 import { reserveDailyQuota, refundDailyQuota } from "../services/quota.js";
 import { tryDeductPoints, refundPoint, logPointChange } from "../services/points.js";
 import { resolveHistoryBudget, clampMessage, trimHistory } from "../services/history.js";
-import { completeTask } from "../services/tasks.js";
 import { isFeatureEnabled } from "../services/features.js";
 import {
   searchKnowledge, buildKnowledgeContext, buildKnowledgeInstruction,
@@ -25,7 +24,7 @@ import { logError, logWarn } from "../core/logger.js";
 
 /**
  * AI 对话主流程。
- * 顺序：频率限制 → 占额度 → 扣积分 → 组装上下文 → 调模型 → 记流水 → 落库历史 → 触发任务。
+ * 顺序：频率限制 → 占额度 → 扣积分 → 组装上下文 → 调模型 → 记流水 → 落库历史。
  * @param {object} params 由 handlers/message.js 传入的上下文
  */
 export async function handleAIRequest({
@@ -206,8 +205,6 @@ export async function handleAIRequest({
 
   await replyChat(replyText);
 
-  // 成功回复后记一次「和 AI 聊一次」任务（失败时不计数）
-  await completeTask(env, userKey, "chat", { sceneKey, chatId, token });
 }
 
 // ==========================================

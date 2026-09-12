@@ -20,7 +20,6 @@ import { getUserRateKeyboard } from "../src/admin/user-rate.js";
 import { getUserListKeyboard } from "../src/admin/user-list.js";
 import { getGroupListKeyboard, getGroupMembersKeyboard } from "../src/admin/user-groups.js";
 import { getBannedListKeyboard } from "../src/admin/user-banned.js";
-import { getTaskListKeyboard } from "../src/admin/tasks.js";
 import { getKnowledgeHomeKeyboard, getDocumentListKeyboard } from "../src/admin/knowledge.js";
 import { getGuardCardKeyboard } from "../src/admin/guard.js";
 import { getGuardPanelKeyboard, getGuardHistoryKeyboard } from "../src/admin/guard-panel.js";
@@ -107,7 +106,7 @@ test("主菜单包含全部管理入口", () => {
   const flat = getAdminMainKeyboard(true).inline_keyboard.flat().map((b) => b.callback_data);
   for (const expect of [
     "admin_users_home", "admin_kb", "shop_admin_home",
-    "admin_codes_1", "admin_tasks", "admin_feat_home", "admin_autodel", "admin_logs_1",
+    "admin_codes_1", "admin_feat_home", "admin_autodel", "admin_logs_1",
     "admin_status", "admin_stats", "admin_close"
   ]) {
     assert.ok(flat.includes(expect), `缺少入口 ${expect}`);
@@ -253,23 +252,6 @@ test("用户列表（私聊 / 群聊）：8 个场景仍不超过 6 行", () => 
     .map((b) => b.text);
   assert.equal(groupLabels.length, 8);
   assert.ok(groupLabels.every((t) => t.startsWith("🏠…")));
-});
-
-// ---------- 每日任务 ----------
-
-test("任务列表：分页后每页按钮不会撑爆菜单", () => {
-  const mk = (n) => Array.from({ length: n }, (_, i) => ({
-    id: i + 1, label: `任务名称很长很长很长${i}`, points: 5, enabled: 1
-  }));
-
-  const page1 = getTaskListKeyboard(mk(6), 1, 2);
-  assertCompact(page1, { maxRows: 6, label: "任务列表 第 1 页" });
-  // 6 个任务 = 3 行，加「添加/全勤奖」1 行、翻页 1 行、返回 1 行
-  assert.equal(page1.inline_keyboard.length, 6);
-
-  const page2 = getTaskListKeyboard(mk(2), 2, 2);
-  assertCompact(page2, { maxRows: 6, label: "任务列表 第 2 页" });
-  assert.equal(page2.inline_keyboard.at(-2)[0].callback_data, "admin_tasks_p1");
 });
 
 // ---------- 商城 ----------

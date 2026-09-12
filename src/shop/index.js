@@ -12,7 +12,6 @@ import { randomInt } from "../utils/random.js";
 import { logError } from "../core/logger.js";
 import { SHOP } from "../config/constants.js";
 import { getOrderNote, cancelOrderNote } from "./notes.js";
-import { completeTask } from "../services/tasks.js";
 import { categoryText } from "./categories.js";
 
 /**
@@ -237,9 +236,6 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
 
   // 订单已创建，清掉备注草稿（失败时不清理，用户不用重填）
   await cancelOrderNote(env, chatId);
-
-  // 完成「在商城兑换一次」任务（商城仅私聊，场景键即 private:<uid>）
-  await completeTask(env, userKey, "shop", { sceneKey: `private:${chatId}`, chatId, token });
 
   await logPointChange(env, userKey, -item.price, afterDeduct, `兑换 [${item.name}] 订单 ${orderNo}`);
 

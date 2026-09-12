@@ -1,10 +1,10 @@
 # 🤖 Telegram AI Bot（Cloudflare Workers + D1 + Workers AI）
 
-一个可以自己部署的 Telegram 机器人：AI 对话、群知识库问答、群规执法、积分与签到、每日任务、小游戏、积分商城、兑换码，外加一套带审计的管理后台。
+一个可以自己部署的 Telegram 机器人：AI 对话、群知识库问答、群规执法、积分与签到、小游戏、积分商城、兑换码，外加一套带审计的管理后台。
 
 全部跑在 **Cloudflare Workers** 上——不需要服务器、不需要常驻进程、不需要数据库运维，数据保存在你自己的 Cloudflare 账号里。
 
-> 当前版本 **v2.8.2** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
+> 当前版本 **v2.9.0** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
 
 ---
 
@@ -44,7 +44,7 @@
 | 📚 知识库问答（RAG） | 上传群规 / 手册 / FAQ，AI 先检索再回答并标注来源 | `/kb` 或后台 → 📚 知识库 | [知识库](docs/knowledge-base.md) |
 | 🛡️ 群规执法 | 用指令处置违规（先校验理由再执行）；支持踢出 / 群封 / 限时禁言 / 举报 / 申诉 / 预警 | 群里 `/ban` `/mute` 等，或 `/guard` 面板 | [群规执法](docs/group-guard.md) |
 | 🪙 积分体系 | 全局共享积分、流水、排行榜、管理员增减与封禁 | `/points`、`/rank` | [功能详解](docs/features.md) |
-| 📅 签到与每日任务 | 连续签到奖励递增；任务由管理员引导式增删改 | `/checkin`、`/tasks` | [功能详解](docs/features.md) |
+| 📅 每日签到 | 连续签到奖励递增，断签重置；支持里程碑奖励 | `/checkin` | [功能详解](docs/features.md) |
 | 🎮 小游戏 | 骰子猜大小、老虎机、抛硬币、幸运转盘 | `/game` | [功能详解](docs/features.md) |
 | 🛒 积分商城 | 商品上下架、限购、下单备注、订单状态机、取消自动退款 | `/shop`（仅私聊） | [功能详解](docs/features.md) |
 | 🎟️ 兑换码 | 批量生成、次数与有效期控制、每人限兑一次 | `/code_new`、`/redeem` | [功能详解](docs/features.md) |
@@ -157,7 +157,7 @@ APP_TIMEZONE="Asia/Shanghai"
 ```bash
 npm run dev      # 启动本地 Worker（默认 http://localhost:8787）
 npm run check    # 语法 + import 路径自检
-npm test         # 214 个测试用例（内存 SQLite 跑真实 SQL）
+npm test         # 193 个测试用例（内存 SQLite 跑真实 SQL）
 ```
 
 ### 5. 部署
@@ -215,7 +215,7 @@ Telegram 默认只把 `/命令` 和 @ 提及转给机器人。要在群里正常
 
 ## 📖 常用指令速查
 
-**用户**：`/start` 开始 · `/help` 帮助 · `/checkin` 签到 · `/tasks` 每日任务 · `/points` 积分流水 · `/rank` 排行榜 · `/game` 游戏大厅 · `/profile` 我的资料 · `/shop` 商城 · `/orders` 我的订单 · `/redeem` 兑换码 · `/report` 举报（群里） · `/appeal` 申诉（私聊）
+**用户**：`/start` 开始 · `/help` 帮助 · `/checkin` 签到 · `/points` 积分流水 · `/rank` 排行榜 · `/game` 游戏大厅 · `/profile` 我的资料 · `/shop` 商城 · `/orders` 我的订单 · `/redeem` 兑换码 · `/report` 举报（群里） · `/appeal` 申诉（私聊）
 
 **管理员**：`/admin` 控制台 · `/users` `/users_group` 用户列表 · `/stats` 统计 · `/kb` 知识库 · `/guard` `/rules` `/setrules` 群规执法 · `/ban` `/kick` `/groupban` `/mute` `/unban` `/unmute` 处置 · `/code_new` `/code_list` 兑换码 · `/broadcast` 群发 · `/shop_admin` `/shop_add` `/shop_edit` 商城管理 · `/syncmenu` 刷新输入框菜单 · 控制台 → 🗑️ 自动删除
 
@@ -230,7 +230,7 @@ Telegram 默认只把 `/命令` 和 @ 提及转给机器人。要在群里正常
 | [配置项](docs/configuration.md) | 改环境变量、换 AI / 向量模型、理解各绑定与本地文件的分工 |
 | [指令一览](docs/commands.md) | 查指令用法、别名、群聊行为差异、输入框菜单原理 |
 | [管理后台导览](docs/admin-console.md) | 后台每个面板能做什么、功能开关有几级、审计日志怎么筛 |
-| [功能详解](docs/features.md) | AI 对话、积分、签到、每日任务、小游戏、商城、兑换码的参数与规则 |
+| [功能详解](docs/features.md) | AI 对话、积分、签到、小游戏、商城、兑换码的参数与规则 |
 | [知识库（RAG）](docs/knowledge-base.md) | 上传资料让 AI 依据资料回答、检索不到时怎么排查 |
 | [群规执法](docs/group-guard.md) | 封禁 / 踢出 / 禁言的完整规则、理由校验、预警、申诉、群规版本 |
 | [架构与数据库](docs/architecture.md) | 请求流程、目录结构、数据表、迁移流程与关键设计约定 |

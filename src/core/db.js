@@ -234,42 +234,6 @@ CREATE TABLE IF NOT EXISTS scene_settings (
 );
 
 -- ==========================================
--- ✅ 每日任务
--- ==========================================
-
--- 任务定义（管理员可引导式增删改）
-CREATE TABLE IF NOT EXISTS daily_task_defs (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  trigger    TEXT    NOT NULL DEFAULT 'custom',  -- checkin / chat / game / shop / redeem
-  label      TEXT    NOT NULL,
-  hint       TEXT    DEFAULT '',
-  points     INTEGER NOT NULL DEFAULT 1,
-  enabled    INTEGER NOT NULL DEFAULT 1,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT    DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT    DEFAULT CURRENT_TIMESTAMP
-);
-
--- 任务管理的引导式输入状态 / 新建草稿
-CREATE TABLE IF NOT EXISTS task_edit_sessions (
-  chat_id    TEXT PRIMARY KEY,
-  task_id    INTEGER,
-  step       TEXT NOT NULL,
-  draft      TEXT DEFAULT '',
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS daily_tasks (
-  user_key   TEXT    NOT NULL,
-  date_str   TEXT    NOT NULL,
-  task       TEXT    NOT NULL,   -- "t<def id>" 或 "all_bonus"
-  points     INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT    DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_key, date_str, task)
-);
-CREATE INDEX IF NOT EXISTS idx_daily_tasks_key ON daily_tasks(user_key, date_str);
-
--- ==========================================
 -- 📚 知识库（RAG）
 -- scope_key = 'global' 为全局知识，其余按场景隔离（例如 group:<群ID>:user:<管理员ID>）
 -- ==========================================
@@ -394,7 +358,9 @@ let schemaPromise = null;
  * Worker 冷启动时先读这个标记，已是最新就跳过建表与迁移，
  * 避免每次冷启动都跑几十条语句（D1 对单次调用的查询数有限制）。
  */
-export const SCHEMA_VERSION = 12;
+// v2.9.0 移除「每日任务」后不再建 daily_task_defs / task_edit_sessions / daily_tasks
+// （老库里这三张表会保留但不再使用，需要清理可手动 DROP）
+export const SCHEMA_VERSION = 13;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 
@@ -416,33 +382,13 @@ const MIGRATIONS = [
   "UPDATE shop_items SET category = 'virtual' WHERE category = 'physical'",
   "UPDATE shop_orders SET status = 'done' WHERE status = 'shipped'",
 
-  // v2.1.0：每日任务改为数据库驱动 —— 用一次性标记灌入默认任务
-  // （标记存在后不再灌入，管理员删掉的任务不会复活）
-  `INSERT INTO daily_task_defs (trigger, label, hint, points, enabled, sort_order)
-   SELECT 'checkin', '完成每日签到', '发送 /checkin', 5, 1, 1
-   WHERE NOT EXISTS (SELECT 1 FROM scene_settings WHERE scene_key = 'global' AND name = 'task.seeded')`,
-  `INSERT INTO daily_task_defs (trigger, label, hint, points, enabled, sort_order)
-   SELECT 'chat', '和 AI 聊一次', '直接发消息；群聊里 @ 我', 3, 1, 2
-   WHERE NOT EXISTS (SELECT 1 FROM scene_settings WHERE scene_key = 'global' AND name = 'task.seeded')`,
-  `INSERT INTO daily_task_defs (trigger, label, hint, points, enabled, sort_order)
-   SELECT 'game', '玩一局游戏', '发送 /game 开一局', 3, 1, 3
-   WHERE NOT EXISTS (SELECT 1 FROM scene_settings WHERE scene_key = 'global' AND name = 'task.seeded')`,
-  `INSERT INTO daily_task_defs (trigger, label, hint, points, enabled, sort_order)
-   SELECT 'shop', '在商城兑换一次', '发送 /shop 挑一件商品（仅私聊）', 2, 1, 4
-   WHERE NOT EXISTS (SELECT 1 FROM scene_settings WHERE scene_key = 'global' AND name = 'task.seeded')`,
-  `INSERT INTO scene_settings (scene_key, name, value)
-   SELECT 'global', 'task.seeded', '1'
-   WHERE NOT EXISTS (SELECT 1 FROM scene_settings WHERE scene_key = 'global' AND name = 'task.seeded')`,
-
-  // 旧版按任务键记录的完成记录（checkin/chat/...）迁移成按任务 ID 记录（t<id>）
-  `UPDATE daily_tasks
-     SET task = 't' || (SELECT d.id FROM daily_task_defs d WHERE d.trigger = daily_tasks.task)
-   WHERE task IN ('checkin', 'chat', 'game', 'shop', 'redeem')
-     AND EXISTS (SELECT 1 FROM daily_task_defs d WHERE d.trigger = daily_tasks.task)`,
-
   // 注意：v2.2.0 恢复了「场景级功能开关」，所以这里 **不要** 删除非 global 的记录
   // （v2.1.0 曾加过一条 DELETE，已移除；否则场景开关会在每次冷启动被清空）
   `UPDATE scene_settings SET value = 'on' WHERE value NOT IN ('on', 'off') AND name LIKE 'feature.%'`
+  ,
+  // v2.9.0：每日任务下线，清掉遗留的全局设置（如 task.seeded / task.all_bonus）；
+  // 三张 daily_task* 表老库里保留但不再读写，需要彻底清干净可手动 DROP
+  `DELETE FROM scene_settings WHERE scene_key = 'global' AND name LIKE 'task.%'`
 ];
 
 /**

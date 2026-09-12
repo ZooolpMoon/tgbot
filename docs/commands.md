@@ -11,7 +11,6 @@
 | `/start` | — | 欢迎信息、当前积分与额度 |
 | `/help` | `/h` | 指令列表（按身份与场景自动裁剪） |
 | `/checkin` | `/sign` | 每日签到，连续签到奖励递增 |
-| `/tasks` | `/daily` | 每日任务与今日进度 |
 | `/points` | `/mypoints` | 积分流水（可翻页） |
 | `/rank` | `/top` `/leaderboard` | 积分排行榜 Top 10（含自己的名次） |
 | `/game` | `/games` | 游戏大厅 |

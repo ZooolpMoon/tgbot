@@ -22,7 +22,6 @@ import { cmdClear } from "./clear.js";
 import { cmdGame } from "./game.js";
 import { cmdPoints } from "./points.js";
 import { cmdRank } from "./rank.js";
-import { cmdTasks } from "./tasks.js";
 import { cmdRedeem } from "./redeem.js";
 import { cmdShop } from "./shop.js";
 import { cmdOrders } from "./orders.js";
@@ -73,10 +72,6 @@ export const COMMANDS = [
   {
     name: "/checkin", aliases: ["/sign"], feature: "checkin",
     desc: "每日签到（连续签到奖励递增）", handle: cmdCheckin
-  },
-  {
-    name: "/tasks", aliases: ["/daily"], feature: "tasks",
-    desc: "每日任务（完成领积分）", handle: cmdTasks
   },
   {
     name: "/points", aliases: ["/mypoints"],

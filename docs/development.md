@@ -10,7 +10,7 @@ npm run deploy         # 部署（wrangler.toml）
 npm run deploy:prod    # 部署（wrangler.production.toml）
 npm run tail           # 实时看线上日志
 npm run check          # 语法 + 相对 import 路径自检
-npm test               # 214 个测试用例
+npm test               # 193 个测试用例
 npm run backup         # 导出线上 D1 到 backups/
 npm run backup:local   # 导出本地 D1
 npm run backup:config  # 把生产配置备份到私有仓库（需 .config-backup）
@@ -31,11 +31,10 @@ npm run backup:config  # 把生产配置备份到私有仓库（需 .config-back
 | `daily.test.mjs` | 定时任务清理与日报汇总 |
 | `features.test.mjs` | 三级功能开关（全局 / 场景覆盖 / 恢复默认） |
 | `auto-delete.test.mjs` | 消息自动删除：类型默认值、两级设置、按类型取时长、面板读写 |
-| `bugfix.test.mjs` | 缺陷回归：群里也能改每日任务、管理员不可被封禁、引导会话互斥、HTML 转义、二次确认 |
+| `bugfix.test.mjs` | 缺陷回归：管理员不可被封禁、引导会话互斥、HTML 转义、二次确认、出站消息 HTML 体检 |
 | `history.test.mjs` | AI 上下文裁剪与预算 |
 | `redeem.test.mjs` | 兑换码生成、兑换、次数与过期 |
 | `shop.test.mjs` | 订单取消退款、库存回滚、下单备注 |
-| `tasks.test.mjs` | 任务 CRUD、多任务同触发、全勤奖 |
 | `schema.test.mjs` | 建表、迁移、Schema 版本跳过逻辑 |
 | `registry.test.mjs` | 命令表自洽性、权限标记、`/help` 生成 |
 | `layout.test.mjs` | 所有菜单的排版约束（两列、行数、文案与 `callback_data` 长度） |

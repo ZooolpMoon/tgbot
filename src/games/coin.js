@@ -7,7 +7,6 @@ import { editMessageText, answerCallback } from "../telegram/api.js";
 import { getUserPoints } from "../services/users.js";
 import { LAYOUT } from "../utils/layout.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
-import { completeTask } from "../services/tasks.js";
 import { randomInt } from "../utils/random.js";
 import { getGameMainKeyboard, getBackToGameMainRow } from "./shared.js";
 
@@ -52,8 +51,6 @@ export const CoinGame = {
     if (!env.DB) return answerCallback(token, callbackId, "❌ 未绑定数据库！", true);
     const afterDeduct = await tryDeductPoints(env, userKey, betAmount);
     if (afterDeduct === null) return answerCallback(token, callbackId, "❌ 积分不足，无法下注！", true);
-
-    await completeTask(env, userKey, "game", { sceneKey, chatId, token });
 
     let currentBalance = afterDeduct;
     const result = randomInt(2) === 0 ? "heads" : "tails";

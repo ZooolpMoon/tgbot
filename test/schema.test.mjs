@@ -116,10 +116,10 @@ test("ensureSchema 写入 Schema 版本，且已是最新时跳过建表", { ski
   assert.equal(Number(version), SCHEMA_VERSION, "应记录当前 Schema 版本");
 
   // 故意删掉一张表：如果版本号生效，第二次 ensureSchema 不应该重新建它
-  db.exec("DROP TABLE daily_task_defs");
+  db.exec("DROP TABLE shop_items");
   const second = await import(`../src/core/db.js?boot2=${Date.now()}`);
   await second.ensureSchema({ DB: db });
-  const exists = db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='daily_task_defs'");
+  const exists = db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='shop_items'");
   assert.equal(exists, null, "版本已是最新时应跳过建表");
 
   // 版本落后时应重新建表
@@ -127,7 +127,7 @@ test("ensureSchema 写入 Schema 版本，且已是最新时跳过建表", { ski
   const third = await import(`../src/core/db.js?boot3=${Date.now()}`);
   await third.ensureSchema({ DB: db });
   assert.ok(
-    db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='daily_task_defs'"),
+    db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='shop_items'"),
     "版本落后时应重新建表"
   );
   db.close();

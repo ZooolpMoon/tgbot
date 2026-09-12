@@ -20,8 +20,7 @@ export const FEATURES = [
   { key: "game", label: "游戏大厅", desc: "骰子、老虎机、硬币、转盘" },
   { key: "checkin", label: "每日签到", desc: "连续签到奖励" },
   { key: "shop", label: "积分商城", desc: "商品浏览与兑换" },
-  { key: "redeem", label: "兑换码", desc: "用兑换码领积分" },
-  { key: "tasks", label: "每日任务", desc: "完成任务领积分" }
+  { key: "redeem", label: "兑换码", desc: "用兑换码领积分" }
 ];
 
 const PREFIX = "feature.";

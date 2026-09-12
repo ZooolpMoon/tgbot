@@ -31,7 +31,7 @@ import { logError } from "../core/logger.js";
 import { extractTextFromFile, detectFileKind } from "../services/text-extract.js";
 
 const DOCS_PER_PAGE = 6;
-/** 引导会话有效期：超过则不再拦截普通消息（与商品/任务引导保持一致） */
+/** 引导会话有效期：超过则不再拦截普通消息（与商品/群规引导保持一致） */
 const SESSION_TTL_MINUTES = 30;
 
 // ==========================================

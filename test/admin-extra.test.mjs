@@ -186,7 +186,7 @@ test("操作日志：按类别筛选只返回该类别记录", { skip: !hasSqlit
   // 筛选按钮齐全
   const keys = apiCalls.filter((c) => c.method === "editMessageText").at(-1)
     .body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
-  for (const f of ["all", "user", "shop", "guard", "kb", "task", "system"]) {
+  for (const f of ["all", "user", "shop", "guard", "kb", "feature", "system"]) {
     assert.ok(keys.includes(`admin_logs_f_${f}_1`), `缺少筛选项 ${f}`);
   }
   db.close();

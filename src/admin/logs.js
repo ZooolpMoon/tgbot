@@ -34,12 +34,13 @@ const ACTION_LABELS = {
   redeem_code_create: "🎟️ 生成兑换码",
   redeem_code_enable: "✅ 启用兑换码",
   redeem_code_disable: "🚫 停用兑换码",
-  task_create: "➕ 新增每日任务",
-  task_update: "✏️ 修改每日任务",
-  task_delete: "🗑️ 删除每日任务",
-  task_enable: "✅ 启用每日任务",
-  task_disable: "🚫 停用每日任务",
-  task_bonus: "🏆 修改全勤奖",
+  // 历史动作：每日任务功能已在 v2.9.0 移除，这里保留标签只为老日志可读
+  task_create: "➕ 新增每日任务（历史）",
+  task_update: "✏️ 修改每日任务（历史）",
+  task_delete: "🗑️ 删除每日任务（历史）",
+  task_enable: "✅ 启用每日任务（历史）",
+  task_disable: "🚫 停用每日任务（历史）",
+  task_bonus: "🏆 修改全勤奖（历史）",
   kb_doc_add: "📚 新增知识库文档",
   kb_doc_enable: "✅ 启用知识库文档",
   kb_doc_disable: "🚫 停用知识库文档",
@@ -81,16 +82,16 @@ const FILTERS = {
     where: "action LIKE 'kb_%'",
     params: []
   },
-  task: {
-    label: "✅ 任务",
-    where: "(action LIKE 'task_%' OR action LIKE 'feature_%')",
+  feature: {
+    label: "🧩 功能开关",
+    where: "action LIKE 'feature_%'",
     params: []
   },
   system: {
     label: "⚙️ 系统",
     where: `NOT (action LIKE 'user_%' OR action LIKE 'scene_%' OR action LIKE 'group_clear%'
       OR action LIKE 'shop_%' OR action LIKE 'broadcast_%' OR action LIKE 'guard_%'
-      OR action LIKE 'kb_%' OR action LIKE 'task_%' OR action LIKE 'feature_%')`,
+      OR action LIKE 'kb_%' OR action LIKE 'feature_%' OR action LIKE 'task_%')`,
     params: []
   }
 };
@@ -123,7 +124,7 @@ export function actionLabel(action) {
 
 /**
  * 管理员操作日志（倒序分页，最新在前）。
- * @param {string} filter all / user / shop / guard / kb / task / system
+ * @param {string} filter all / user / shop / guard / kb / feature / system
  */
 export async function renderAdminLogs(token, env, chatId, messageId, page = 1, filter = "all") {
   if (!env.DB) return editMessageText(token, chatId, messageId, "❌ 未绑定 D1 数据库。");

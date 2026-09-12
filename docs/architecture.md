@@ -65,10 +65,9 @@ src/
 │   ├── callback.js          # 按钮回调总入口（路由顺序即优先级）
 │   ├── ai.js                # AI 对话：额度 → 扣分 → 知识库检索 → 模型回退 → 历史
 │   └── commands/            # registry.js（命令注册表）+ 各指令 + commands/admin/
-├── admin/                   # 管理面板：用户/群组/封禁/详情/积分/限额/频率/任务/知识库/群规/自动删除/日志/统计
+├── admin/                   # 管理面板：用户/群组/封禁/详情/积分/限额/频率/知识库/群规/自动删除/日志/统计
 ├── services/                # 业务服务
 │   ├── users.js · points.js · quota.js · time.js · checkin.js · admin-log.js
-│   ├── tasks.js             # 每日任务定义 CRUD、进度与发奖
 │   ├── features.js          # 三级功能开关
 │   ├── auto-delete.js       # 消息自动删除设置（按类型两级配置）
 │   ├── settings.js          # 全局键值设置
@@ -122,9 +121,6 @@ docs/                        # 本目录
 | 积分与签到 | `points_log` | 积分流水：变动值、变动后余额、原因、时间 |
 | | `daily_stats` | 每场景每天的消息计数（额度控制） |
 | | `daily_checkin` | 签到记录（用户 + 日期） |
-| 每日任务 | `daily_task_defs` | 任务定义：触发条件、名称、提示、奖励、启停 |
-| | `daily_tasks` | 完成记录（用户 + 日期 + 任务键，主键防重复发奖） |
-| | `task_edit_sessions` | 任务编辑引导状态 |
 | 商城 | `shop_items` | 商品：价格、库存、分类、限购、上下架 |
 | | `shop_orders` | 订单：订单号、用户、商品与价格快照、状态、备注 |
 | | `shop_order_log` | 订单操作日志 |

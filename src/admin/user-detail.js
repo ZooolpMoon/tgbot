@@ -13,7 +13,6 @@ import { escapeHtml } from "../utils/html.js";
 import { LAYOUT } from "../utils/layout.js";
 import { getDateKey } from "../services/time.js";
 import { computeCheckinStreak } from "../services/checkin.js";
-import { getTodayTasks } from "../services/tasks.js";
 import { listRecentPunishmentsByUser, ACTIONS } from "../services/guard.js";
 
 /** 处置状态 → 文案 */
@@ -46,10 +45,9 @@ export async function renderUserDetail(token, env, chatId, messageId, rowId) {
   }
 
   const today = getDateKey(env);
-  const [checkins, dailyRow, tasks, logs, orders, punishments, todayCount] = await Promise.all([
+  const [checkins, dailyRow, logs, orders, punishments, todayCount] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS n FROM daily_checkin WHERE user_key = ?").bind(scene.user_key).first(),
     env.DB.prepare("SELECT count FROM daily_stats WHERE scene_key = ? AND date_str = ?").bind(scene.scene_key, today).first(),
-    getTodayTasks(env, scene.user_key),
     env.DB.prepare(
       "SELECT change_amount, balance_after, reason, created_at FROM points_log WHERE user_key = ? ORDER BY id DESC LIMIT 3"
     ).bind(scene.user_key).all(),
@@ -77,7 +75,6 @@ export async function renderUserDetail(token, env, chatId, messageId, rowId) {
   text += `🔘 <b>状态：</b>${Number(scene.blocked) === 1 ? "🚫 已封禁" : "✅ 正常"} · 🪙 <b>${Number(scene.points) || 0}</b>\n\n`;
 
   text += `📅 <b>签到：</b>累计 ${totalCheckins} 天 · 连续 ${streak} 天\n`;
-  text += `✅ <b>今日任务：</b>${tasks.done}/${tasks.total}${tasks.allDone ? "（已全勤 🎉）" : ""}\n`;
   text += `📊 <b>本场景今日消息：</b>${Number(dailyRow?.count) || 0} 条`;
   if (Number(todayCount?.n) > 0) text += ` · 累计 ${Number(todayCount.n)} 条`;
   text += `\n🌐 <b>语言：</b>${escapeHtml(scene.lang || "zh")} · ⏱️ <b>冷却：</b>${Number(scene.rate_limit_sec) || 0} 秒\n`;
