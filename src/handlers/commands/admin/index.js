@@ -9,6 +9,7 @@ import { sendAdminMainMenu } from "../../../admin/menus.js";
 import { renderUserListMenu } from "../../../admin/user-list.js";
 import { sendAdminStatsMessage } from "../../../admin/stats.js";
 import { logPointChange } from "../../../services/points.js";
+import { resolvePointTarget } from "../../../services/users.js";
 import { ERR } from "../../../config/messages.js";
 import { RULES } from "../../../config/constants.js";
 
@@ -87,34 +88,55 @@ export async function cmdAddPoints({ env, ctx, token, chatId, isGroupCtx, rawTex
     await sendAutoDelete(token, chatId, ERR.ADMIN_LOCKED, null, isGroupCtx, ctx);
     return;
   }
-  const parts = rawText.split(/\s+/);
+  const parts = String(rawText || "").split(/\s+/);
   if (parts.length < 3) {
-    await sendAutoDelete(token, chatId, "⚠️ 格式：/addpoints <场景行ID> <数量>", null, isGroupCtx, ctx);
+    await sendAutoDelete(
+      token, chatId,
+      "⚠️ 格式：<code>/addpoints &lt;场景ID|用户ID|@用户名&gt; &lt;数量&gt;</code>\n" +
+      "例如：<code>/addpoints 12 100</code>、<code>/addpoints 8802544525 100</code>、<code>/addpoints @someone 100</code>",
+      "HTML", isGroupCtx, ctx
+    );
     return;
   }
-  const rowId = parseInt(parts[1].trim(), 10);
   const delta = parseInt(parts[2].trim(), 10);
-  if (!Number.isInteger(rowId) || isNaN(delta) || !env.DB) {
-    await sendAutoDelete(token, chatId, "⚠️ 参数无效或数据库未绑定。", null, isGroupCtx, ctx);
+  if (!Number.isInteger(delta)) {
+    await sendAutoDelete(token, chatId, "⚠️ 数量必须是整数（可以是负数表示扣分）。", "HTML", isGroupCtx, ctx);
     return;
   }
-  const scene = await env.DB.prepare("SELECT user_key FROM user_scenes WHERE id = ?").bind(rowId).first();
-  if (!scene) {
-    await sendAutoDelete(token, chatId, `❌ 未找到场景 #${rowId}`, null, isGroupCtx, ctx);
+
+  // 目标写法很杂（场景行 ID / 用户 ID / @用户名），统一交给解析器，失败时给出可照抄的写法
+  const target = await resolvePointTarget(env, parts[1]);
+  if (!target.ok) {
+    await sendAutoDelete(
+      token, chatId,
+      `⚠️ ${target.error}${target.extra ? `\n\n${target.extra}` : ""}`,
+      "HTML", isGroupCtx, ctx
+    );
     return;
   }
-  const u = await env.DB.prepare("SELECT points FROM users WHERE user_key = ?").bind(scene.user_key).first();
+  const userKey = target.userKey;
+
+  const u = await env.DB.prepare("SELECT points FROM users WHERE user_key = ?").bind(userKey).first();
   const cur = Number.isFinite(Number(u?.points)) ? Number(u.points) : 0;
   // 原子夹断更新：结果始终落在 0 ~ 1000000 之间（与积分管理面板保持一致）
   const updated = await env.DB.prepare(
     "UPDATE users SET points = MAX(0, MIN(1000000, points + ?)), updated_at = CURRENT_TIMESTAMP WHERE user_key = ? RETURNING points"
-  ).bind(Math.floor(delta), scene.user_key).first();
+  ).bind(Math.floor(delta), userKey).first();
   if (!updated) {
     await sendAutoDelete(token, chatId, "❌ 用户不存在", null, isGroupCtx, ctx);
     return;
   }
   const newPts = Number(updated.points);
   const actualDelta = newPts - cur;
-  await logPointChange(env, scene.user_key, actualDelta, newPts, "管理员命令调整");
-  await sendAutoDelete(token, chatId, `✅ 已更新用户全局积分: ${newPts}`, null, isGroupCtx, ctx);
+  await logPointChange(env, userKey, actualDelta, newPts, "管理员命令调整");
+
+  // 夹断时说清楚：请求 9999999 只会落到上限 1000000，免得以为没生效
+  const clamped = actualDelta !== Math.floor(delta);
+  const sign = actualDelta >= 0 ? "+" : "";
+  await sendAutoDelete(
+    token, chatId,
+    `✅ <b>${target.how}</b> 的全局积分：<b>${newPts}</b>（本次 ${sign}${actualDelta}）` +
+    (clamped ? "\n⚠️ 已按上限 0 ~ 1000000 夹断。" : ""),
+    "HTML", isGroupCtx, ctx
+  );
 }

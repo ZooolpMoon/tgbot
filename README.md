@@ -4,7 +4,7 @@
 
 全部跑在 **Cloudflare Workers** 上——不需要服务器、不需要常驻进程、不需要数据库运维，数据保存在你自己的 Cloudflare 账号里。
 
-> 当前版本 **v3.2.0** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
+> 当前版本 **v3.2.1** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
 
 ---
 
@@ -160,7 +160,7 @@ APP_TIMEZONE="Asia/Shanghai"
 ```bash
 npm run dev      # 启动本地 Worker（默认 http://localhost:8787）
 npm run check    # 语法 + import 路径自检
-npm test         # 252 个测试用例（内存 SQLite 跑真实 SQL）
+npm test         # 256 个测试用例（内存 SQLite 跑真实 SQL）
 ```
 
 ### 5. 部署

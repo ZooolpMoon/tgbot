@@ -4,6 +4,7 @@
 
 import { DEFAULTS } from "../config/constants.js";
 import { buildUserKey } from "../core/context.js";
+import { escapeHtml } from "../utils/html.js";
 
 /**
  * 解析「每日额度」字段。
@@ -332,4 +333,116 @@ export async function listScenesByChat(env, chatId, page = 1, pageSize = 6) {
   ).bind(chatId, pageSize, (safePage - 1) * pageSize).all();
 
   return { rows: results || [], total, page: safePage, totalPages };
+}
+
+/** 场景行 ID 与 Telegram 用户 ID 的区分阈值：短数字一律当场景行 ID */
+const USER_ID_MIN_DIGITS = 5;
+
+/**
+ * 把管理员写的「给谁加积分」解析成 user_key。
+ *
+ * 支持的写法（都是管理端面板里能看到的形态）：
+ *   • 场景行 ID —— 用户详情里显示的 `#12`，直接写 `12` 或 `#12`
+ *   • 用户 ID  —— `8802544525` 或 `user:8802544525`
+ *   • 用户名   —— `@someone`
+ * 群 ID（`-100...`）不行：积分的键是 user_key，一个群里有很多成员，
+ * 这种情况返回该群前几个成员场景行 ID，引导管理员指明具体是谁。
+ *
+ * 返回的 error / extra 已经过 HTML 转义，可直接拼进 HTML 消息。
+ * @returns {Promise<{ok:true, userKey:string, how:string}|{ok:false, error:string, extra?:string}>}
+ */
+export async function resolvePointTarget(env, raw) {
+  if (!env?.DB) return { ok: false, error: "未绑定数据库。" };
+  const target = String(raw || "").trim().replace(/^#/, "");
+  if (!target) return { ok: false, error: "没写要加给谁。" };
+
+  // ---------- @用户名 ----------
+  if (target.startsWith("@")) {
+    const name = target.slice(1).trim();
+    if (!name) return { ok: false, error: "用户名不完整。" };
+    const row = await env.DB.prepare(
+      `SELECT user_key FROM user_scenes
+        WHERE LOWER(username) = LOWER(?) AND user_id IS NOT NULL AND user_id <> ''
+        ORDER BY updated_at DESC LIMIT 1`
+    ).bind(name).first();
+    if (!row) {
+      return {
+        ok: false,
+        error: `没找到 @${escapeHtml(name)}。`,
+        extra: "对方得先和机器人说过话，我才能查到；也可以直接用<b>用户 ID</b>。"
+      };
+    }
+    return { ok: true, userKey: String(row.user_key), how: `@${escapeHtml(name)}` };
+  }
+
+  // ---------- user:<id> / 纯数字（场景行 ID 或用户 ID）----------
+  const prefixed = /^user:/i.test(target);
+  if (prefixed || /^\d+$/.test(target)) {
+    const id = prefixed ? target.replace(/^user:/i, "").trim() : target;
+    if (!/^\d+$/.test(id)) {
+      return { ok: false, error: "用户 ID 必须是纯数字。" };
+    }
+
+    // 没写 user: 前缀的短数字先当「场景行 ID」，这是老用法，也最不容易误伤
+    if (!prefixed) {
+      const rowId = Number(id);
+      if (Number.isSafeInteger(rowId)) {
+        const scene = await env.DB.prepare(
+          "SELECT user_key FROM user_scenes WHERE id = ?"
+        ).bind(rowId).first();
+        if (scene) return { ok: true, userKey: String(scene.user_key), how: `场景 #${rowId}` };
+      }
+      if (id.length < USER_ID_MIN_DIGITS) {
+        return { ok: false, error: `没找到场景 #${escapeHtml(id)}。` };
+      }
+    }
+
+    const userKey = `user:${id}`;
+    const user = await env.DB.prepare(
+      "SELECT user_key FROM users WHERE user_key = ?"
+    ).bind(userKey).first();
+    if (!user) {
+      return {
+        ok: false,
+        error: `没找到用户 ${escapeHtml(id)}。`,
+        extra: "这个 ID 还没和机器人产生过记录；如果对方是用 @用户名 来的，也可以写 <code>@用户名</code>。"
+      };
+    }
+    return { ok: true, userKey, how: `用户 ${escapeHtml(id)}` };
+  }
+
+  // ---------- 群 ID：积分按用户算，得指明是谁 ----------
+  if (/^-\d+$/.test(target)) {
+    const { results } = await env.DB.prepare(
+      `SELECT id, first_name, username FROM user_scenes
+        WHERE chat_id = ? AND chat_type IN ('group','supergroup')
+        ORDER BY id ASC LIMIT 6`
+    ).bind(target).all();
+    const rows = results || [];
+    if (rows.length === 0) {
+      return {
+        ok: false,
+        error: `没找到群 ${escapeHtml(target)} 里的成员场景。`,
+        extra: "可以到「👥 群组用户」里确认机器人是否在这个群。"
+      };
+    }
+    const list = rows
+      .map((r) => `#${r.id} ${escapeHtml(r.first_name || "未命名")}${r.username ? `（@${escapeHtml(r.username)}）` : ""}`)
+      .join("\n");
+    return {
+      ok: false,
+      error: "群 ID 对应多个成员，而积分是按<b>用户</b>算的，请指定具体是谁：",
+      extra: `${list}\n\n• 用 <code>/addpoints &lt;用户ID|@用户名&gt; &lt;数量&gt;</code>\n• 或到「👥 群组用户 → 选群 → 选成员 → 🪙 积分管理」里点着加`
+    };
+  }
+
+  return {
+    ok: false,
+    error: "没看懂要给谁加积分。",
+    extra:
+      "可用写法：\n" +
+      "• 场景行 ID：<code>/addpoints 12 100</code>（用户详情里的 <code>#12</code>）\n" +
+      "• 用户 ID：<code>/addpoints 8802544525 100</code>\n" +
+      "• 用户名：<code>/addpoints @someone 100</code>"
+  };
 }

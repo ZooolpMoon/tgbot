@@ -479,3 +479,129 @@ test("上传不支持的格式（.zip）会提示", { skip: !hasSqlite && "需�
   await Promise.all(ctx.pending);
   db.close();
 });
+
+// ==========================================
+// 6. /addpoints 的目标写法
+// ==========================================
+
+/** 解锁后台会话（/addpoints 要求先 /admin） */
+function unlockAdmin(db, chatId = "1") {
+  db.exec(
+    `INSERT INTO admin_sessions (chat_id, expires_at)
+     VALUES ('${chatId}', ${Math.floor(Date.now() / 1000) + 600})`
+  );
+}
+
+/** 造一个用户 + 私聊场景，返回场景行 ID */
+function seedScene(db, userId, { points = 0, username = null, firstName = "测试用户" } = {}) {
+  seedUser(db, `user:${userId}`, points);
+  db.exec(
+    `INSERT INTO user_scenes (scene_key, user_key, chat_id, chat_type, user_id, username, first_name)
+     VALUES ('private:${userId}', 'user:${userId}', '${userId}', 'private', '${userId}',
+             ${username ? `'${username}'` : "NULL"}, '${firstName}')`
+  );
+  return Number(db.get("SELECT id FROM user_scenes WHERE user_id = ?", userId).id);
+}
+
+const addPoints = (env, ctx, text) => handleMessage({
+  env, ctx, token: "TEST_TOKEN", myId: "999", uctx: adminUctx, isGroupCtx: false,
+  payload: { message: { text, entities: [] } }
+});
+
+test("/addpoints：场景行 ID / user:ID / 纯用户 ID / @用户名 都能命中", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const rowId = seedScene(db, "555", { points: 100, username: "someone" });
+  unlockAdmin(db);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+
+  // 1) 场景行 ID（老用法）
+  resetCalls();
+  await addPoints(env, ctx, `/addpoints ${rowId} 100`);
+  assert.equal(db.get("SELECT points FROM users WHERE user_key = 'user:555'").points, 200);
+  assert.ok(sentTexts().some((t) => t.includes("场景") && t.includes("200")));
+
+  // 2) user:<用户ID>
+  resetCalls();
+  await addPoints(env, ctx, "/addpoints user:555 50");
+  assert.equal(db.get("SELECT points FROM users WHERE user_key = 'user:555'").points, 250);
+
+  // 3) 纯数字用户 ID（6 位以上，且不是场景行 ID）
+  resetCalls();
+  await addPoints(env, ctx, "/addpoints 8802544525 10");
+  assert.ok(sentTexts().some((t) => t.includes("没找到用户 8802544525")), "找不到要明确提示");
+
+  // 4) @用户名
+  resetCalls();
+  await addPoints(env, ctx, "/addpoints @someone 25");
+  assert.equal(db.get("SELECT points FROM users WHERE user_key = 'user:555'").points, 275);
+
+  // 扣分也走同一条路
+  resetCalls();
+  await addPoints(env, ctx, "/addpoints @someone -75");
+  assert.equal(db.get("SELECT points FROM users WHERE user_key = 'user:555'").points, 200);
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("/addpoints：群 ID 会指明「要选具体成员」并列出候选", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  const rowId = seedScene(db, "555", { points: 0, firstName: "群里的人" });
+  db.exec(`UPDATE user_scenes SET chat_type = 'supergroup', chat_id = '-100', scene_key = 'group:-100:user:555'`);
+  unlockAdmin(db);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  await addPoints(env, ctx, "/addpoints -100 500");
+
+  const text = sentTexts().join("\n");
+  assert.ok(text.includes("积分是按"), "要说清为什么不能直接给群加分");
+  assert.ok(text.includes(`#${rowId}`), "应列出该群的成员场景行 ID");
+  assert.ok(text.includes("群里的人"));
+  assert.equal(db.get("SELECT points FROM users WHERE user_key = 'user:555'").points, 0, "不应误加分");
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("/addpoints：超大数值按上限夹断并在回复里说明", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedScene(db, "555", { points: 0, username: "someone" });
+  unlockAdmin(db);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+  resetCalls();
+
+  await addPoints(env, ctx, "/addpoints user:555 9999999");
+
+  assert.equal(db.get("SELECT points FROM users WHERE user_key = 'user:555'").points, 1000000);
+  const text = sentTexts().join("\n");
+  assert.ok(text.includes("1000000"), "应显示夹断后的结果");
+  assert.ok(text.includes("夹断"), "要说明被夹断，免得以为没生效");
+
+  const log = db.get("SELECT change_amount, balance_after FROM points_log ORDER BY id DESC LIMIT 1");
+  assert.equal(log.balance_after, 1000000);
+  assert.equal(log.change_amount, 1000000, "流水按实际变动记");
+  await Promise.all(ctx.pending);
+  db.close();
+});
+
+test("/addpoints：格式不对时给出可直接照抄的写法", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 0);
+  unlockAdmin(db);
+  const env = makeEnv(db);
+  const ctx = makeCtx();
+
+  resetCalls();
+  await addPoints(env, ctx, "/addpoints user:555");
+  assert.ok(sentTexts().some((t) => t.includes("格式")), "参数不足要提示格式");
+
+  resetCalls();
+  await addPoints(env, ctx, "/addpoints 谁 100");
+  const text = sentTexts().join("\n");
+  assert.ok(text.includes("没看懂要给谁加积分"));
+  assert.ok(text.includes("@someone"), "应给出示例写法");
+  await Promise.all(ctx.pending);
+  db.close();
+});

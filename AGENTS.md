@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 252 个用例）
+2. `npm test` 通过（当前 256 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -120,6 +120,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - **知识库索引**：`kb_chunks.model` 记录向量模型，换 `KB_EMBED_MODEL` 后靠「重建索引」（面板按钮 / 定时任务）分批补建，不要写一次性全量重建
 - **处置相关改动**：任何「撤销/申诉通过」都要走 `revokePunishment`，它会同时解除机器人封禁与群内限制并记 `revoked`；处置记录状态多了 `revoked`，展示文案在 `guard-panel.js` 的 `STATUS_TEXT`
 - **加命令**：在 `src/handlers/commands/registry.js` 的 `COMMANDS` 加一条即可（权限、别名、`privateOnly` / `groupOnly`、`groupAdmin`、功能开关、`/help` 文案都由注册表处理），不要再去 `message.js` 里加 `if`。**新的处置 / 通知类能力一律做成指令**，不要再从自然语言里猜意图。
+- **「给谁」不要只认内部行 ID**（v3.2.1 教训）：管理指令的 `<场景ID>` 是 `user_scenes.id`，管理员根本记不住。需要指定用户时统一走 `services/users.js` 的 `resolvePointTarget()` 那一套——场景行 ID / 用户 ID / `user:<id>` / `@用户名` 都认，并在失败时给出**可以照抄的写法**；群 ID 要解释「积分是按用户算的」并列出候选，别丢一句「未找到」。
 - **指令的可见性 = 能用性**（v3.1.3 对齐）：输入框菜单（`services/command-menu.js`）与 `/help`（`registry.js` 的 `buildHelpText`）按同一条规则裁——机器人角色看 `capability`（`can(role, capability)`），本群管理员只看带 `groupAdmin: true` 的执法指令。所以新增管理指令**必须写 `capability`**，否则要么谁都看不到、要么不该看到的人也能看到。菜单要挂多套作用域（默认 / 所有群聊 / 拥有者私聊 / 每个管理员的私聊 / 每个已知群的 `chat_administrators`），**不要再退回「只认 `MY_TELEGRAM_ID`」的写法**；`commands.version` 的哈希里带了挂载目标，名单一变就重同步，失效的那份会被清空。
 - **加功能开关**：在 `src/services/features.js` 的 `FEATURES` 里加一项即可。开关是**三级**的（全局 → 群聊场景 / 私聊场景覆盖），入口在 `src/admin/features.js`；新增开关不用改管理端代码。
 - **菜单排版**：统一用 `src/utils/layout.js`（`grid` / `compactLabel` / `clampPage` / `pagerRow` / `validateKeyboard`），不要再各写一份 `grid()`。约定：单行 ≤ 2 个按钮、整个菜单 ≤ 8 行、按钮文案 ≤ 32 字、`callback_data` ≤ 64 字节。

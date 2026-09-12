@@ -151,7 +151,7 @@ export const COMMANDS = [
   },
   {
     name: "/addpoints", scope: "admin", capability: "manage_users",
-    desc: "增减用户全局积分", usage: "/addpoints <场景ID> <数量>", handle: cmdAddPoints
+    desc: "增减用户全局积分", usage: "/addpoints <场景ID|用户ID|@用户名> <数量>", handle: cmdAddPoints
   },
   {
     name: "/clearmem", aliases: ["/clearmemory"], scope: "admin", capability: "manage_users",
