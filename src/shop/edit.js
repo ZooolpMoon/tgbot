@@ -15,7 +15,7 @@ import { SHOP_EDIT_FIELDS } from "../config/constants.js";
 import { logAdminAction } from "../services/admin-log.js";
 import { CATEGORY_MAP } from "./add.js";
 
-const CATEGORY_TEXT = { virtual: "虚拟物品", physical: "实物商品", service: "服务" };
+const CATEGORY_TEXT = { virtual: "虚拟物品", service: "服务" };
 
 // ---------- 字段编辑面板 ----------
 export async function renderItemEditMenu(token, env, chatId, messageId, itemId) {
@@ -98,7 +98,7 @@ function editPrompt(item, field) {
     case "stock":
       return head + `当前库存：<b>${Number(item.stock) === -1 ? "不限" : item.stock}</b>\n\n请输入<b>新的库存</b>（整数；-1 表示不限库存）：` + cancelTip;
     case "category":
-      return head + `当前分类：<b>${CATEGORY_TEXT[item.category] || item.category}</b>\n\n请选择<b>新分类</b>：\n1 虚拟物品\n2 实物商品\n3 服务\n\n（直接回复 1/2/3 或分类名）` + cancelTip;
+      return head + `当前分类：<b>${CATEGORY_TEXT[item.category] || item.category}</b>\n\n请选择<b>新分类</b>：\n1 虚拟物品\n2 服务\n\n（直接回复 1/2 或分类名）` + cancelTip;
     case "icon":
       return head + `当前图标：<b>${escapeHtml(item.icon) || "无"}</b>\n\n请输入<b>新的 emoji 图标</b>：` + cancelTip;
     case "description":
@@ -161,7 +161,7 @@ export async function handleEditItemInput({ env, token, chatId, userText, adminI
     }
     case "category": {
       const category = CATEGORY_MAP[text.toLowerCase()];
-      if (!category) validationError = "⚠️ 分类无效，请回复：1 虚拟 / 2 实物 / 3 服务";
+      if (!category) validationError = "⚠️ 分类无效，请回复：1 虚拟物品 / 2 服务";
       else value = category;
       break;
     }

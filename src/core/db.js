@@ -230,7 +230,11 @@ let schemaPromise = null;
  * 这里逐条执行并忽略错误，保证幂等。
  */
 const MIGRATIONS = [
-  "ALTER TABLE users ADD COLUMN blocked INTEGER DEFAULT 0"
+  // 结构迁移
+  "ALTER TABLE users ADD COLUMN blocked INTEGER DEFAULT 0",
+  // 数据迁移：v1.3.1 起商城只保留「虚拟物品 / 服务」，不再有实物与发货环节
+  "UPDATE shop_items SET category = 'virtual' WHERE category = 'physical'",
+  "UPDATE shop_orders SET status = 'done' WHERE status = 'shipped'"
 ];
 
 function splitSchemaStatements(sql) {

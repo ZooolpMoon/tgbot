@@ -13,7 +13,7 @@ const ACTION_LABELS = {
   shop_item_enable: "✅ 上架商品",
   shop_item_disable: "🚫 下架商品",
   shop_item_delete: "🗑️ 删除商品",
-  shop_order_ship: "🚚 订单发货",
+  shop_order_ship: "🚚 订单发货（v1.3.0 及更早的历史记录）",
   shop_order_done: "✅ 订单完成",
   shop_order_cancel: "❌ 订单取消退款",
   user_block: "🚫 封禁用户",

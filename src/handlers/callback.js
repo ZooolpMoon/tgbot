@@ -42,7 +42,6 @@ import {
 import {
   actionToggleItem,
   actionDeleteItem,
-  actionShip,
   actionDone,
   actionCancel,
   handleUserCancelOrder
@@ -166,7 +165,7 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       token, chatId,
       `🧾 <b>填写下单备注</b>\n-------------------------\n` +
       (kept ? `当前备注：${escapeHtml(kept)}\n\n` : ``) +
-      `请直接回复备注内容（例如收货地址、联系方式或想要的款式）。\n` +
+      `请直接回复备注内容（例如想要的款式、联系方式或兑换要求）。\n` +
       `• 回复 <code>-</code> 可清空备注\n` +
       `• 发送 <code>/cancel</code> 放弃填写\n\n` +
       `备注会随订单一起发给管理员。`,
@@ -301,12 +300,6 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     const orderId = parseInt(data.replace("shop_admin_order_", ""), 10);
     await renderShopAdminOrder(token, env, chatId, msgId, orderId);
     await answerCallback(token, callback.id, "订单详情");
-    return;
-  }
-  if (data.startsWith("shop_admin_ship_")) {
-    const orderId = parseInt(data.replace("shop_admin_ship_", ""), 10);
-    await actionShip(token, env, callback, orderId, fromId);
-    await renderShopAdminOrder(token, env, chatId, msgId, orderId);
     return;
   }
   if (data.startsWith("shop_admin_done_")) {

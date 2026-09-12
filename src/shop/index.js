@@ -91,7 +91,7 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
 
   const pts = await getUserPoints(env, userKey);
   const stockText = item.stock === -1 ? "无限" : (item.stock > 0 ? `${item.stock}` : "已售罄");
-  const catText = { virtual: "虚拟物品", physical: "实物商品", service: "服务" }[item.category] || item.category;
+  const catText = { virtual: "虚拟物品", service: "服务" }[item.category] || item.category;
   const note = await getOrderNote(env, chatId, item.id);
 
   const text =
@@ -114,7 +114,7 @@ export async function renderShopItem(token, env, chatId, userKey, messageId, ite
     inline_keyboard.push([{ text: `✅ 确认兑换 · 🪙 ${item.price}`, callback_data: `shop_buy_${item.id}` }]);
   }
 
-  // 实物/服务类商品常需要地址或联系方式，这里提供可选的备注
+  // 服务类商品常需要补充说明（想要的款式、联系方式等），这里提供可选的备注
   inline_keyboard.push([
     { text: note ? "✍️ 修改备注" : "✍️ 填写备注", callback_data: `shop_note_${item.id}` }
   ]);
@@ -202,7 +202,7 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
     `🪙 <b>当前积分：</b> ${afterDeduct}\n` +
     (note ? `🧾 <b>备注：</b> ${escapeHtml(note)}\n` : ``) +
     `\n` +
-    `⏳ 请等待管理员处理发货。`;
+    `⏳ 请等待管理员处理（虚拟物品/服务由管理员人工确认发放）。`;
 
   const keyboard = {
     inline_keyboard: [
@@ -253,7 +253,6 @@ export async function renderMyOrders(token, env, chatId, userKey, messageId, pag
 
   const statusMap = {
     pending: "⏳ 待处理",
-    shipped: "🚚 已发货",
     done: "✅ 已完成",
     cancelled: "❌ 已取消"
   };

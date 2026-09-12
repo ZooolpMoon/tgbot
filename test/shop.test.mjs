@@ -55,12 +55,12 @@ test("重复取消不会重复退款（原子状态流转）", { skip: !hasSqlit
   db.close();
 });
 
-test("已发货订单不能被取消退款", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+test("已完成订单不能被取消退款", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
   const db = createTestDB();
   const env = { DB: db };
   seedUser(db, "user:1", 90);
   const itemId = seedItem(db, { price: 10, stock: 1 });
-  const order = seedOrder(db, { itemId, price: 10, status: "shipped" });
+  const order = seedOrder(db, { itemId, price: 10, status: "done" });
 
   assert.equal(await cancelOrderWithRefund(env, order, "should_fail"), false);
   assert.equal(await getUserPoints(env, "user:1"), 90, "不应退款");

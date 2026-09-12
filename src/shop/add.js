@@ -11,13 +11,11 @@ export const CATEGORY_MAP = {
   "虚拟": "virtual",
   "虚拟物品": "virtual",
   "virtual": "virtual",
-  "2": "physical",
-  "实物": "physical",
-  "实物商品": "physical",
-  "physical": "physical",
-  "3": "service",
+  "2": "service",
   "服务": "service",
-  "service": "service"
+  "service": "service",
+  // 兼容旧版编号（3 = 服务）
+  "3": "service"
 };
 
 export async function startAddItem(token, env, chatId) {
@@ -105,7 +103,7 @@ export async function handleAddItemInput({ env, token, chatId, userText, adminId
     return sendMessage(
       token,
       chatId,
-      "✅ 库存已记录。\n请选择<b>分类</b>：\n1 虚拟物品\n2 实物商品\n3 服务\n（直接回复 1/2/3 或分类名）",
+      "✅ 库存已记录。\n请选择<b>分类</b>：\n1 虚拟物品（卡密、兑换码、道具…）\n2 服务（代做、咨询、定制…）\n（直接回复 1/2 或分类名）",
       "HTML"
     );
   }
@@ -114,7 +112,7 @@ export async function handleAddItemInput({ env, token, chatId, userText, adminId
   if (step === 4) {
     const category = CATEGORY_MAP[text.toLowerCase()];
     if (!category) {
-      return sendMessage(token, chatId, "⚠️ 分类无效，请回复：1 虚拟 / 2 实物 / 3 服务");
+      return sendMessage(token, chatId, "⚠️ 分类无效，请回复：1 虚拟物品 / 2 服务");
     }
     await env.DB.prepare(
       "UPDATE shop_add_sessions SET category = ?, step = 5, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?"
@@ -163,7 +161,7 @@ export async function handleAddItemInput({ env, token, chatId, userText, adminId
     detail: `${s.icon} ${s.name} 价格 ${s.price} 库存 ${s.stock}`
   });
 
-  const catText = { virtual: "虚拟物品", physical: "实物商品", service: "服务" }[s.category] || s.category;
+  const catText = { virtual: "虚拟物品", service: "服务" }[s.category] || s.category;
   return sendMessage(
     token,
     chatId,

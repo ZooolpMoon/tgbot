@@ -92,7 +92,7 @@ export async function renderShopAdminItem(token, env, chatId, messageId, itemId)
       { inline_keyboard: [[{ text: "🔙 返回商品列表", callback_data: "shop_admin_items_1" }]] });
   }
 
-  const catText = { virtual: "虚拟", physical: "实物", service: "服务" }[item.category] || item.category;
+  const catText = { virtual: "虚拟", service: "服务" }[item.category] || item.category;
   const stockText = item.stock === -1 ? "无限" : item.stock;
 
   const text =
@@ -135,7 +135,7 @@ export async function renderShopAdminOrders(token, env, chatId, messageId, filte
     `SELECT id, order_no, user_id, item_name, item_icon, price, status, created_at FROM shop_orders ${where} ORDER BY id DESC LIMIT ? OFFSET ?`
   ).bind(pageSize, offset).all();
 
-  const statusMap = { pending: "⏳", shipped: "🚚", done: "✅", cancelled: "❌" };
+  const statusMap = { pending: "⏳", done: "✅", cancelled: "❌" };
 
   let text = `📜 <b>${filter === "all" ? "全部订单" : "待处理订单"}</b>\n`;
   text += `页码：<b>${page} / ${totalPages}</b>（共 ${total} 条）\n`;
@@ -180,7 +180,7 @@ export async function renderShopAdminOrder(token, env, chatId, messageId, orderI
       { inline_keyboard: [[{ text: "🔙 返回订单列表", callback_data: "shop_admin_orders_pending_1" }]] });
   }
 
-  const statusMap = { pending: "⏳ 待处理", shipped: "🚚 已发货", done: "✅ 已完成", cancelled: "❌ 已取消" };
+  const statusMap = { pending: "⏳ 待处理", done: "✅ 已完成", cancelled: "❌ 已取消" };
 
   const text =
     `🧾 <b>订单详情</b>\n` +
@@ -198,12 +198,8 @@ export async function renderShopAdminOrder(token, env, chatId, messageId, orderI
 
   if (o.status === "pending") {
     inline_keyboard.push([
-      { text: "🚚 标记已发货", callback_data: `shop_admin_ship_${o.id}` },
+      { text: "✅ 标记已完成（已发放）", callback_data: `shop_admin_done_${o.id}` },
       { text: "❌ 取消并退款", callback_data: `shop_admin_cancel_${o.id}` }
-    ]);
-  } else if (o.status === "shipped") {
-    inline_keyboard.push([
-      { text: "✅ 标记完成", callback_data: `shop_admin_done_${o.id}` }
     ]);
   }
 

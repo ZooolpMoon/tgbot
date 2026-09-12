@@ -141,47 +141,14 @@ export async function actionDeleteItem(token, env, callback, itemId, adminId = n
   await answerCallback(token, callback.id, "🗑️ 已删除");
 }
 
-// 标记已发货
-export async function actionShip(token, env, callback, orderId, adminId = null) {
+// 标记完成（虚拟物品/服务由管理员人工确认发放）
+export async function actionDone(token, env, callback, orderId, adminId = null) {
   const o = await getOrderById(env, orderId);
   if (!o) return answerCallback(token, callback.id, "❌ 订单不存在", true);
 
   if (o.status !== "pending") {
-    return answerCallback(token, callback.id, `⚠️ 当前状态 ${o.status}，无法发货`, true);
+    return answerCallback(token, callback.id, `⚠️ 当前状态 ${o.status}，无法标记完成`, true);
   }
-
-  await env.DB.prepare(
-    "UPDATE shop_orders SET status = 'shipped', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-  ).bind(orderId).run();
-
-  await env.DB.prepare(
-    "INSERT INTO shop_order_log (order_id, action, note) VALUES (?, 'shipped', 'admin')"
-  ).bind(orderId).run();
-
-  // 通知用户
-  try {
-    await sendMessage(
-      token, o.chat_id,
-      `🚚 <b>订单已发货</b>\n-------------------------\n` +
-      `🧾 订单号：<code>${o.order_no}</code>\n` +
-      `${o.item_icon} 商品：${escapeHtml(o.item_name)}\n\n` +
-      `如有疑问请联系管理员。`,
-      "HTML"
-    );
-  } catch (_) {}
-
-  await logAdminAction(env, {
-    adminId, chatId: callback.message?.chat?.id,
-    action: "shop_order_ship", detail: `${o.order_no} ${o.item_name}`
-  });
-
-  await answerCallback(token, callback.id, "✅ 已标记发货");
-}
-
-// 标记完成
-export async function actionDone(token, env, callback, orderId, adminId = null) {
-  const o = await getOrderById(env, orderId);
-  if (!o) return answerCallback(token, callback.id, "❌ 订单不存在", true);
 
   await env.DB.prepare(
     "UPDATE shop_orders SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
@@ -190,6 +157,19 @@ export async function actionDone(token, env, callback, orderId, adminId = null) 
   await env.DB.prepare(
     "INSERT INTO shop_order_log (order_id, action) VALUES (?, 'done')"
   ).bind(orderId).run();
+
+  // 通知用户已完成发放
+  try {
+    await sendMessage(
+      token, o.chat_id,
+      `✅ <b>订单已完成</b>\n-------------------------\n` +
+      `🧾 订单号：<code>${o.order_no}</code>\n` +
+      `${o.item_icon} 商品：${escapeHtml(o.item_name)}\n` +
+      (o.remark ? `🧾 备注：${escapeHtml(o.remark)}\n` : ``) +
+      `\n如有疑问请联系管理员。`,
+      "HTML"
+    );
+  } catch (_) {}
 
   await logAdminAction(env, {
     adminId, chatId: callback.message?.chat?.id,

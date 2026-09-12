@@ -104,7 +104,6 @@ export const SHOP = {
   ORDER_PREFIX: "S",
   // 状态
   STATUS_PENDING: "pending",
-  STATUS_SHIPPED: "shipped",
   STATUS_DONE: "done",
   STATUS_CANCELLED: "cancelled"
 };
@@ -129,7 +128,6 @@ export const SHOP_CALLBACK = {
   ADMIN_ORDERS_PENDING_PREFIX: "shop_admin_orders_pending_",
   ADMIN_ORDERS_ALL_PREFIX: "shop_admin_orders_all_",
   ADMIN_ORDER_PREFIX: "shop_admin_order_",
-  ADMIN_SHIP_PREFIX: "shop_admin_ship_",
   ADMIN_DONE_PREFIX: "shop_admin_done_",
   ADMIN_CANCEL_PREFIX: "shop_admin_cancel_"
 };
