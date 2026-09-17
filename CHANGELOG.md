@@ -1,6 +1,6 @@
 # 📜 更新日志
 
-> 当前版本 **v3.3.0** · 变更记录（本页）· [README](README.md) · [文档索引](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
+> 当前版本 **v3.4.0** · 变更记录（本页）· [README](README.md) · [文档索引](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
 
 按版本**倒序**排列，最新的在最上面。带 ❗ 的是**破坏性变更**，升级前先看那一节的「升级提示」。
 
@@ -8,6 +8,7 @@
 
 | 版本 | 一句话 | 性质 |
 |------|--------|------|
+| **v3.4.0** | Webhook 自愈巡检：地址被清空（换 Token 后常见）会自动补回并告警 | 🐛 修复 |
 | **v3.3.0** | 商城有了「🎒 我的背包」（买到的虚拟物品自己取用）+ 已完成订单退款 | ✨ 新增 |
 | **v3.2.2** | 群标签：提前拦下群主 / 管理员（`CHAT_CREATOR_REQUIRED`），说清为什么用不了 | 🐛 修复 |
 | **v3.2.1** | `/addpoints` 支持用户 ID / @用户名，报错说清该怎么写 | 🐛 修复 |
@@ -40,6 +41,38 @@
 | **v1.0.0** | 首个版本上线 Cloudflare Workers | 🎉 首发 |
 
 ---
+
+## v3.4.0 · 2026-09-17
+
+> 🩺 修一种**没有任何日志**的无声故障：Telegram 侧的 webhook 地址会被清空，此时 Worker、Token、日志全都正常，只是再也收不到消息。现在定时任务会盯着它，空了就自动补回并私聊告知。
+
+### 🐛 修复
+
+- 🕳️ **「换了 Bot Token 之后机器人再也叫不醒」**：在 BotFather 里撤销 / 更换 token 后，Telegram 侧的 webhook 地址会**变成空串**，所有更新因此无处投递。
+  - 实测时间线：22:53 还能正常投递更新；用户撤销并换新 token 后，23:19 复查地址已是空的（`wrangler deploy` 不碰 webhook，所以**不是部署的问题**）
+  - 排查成本极高：`getMe` 正常、Worker 根地址正常、`wrangler tail` 一条错都没有 —— 只能靠主动查 `getWebhookInfo`
+  - 现在由巡检发现并自动恢复（见下）
+
+### ✨ 新增
+
+- 🔗 **Webhook 自愈巡检**（`src/services/webhook.js`，挂在那条每 2 分钟的 cron 上）
+  - 地址为空 → 用「期望地址」自动 `setWebhook` 补回，并私聊管理员一条告警
+  - 有投递错误（`last_error_message`）→ 私聊告警，**内容变了才提醒**，不会每轮刷屏；投递恢复后标记自动清空
+  - 地址非空但与期望值不同 → **保持不动**（可能是你有意配的自定义域名 / 反代，自愈不该覆盖它）
+  - isolate 内 10 分钟最多查一次，避免 2 分钟的 cron 把接口刷爆
+  - 期望地址来源：`WEBHOOK_URL` 优先；没填则用「上一次**通过 secret 校验**的请求地址」——只有 Telegram 知道 `WEBHOOK_SECRET`，所以伪造请求改不掉它
+- 🛡️ **来源校验写进模板**：`wrangler.toml` 补上 `WEBHOOK_SECRET`（Telegram 回传的校验串）与 `WEBHOOK_URL`（自愈目标）的说明；两个都留空 = 完全关掉自愈
+- 🧰 `src/telegram/api.js` 补 `getWebhookInfo` / `setWebhook` 两个封装（走统一的 429/5xx 退避重试）
+
+### 🧪 测试
+
+- 测试 273 → **283 个**：新增 `test/webhook.test.mjs`（期望地址优先级、伪造请求不登记、只记 origin 丢掉 path、恢复时带 `secret_token`、恢复失败如实返回、地址不同不覆盖、投递错误只告警一次、未知地址不查接口、isolate 节流、入口 401 与地址登记）
+
+### 📌 说明
+
+- **换 Token 的正确顺序**：先 `setWebhook`（带新的 `secret_token`）→ 再 `npm run deploy:prod`。反过来的话，新 Worker 会因为校验不过而把更新全拒掉（401），机器人看起来还是死的。
+- 自愈**只在地址为空时动手**；想彻底禁用，保持 `WEBHOOK_SECRET` 与 `WEBHOOK_URL` 都为空即可。
+- 本仓库生产环境已启用：`WEBHOOK_SECRET` 为随机串，`WEBHOOK_URL` 指向 `https://tgbot.zoolp.workers.dev`。
 
 ## v3.3.0 · 2026-09-13
 

@@ -11,6 +11,7 @@ import { logError } from "./core/logger.js";
 import { ensureSchema } from "./core/db.js";
 import { runScheduledTasks } from "./services/daily.js";
 import { syncCommandMenuOnce } from "./services/command-menu.js";
+import { noteIncomingWebhook } from "./services/webhook.js";
 import { alertAdmin } from "./services/alerts.js";
 
 export default {
@@ -26,11 +27,13 @@ export default {
 
     // 可选安全校验：如果配置了 WEBHOOK_SECRET，则必须匹配 Telegram 回传的 secret token。
     const webhookSecret = env.WEBHOOK_SECRET ? String(env.WEBHOOK_SECRET).trim() : "";
+    let verifiedBySecret = false;
     if (webhookSecret) {
       const header = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
       if (header !== webhookSecret) {
         return new Response("Unauthorized", { status: 401 });
       }
+      verifiedBySecret = true;
     }
 
     const token = env.BOT_TOKEN;
@@ -44,6 +47,11 @@ export default {
       // 命令菜单自检：内容变了才调用 Telegram（放进 waitUntil，不拖慢本次更新）
       const menuTask = syncCommandMenuOnce(env, token);
       if (ctx?.waitUntil) ctx.waitUntil(menuTask);
+
+      // 登记本次请求的地址，供 webhook 自愈巡检当「期望值」用
+      // （只有通过 secret 校验的请求才作数，见 services/webhook.js）
+      const noteTask = noteIncomingWebhook(env, request.url, { verified: verifiedBySecret });
+      if (ctx?.waitUntil) ctx.waitUntil(noteTask);
 
       const payload = await request.json();
       const uctx = resolveUserContext(payload);

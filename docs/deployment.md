@@ -62,14 +62,19 @@ npm run backup:config
 
 ## 定时任务
 
-Cron 表达式在 `wrangler.toml` 的 `[triggers]`，默认：
+Cron 表达式在 `wrangler.toml` 的 `[triggers]`，默认两条：
 
 ```toml
 [triggers]
-crons = ["0 16 * * *"]      # UTC 16:00 = 北京时间 00:00
+crons = [
+  "0 16 * * *",     # UTC 16:00 = 北京时间 00:00：清理 + 索引维护 + 推日报
+  "*/2 * * * *"     # 每 2 分钟：长延时自动删除 + webhook 自愈巡检
+]
 ```
 
-每次执行做四件事：
+> ⚠️ 少了 `*/2 * * * *` 这条，长延时自动删除、过期会话清理、知识库补索引、到期处置通知都会退化成「一天只跑一次」，长延时删除最多延迟约 24 小时。
+
+每次执行做五件事：
 
 1. **清理过期数据**
 
@@ -84,9 +89,55 @@ crons = ["0 16 * * *"]      # UTC 16:00 = 北京时间 00:00
 
 2. **处置到期处理**：把到期的限时禁言 / 封禁标记为 `expired`，在群里公告「处置已到期」，并私聊当事人「限制已解除」
 3. **知识库索引维护**：给「没有向量」或「向量模型与当前不一致」的分块补建（每次最多 20 块，分批完成）
-4. **推送每日概况**：给管理员发送昨日活跃场景、消息量、签到人数、兑换码使用、封禁数、待处理订单与清理条数；有待处理订单时附带处理按钮
+4. **Webhook 自愈巡检**（v3.4.0）：查一次 Telegram 侧的 webhook 地址，空了就用期望地址补回并私聊告警（isolate 内 10 分钟最多查一次；详见下节）
+5. **推送每日概况**：给管理员发送昨日活跃场景、消息量、签到人数、兑换码使用、封禁数、待处理订单与清理条数；有待处理订单时附带处理按钮
 
 > Cron 始终按 **UTC** 解析；`APP_TIMEZONE` 只影响业务里的「今天」怎么算。
+> 第 5 步只由 `0 16 * * *` 那条负责，每 2 分钟的 cron 不做推送（否则日报会每 2 分钟弹一次）。
+
+## 机器人「完全没反应」怎么排查
+
+最坑的一种故障是**无声的**：Worker 正常、Token 正常、日志里一条错都没有，但发消息就是没反应。按这个顺序查：
+
+```bash
+# 1. Token 还有效吗（返回 ok:true 就说明有效）
+curl "https://api.telegram.org/bot<BOT_TOKEN>/getMe"
+
+# 2. Worker 还活着吗（浏览器打开应显示「已成功部署！」）
+curl "https://your-worker.<subdomain>.workers.dev/"
+
+# 3. ⭐ webhook 地址还在吗 —— 多数「没反应」死在这一步
+curl "https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo"
+```
+
+第 3 步返回的 `url` 如果是**空串**，就是地址被清掉了 —— 更新无处投递，Worker 再正常也没用。两个常见诱因：
+
+- **在 BotFather 撤销 / 更换过 Token**（实测：换 token 后地址会被清空）
+- 手动 `deleteWebhook` 过，或换了域名 / Worker 名称
+
+修复：
+
+```bash
+curl -F "url=https://your-worker.<subdomain>.workers.dev/" \
+     -F "secret_token=<与 WEBHOOK_SECRET 相同的随机串>" \
+     "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook"
+```
+
+**顺序很重要**：先 `setWebhook`（带新的 `secret_token`）再 `npm run deploy:prod`。反过来的话，配了 `WEBHOOK_SECRET` 的新 Worker 会拒收所有更新（401），看起来还是死的。
+
+### 自愈巡检（v3.4.0）
+
+配好 `WEBHOOK_URL` 之后，上面第 3 步的问题会被定时任务自动发现并修好：
+
+| Telegram 侧状态 | 巡检行为 |
+|------------------|----------|
+| `url` 为空 | 用 `WEBHOOK_URL`（没填则用「上一次通过 secret 校验的请求地址」）自动 `setWebhook`，并私聊管理员 |
+| 有 `last_error_message` | 私聊告警；**内容变了才提醒**，不会每轮刷屏 |
+| `url` 非空但与期望值不同 | **保持不动**（可能是有意配的自定义域名 / 反代） |
+| 不知道该恢复成什么地址 | 什么都不做，只写日志（模板默认状态） |
+
+实现见 `src/services/webhook.js`，一次巡检最多 4 次查询、10 分钟一次；想彻底关掉就让 `WEBHOOK_SECRET` 与 `WEBHOOK_URL` 都留空。
+
 
 ## 资源与配额建议
 

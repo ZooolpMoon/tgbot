@@ -187,6 +187,10 @@ curl -F "url=https://your-worker.<subdomain>.workers.dev/" \
 
 返回 `{"ok":true,...}` 即成功。可以用 `getWebhookInfo` 复查；用浏览器打开 Worker 根地址显示「已成功部署！」说明服务正常。
 
+> ⚠️ **换过 Bot Token 就要重设一次 Webhook**：在 BotFather 撤销 / 更换 token 后，Telegram 侧的 webhook 地址会被清空，机器人的表现是「发消息完全没反应」——而 Worker、Token、日志全都正常，非常难查。
+>
+> v3.4.0 起有**自愈巡检**兜底：定时任务每 10 分钟查一次，发现地址空了就用 `WEBHOOK_URL`（或上一次通过 secret 校验的请求地址）自动补回，并私聊管理员。想启用就把 `WEBHOOK_URL` 填成你的 Worker 地址；两个变量都留空则完全关闭自愈。
+
 ### 7. 关闭群聊 Privacy Mode（否则群里收不到消息）
 
 Telegram 默认只把 `/命令` 和 @ 提及转给机器人。要在群里正常对话，找 [@BotFather](https://t.me/BotFather)：
@@ -213,6 +217,7 @@ Telegram 默认只把 `/命令` 和 @ 提及转给机器人。要在群里正常
 | 发 `/admin` | 管理员控制台（只有 `MY_TELEGRAM_ID` 能用） |
 | 控制台 → 📊 运行状态 | D1 与 Workers AI 都显示「已绑定」 |
 | 群里 @ 机器人说话 | 正常回复（没反应多半是 Privacy Mode 没关） |
+| **发消息完全没反应**（连 `/start` 都不回） | 先查 `getWebhookInfo` 的 `url` 是不是空的 —— 空了说明地址被清掉了（换 Token 后常见），用上面的 `setWebhook` 重设，或配好 `WEBHOOK_URL` 交给自愈巡检 |
 
 ---
 

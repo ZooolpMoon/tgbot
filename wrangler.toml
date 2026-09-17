@@ -8,10 +8,18 @@ compatibility_date = "2025-01-01"
 BOT_TOKEN = ""
 BOT_USERNAME = ""          # 机器人用户名（不含 @），例如 YourBot
 MY_TELEGRAM_ID = ""
-WEBHOOK_SECRET = ""
+WEBHOOK_SECRET = ""         # 建议填一串随机字符：Telegram 会把它回传，用来确认更新确实来自 Telegram
+WEBHOOK_URL = ""            # 可选：你的 Worker 地址。填了以后地址被清空时能自动恢复（见下方「Webhook 自愈」）
 APP_TIMEZONE = "Asia/Shanghai"
 BOT_OWNER_NAME = "管理员"   # 展示给用户的称呼
 BOT_OWNER_USERNAME = ""     # 管理员用户名（不含 @）
+
+# Webhook 自愈（v3.4.0）：Telegram 侧的 webhook 地址有时会**无声消失**
+# （实测：在 BotFather 撤销 / 更换 token 后地址会变成空串），
+# 此时 Worker 与 Token 都正常、日志里也没有任何报错，只是再也收不到消息。
+# 定时任务每 10 分钟顺带查一次，发现地址为空就用 WEBHOOK_URL（没填则用
+# 「上一次带正确 secret 的请求地址」）自动补回，并私聊管理员。
+# 想彻底关掉它：两个都不填即可（本模板默认状态）。
 
 # D1 数据库：创建后取消注释并填入 database_id
 # 不想用数据库也可以留空（积分/商城/签到等依赖 DB 的功能会提示未绑定）

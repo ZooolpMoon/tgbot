@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 260 个用例）
+2. `npm test` 通过（当前 283 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -137,6 +137,11 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - **群组标签**（`services/group-tags.js` + `shop/tags.js`）：走 Telegram 的 `setChatMemberTag`，两个硬前提缺一不可——**机器人在那个群是管理员且有 `can_manage_tags`**，且**目标用户在那个群是「普通成员」**（群主 / 管理员都不行，Telegram 会回 `CHAT_CREATOR_REQUIRED`；群主的名字归「管理员头衔」管）。所以选群和收标签两处都要用 `checkTagTarget()` 前置校验，别等 Telegram 报错。标签 0~16 字符、**不允许 emoji**（服务端先校验再请求）。群名与权限检查结果缓存在 `bot_chats`（权限 1 小时），群列表来自 `user_scenes` 里的 group / supergroup。机器人已退出的群用 `getChat` 探到后隐藏，不要让用户点了才发现。
 - **时区：库里存 UTC，给人看的一律过 `formatAppTime()`**（`services/time.js`）：`CURRENT_TIMESTAMP` / `datetime('now')` 都是 UTC，比较、去重、到期判定也都按 UTC 做，别去改存储格式；只在展示时换算到 `APP_TIMEZONE`（默认 `Asia/Shanghai`，即北京时间 UTC+8）。新增任何显示 `created_at` / `updated_at` / `until_at` 的文案都要套一层，**不要再硬编码「UTC」或直接用 `toISOString()`**。
 - **定时任务要区分「日报时段」**：`runScheduledTasks` 的 `cron` 参数决定这次该干什么——只有每天一次的 `DAILY_SUMMARY_CRON`（`0 16 * * *` = 北京 00:00）推每日概况，每 2 分钟那条兜底 cron 只做清理与长延时删除；再用全局设置 `daily.last_summary_date` 兜底去重，保证**同一天只推一条**。v3.1.2 修过「概况一直弹」，新增定时推送时照这个模式来。
+- **Webhook 是「会无声消失」的外部状态**（`services/webhook.js`，v3.4.0）：Telegram 侧的 webhook 地址会被清空——实测在 BotFather 撤销 / 更换 token 后变成空串，此时 Worker、Token、日志全都正常，表现只是「发消息完全没反应」。所以：
+  - **换过 token 就要重设 webhook**，顺序是「先 `setWebhook`（带新 `secret_token`）→ 再 `deploy`」；反了的话新 Worker 会因为校验不过把更新全拒掉（401）
+  - 排查这类故障先查 `getWebhookInfo` 的 `url`，别先怀疑部署或代码
+  - 自愈巡检挂在每 2 分钟的 cron 上：**只在地址为空时动手**（非空但不同一律不碰，那可能是用户有意配的自定义域名），期望地址取 `WEBHOOK_URL`，没填则用「上一次通过 secret 校验的请求 origin」（`noteIncomingWebhook` 只认校验通过的请求，避免伪造请求把 webhook 改到别处）
+  - 期望地址为空时巡检直接跳过（公开模板的默认状态），所以自愈是**可选的**、不会打扰只用模板的人
 - **改 Schema 时注意**：迁移里**不要**写会清空 `scene_settings` 里非 `global` 记录的语句——那会抹掉场景级功能开关（v2.1.0 踩过一次，已在 v2.2.0 修掉并有回归测试）。
 - **改 Schema**：
   1. 在 `SCHEMA_SQL` 里加表/索引（`CREATE TABLE IF NOT EXISTS`）

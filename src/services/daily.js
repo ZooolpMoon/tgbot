@@ -17,6 +17,7 @@ import { escapeHtml } from "../utils/html.js";
 import { logError, logInfo } from "../core/logger.js";
 import { expirePunishments, ACTIONS, formatDuration } from "./guard.js";
 import { reindexKnowledge } from "./knowledge.js";
+import { ensureWebhook } from "./webhook.js";
 import { deleteMessage } from "../telegram/api.js";
 
 /**
@@ -223,6 +224,16 @@ export async function runScheduledTasks(env, token, ctx = null, { cron = null } 
   const cleanup = await cleanupStaleData(env);
   const summary = await collectDailySummary(env);
 
+  // webhook 自愈巡检：Telegram 侧地址被清空时自己补回来（isolate 内每 10 分钟最多查一次）
+  let webhook = null;
+  if (token && env?.DB) {
+    try {
+      webhook = await ensureWebhook(env, token);
+    } catch (e) {
+      logError("webhook 巡检失败：", e);
+    }
+  }
+
   // 索引维护：补上「上传时没有 AI」或「换过向量模型」的分块（每次有上限，分多次跑完）
   let reindex = null;
   if (env?.AI && env?.DB) {
@@ -235,6 +246,7 @@ export async function runScheduledTasks(env, token, ctx = null, { cron = null } 
     cleanup: cleanupCounts,
     reindex,
     pendingDeletes,
+    webhook,
     summary: { ...summary, pendingList: summary.pendingList.length }
   }));
 

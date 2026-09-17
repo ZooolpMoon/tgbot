@@ -309,3 +309,27 @@ export function deleteMyCommands(token, scope = null) {
   if (scope) body.scope = scope;
   return postJSON(`${BASE(token)}/deleteMyCommands`, body);
 }
+
+// ==========================================
+// 🔗 Webhook 管理（自愈巡检用）
+// 见 services/webhook.js：地址被清空时靠这两个接口自己修回来。
+// ==========================================
+
+/** 查询 webhook 状态（含投递失败原因 last_error_message） */
+export function getWebhookInfo(token) {
+  return postJSON(`${BASE(token)}/getWebhookInfo`, {});
+}
+
+/**
+ * 设置 webhook。
+ * @param {string} url 必须 https，端口只能是 443 / 80 / 88 / 8443
+ * @param {{secretToken?:string, dropPendingUpdates?:boolean, maxConnections?:number}} [opts]
+ *        secretToken 会以 X-Telegram-Bot-Api-Secret-Token 头回传，用来校验来源
+ */
+export function setWebhook(token, url, { secretToken = "", dropPendingUpdates = false, maxConnections = 0 } = {}) {
+  const body = { url };
+  if (secretToken) body.secret_token = secretToken;
+  if (dropPendingUpdates) body.drop_pending_updates = true;
+  if (maxConnections > 0) body.max_connections = maxConnections;
+  return postJSON(`${BASE(token)}/setWebhook`, body);
+}
