@@ -98,6 +98,13 @@ export async function cleanupStaleData(env) {
   const stalePunishments = await env.DB.prepare(
     "DELETE FROM group_punishments WHERE status = 'pending' AND created_at <= datetime('now', '-1 day')"
   ).run();
+  // 执行中断的处置（Worker 在「原子占用」与「写回结果」之间被杀）：
+  // 30 分钟后标记为 failed，避免记录永久卡在 executing。保持「失败不可重试」
+  // 的现有语义 —— 宁可让管理员重新发起，也不要冒「重复执法」的风险。
+  const stuckPunishments = await env.DB.prepare(
+    `UPDATE group_punishments SET status = 'failed', detail = '执行中断（未完成）', updated_at = CURRENT_TIMESTAMP
+      WHERE status = 'executing' AND updated_at <= datetime('now', '-30 minutes')`
+  ).run();
   // 已处理完的申诉保留 30 天，避免无限增长
   const staleAppeals = await env.DB.prepare(
     "DELETE FROM punishment_appeals WHERE status <> 'pending' AND created_at <= datetime('now', '-30 days')"
@@ -107,29 +114,8 @@ export async function cleanupStaleData(env) {
     "UPDATE redeem_codes SET enabled = 0 WHERE enabled = 1 AND expires_at IS NOT NULL AND expires_at < ?"
   ).bind(today).run();
 
-  // 21 点牌局超时：**先退还本金再删记录** —— 本金是开局就扣掉的，
-  // 用户没点完（或干脆忘了）不能算他输，否则等于机器人吞分。
-  let blackjackRefunded = 0;
-  let blackjackFailed = 0;
-  try {
-    const { results } = await env.DB.prepare(
-      `SELECT user_key, bet FROM blackjack_sessions
-        WHERE status = 'playing' AND updated_at <= datetime('now', '-30 minutes')`
-    ).all();
-    for (const row of results || []) {
-      const bet = Math.floor(Number(row.bet) || 0);
-      if (bet < 1) continue;
-      const refunded = await refundPoint(env, row.user_key, bet, "21 点牌局超时退款");
-      if (refunded === null) blackjackFailed++;
-      else blackjackRefunded++;
-    }
-  } catch (e) {
-    logError("21 点超时退款失败：", e);
-  }
-  const blackjackSessions = await env.DB.prepare(
-    `DELETE FROM blackjack_sessions
-      WHERE updated_at <= datetime('now', '-30 minutes')`
-  ).run();
+  // 21 点牌局超时退款（及时型，抽出去了，见 cleanupTimely）
+  const blackjack = await refundStaleBlackjack(env);
 
   return {
     adminSessions: adminSessions.meta.changes,
@@ -141,16 +127,62 @@ export async function cleanupStaleData(env) {
     guardSessions: guardSessions.meta.changes,
     adminManageSessions: adminManageSessions.meta.changes,
     tagSessions: tagSessions.meta.changes,
-    blackjackSessions: blackjackSessions.meta.changes,
-    blackjackRefunded,
-    blackjackFailed,
+    ...blackjack,
     expiredPunishments: expiredList.length,
     stalePunishments: stalePunishments.meta.changes,
+    stuckPunishments: stuckPunishments.meta.changes,
     staleAppeals: staleAppeals.meta.changes,
     expiredCodes: expiredCodes.meta.changes,
     // 明细给定时任务用（发到期通知）；日志汇总里只记数量
     expiredList
   };
+}
+
+/**
+ * 21 点牌局超时退款（**及时型**：本金 30 分钟就该退回去，不能等到日报）。
+ * 先退本金再删记录 —— 本金是开局就扣的，用户没点完不能算他输。
+ * @returns {Promise<{blackjackSessions:number, blackjackRefunded:number, blackjackFailed:number}>}
+ */
+async function refundStaleBlackjack(env) {
+  let refundedCount = 0;
+  let failed = 0;
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT user_key, bet FROM blackjack_sessions
+        WHERE status = 'playing' AND updated_at <= datetime('now', '-30 minutes')`
+    ).all();
+    for (const row of results || []) {
+      const bet = Math.floor(Number(row.bet) || 0);
+      if (bet < 1) continue;
+      const refunded = await refundPoint(env, row.user_key, bet, "21 点牌局超时退款");
+      if (refunded === null) failed++;
+      else refundedCount++;
+    }
+  } catch (e) {
+    logError("21 点超时退款失败：", e);
+  }
+  const deleted = await env.DB.prepare(
+    `DELETE FROM blackjack_sessions WHERE updated_at <= datetime('now', '-30 minutes')`
+  ).run();
+
+  return {
+    blackjackSessions: Number(deleted?.meta?.changes) || 0,
+    blackjackRefunded: refundedCount,
+    blackjackFailed: failed
+  };
+}
+
+/**
+ * 及时型清理：**每 2 分钟的 cron 都要跑**的那部分。
+ *
+ * 为什么单独拆出来（v3.7.0）：原先每次 tick 都会跑「一整天 / 一周 / 一个月才需要
+ * 一次」的清理与日报统计，720 次/天白做，其中日报那几条还是全表扫描
+ * （见 `collectDailySummary`）。这里只保留真正需要及时性的：**超时牌局退款**
+ * （牌局 30 分钟有效，本金不能等到第二天才退）。
+ */
+export async function cleanupTimely(env) {
+  if (!env?.DB) return { blackjackSessions: 0, blackjackRefunded: 0, blackjackFailed: 0 };
+  return await refundStaleBlackjack(env);
 }
 
 /**
@@ -239,7 +271,10 @@ export async function collectDailySummary(env) {
  * @param {{cron?:string|null}} [options] cron = 本次触发的 cron 表达式（见 DAILY_SUMMARY_CRON）
  */
 export async function runScheduledTasks(env, token, ctx = null, { cron = null } = {}) {
-  // 先处理「长延时自动删除」（每 2 分钟的 cron 会频繁跑这一条；开销很小）
+  const isDailyRun = !cron || cron === DAILY_SUMMARY_CRON;
+
+  // ---------- 每次 tick 都要做的（及时型）----------
+  // 1) 长延时自动删除：到点就该删，不能等日报
   let pendingDeletes = null;
   if (token && env?.DB) {
     try {
@@ -249,10 +284,10 @@ export async function runScheduledTasks(env, token, ctx = null, { cron = null } 
     }
   }
 
-  const cleanup = await cleanupStaleData(env);
-  const summary = await collectDailySummary(env);
+  // 2) 超时牌局退款（牌局 30 分钟有效，本金不能等到第二天才退）
+  const timely = await cleanupTimely(env);
 
-  // webhook 自愈巡检：Telegram 侧地址被清空时自己补回来（isolate 内每 10 分钟最多查一次）
+  // 3) webhook 自愈巡检（isolate 内每 10 分钟最多查一次）
   let webhook = null;
   if (token && env?.DB) {
     try {
@@ -262,7 +297,19 @@ export async function runScheduledTasks(env, token, ctx = null, { cron = null } 
     }
   }
 
-  // 索引维护：补上「上传时没有 AI」或「换过向量模型」的分块（每次有上限，分多次跑完）
+  // ---------- 日级维护：只在「每天一次」的那条 cron 跑 ----------
+  // 以前这些是每次 tick 都跑：15 条「一整天/一周/一个月才需要一次」的清理 +
+  // 7 条只为日报服务的统计（还都是全表扫描），720 次/天纯属白做。v3.7.0 拆开。
+  if (!isDailyRun) {
+    logInfo("跳过日级维护（非日报时段）：", JSON.stringify({ cron, timely, pendingDeletes, webhook }));
+    return { timely, pendingDeletes, webhook, notified: false, skipped: "非日报时段" };
+  }
+
+  const cleanup = await cleanupStaleData(env);
+  const summary = await collectDailySummary(env);
+
+  // 索引维护：补上「上传时没有 AI」或「换过向量模型」的分块（每次有上限，分多次跑完）。
+  // 刻意留在每次 tick：换模型后要靠它分批补，放到日报会让 400 块要补 20 天。
   let reindex = null;
   if (env?.AI && env?.DB) {
     reindex = await reindexKnowledge(env, { limit: 20 });
@@ -286,12 +333,6 @@ export async function runScheduledTasks(env, token, ctx = null, { cron = null } 
   const adminChat = resolveAdminChatId(env);
   if (!token || !adminChat) return { cleanup: cleanupCounts, summary, reindex, notified: false };
 
-  // 每日概况不是每次都推：只有「每天一次」的 cron 负责推送，否则每 2 分钟就弹一次。
-  const isDailyRun = !cron || cron === DAILY_SUMMARY_CRON;
-  if (!isDailyRun) {
-    logInfo("跳过每日概况（非日报时段）：", cron);
-    return { cleanup: cleanupCounts, summary, reindex, notified: false, skipped: "非日报时段" };
-  }
   // 同一天再触发也不重复推（多配/改配 cron 时的兜底）
   if ((await getSetting(env, SUMMARY_MARK_KEY, "")) === summary.today) {
     logInfo("跳过每日概况（今日已推送）：", summary.today);

@@ -72,53 +72,8 @@ export async function loadScopedSettings(env, scopeChain, prefix) {
       result.set(key, { value: String(row.value), scope });
     }
   }
+
   return result;
-}
-
-/**
- * 解析单个配置项。
- * @returns {Promise<{value:string|null, scope:string|null}>}
- */
-export async function loadScopedSetting(env, scopeChain, name) {
-  const prefix = `${name}`;
-  if (!env?.DB) return { value: null, scope: null };
-  const chain = (scopeChain || []).map(String);
-  if (chain.length === 0) return { value: null, scope: null };
-
-  try {
-    const placeholders = chain.map(() => "?").join(", ");
-    const { results } = await env.DB.prepare(
-      `SELECT scene_key, value FROM scene_settings
-       WHERE scene_key IN (${placeholders}) AND name = ?`
-    ).bind(...chain, prefix).all();
-    const rows = results || [];
-    for (const scope of chain) {
-      const hit = rows.find((r) => String(r.scene_key) === scope);
-      if (hit) return { value: String(hit.value), scope };
-    }
-  } catch (e) {
-    logError("读取配置失败：", e);
-  }
-  return { value: null, scope: null };
-}
-
-/** 写入某一层的配置值 */
-export async function setScopedSetting(env, scopeKey, name, value) {
-  if (!env?.DB || !scopeKey || !name) return false;
-  await env.DB.prepare(`
-    INSERT INTO scene_settings (scene_key, name, value, updated_at)
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(scene_key, name) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
-  `).bind(String(scopeKey), String(name), String(value)).run();
-  return true;
-}
-
-/** 删除某一层的配置（删除后回落到下一层） */
-export async function clearScopedSetting(env, scopeKey, name) {
-  if (!env?.DB || !scopeKey || !name) return false;
-  await env.DB.prepare("DELETE FROM scene_settings WHERE scene_key = ? AND name = ?")
-    .bind(String(scopeKey), String(name)).run();
-  return true;
 }
 
 /** 来源 → 面板文案：让管理员一眼看出「这个值是谁定的」 */

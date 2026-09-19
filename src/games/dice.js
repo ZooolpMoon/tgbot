@@ -8,7 +8,7 @@ import { getUserPoints } from "../services/users.js";
 import { LAYOUT } from "../utils/layout.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
 import { randomInt } from "../utils/random.js";
-import { getGameMainKeyboard, getBackToGameMainRow } from "./shared.js";
+import { getGameMainKeyboard, getBackToGameMainRow, betError } from "./shared.js";
 
 export const DiceGame = {
   /** 游戏主界面：选下注金额 */
@@ -52,6 +52,9 @@ export const DiceGame = {
    */
   async play(token, env, callbackId, chatId, userKey, messageId, betAmount, choice, sceneKey = null) {
     if (!env.DB) return answerCallback(token, callbackId, "❌ 未绑定数据库！", true);
+
+    const badBet = betError(betAmount);
+    if (badBet) return answerCallback(token, callbackId, badBet, true);
 
     const afterDeduct = await tryDeductPoints(env, userKey, betAmount);
     if (afterDeduct === null) return answerCallback(token, callbackId, "❌ 积分不足，无法下注！", true);

@@ -24,7 +24,7 @@ import { logPointChange, tryDeductPoints, adjustPoints, refundPoint } from "../s
 import { randomInt } from "../utils/random.js";
 import { logWarn } from "../core/logger.js";
 import { dealerLine } from "./blackjack-ai.js";
-import { getGameMainKeyboard } from "./shared.js";
+import { getGameMainKeyboard, betError } from "./shared.js";
 
 /** 牌局多久没动作算作废（与读取、清理两处的 SQL 保持一致） */
 export const SESSION_MINUTES = 30;
@@ -428,8 +428,9 @@ export const BlackjackGame = {
   async start(token, env, callbackId, chatId, userKey, messageId, betAmount, deckOverride = null) {
     if (!env.DB) return answerCallback(token, callbackId, "❌ 未绑定数据库！", true);
 
+    const badBet = betError(betAmount);
+    if (badBet) return answerCallback(token, callbackId, badBet, true);
     const bet = Math.floor(Number(betAmount) || 0);
-    if (bet < 1) return answerCallback(token, callbackId, "❌ 下注金额无效！", true);
 
     // 已经有没打完的牌局：不重复扣分，把当前牌桌再显示一遍
     const existingRow = await loadSession(env, chatId, userKey);

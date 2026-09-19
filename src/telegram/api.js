@@ -158,24 +158,6 @@ export async function getFile(token, fileId) {
   const json = await postJSON(`${BASE(token)}/getFile`, { file_id: fileId });
   return json?.ok && json.result ? json.result : null;
 }
-
-/**
- * 下载文件并按 UTF-8 解码成文本。
- * @returns {Promise<string|null>} 超限或失败返回 null
- */
-export async function downloadFileText(token, filePath, maxBytes = 512 * 1024) {
-  if (!filePath) return null;
-  try {
-    const res = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
-    if (!res.ok) return null;
-    const buffer = await res.arrayBuffer();
-    if (buffer.byteLength > maxBytes) return null;
-    return new TextDecoder("utf-8").decode(buffer);
-  } catch {
-    return null;
-  }
-}
-
 /**
  * 下载文件原始字节（.docx / .pdf 这类需要二进制解析的文件用）。
  * @returns {Promise<ArrayBuffer|null>} 超限或失败返回 null

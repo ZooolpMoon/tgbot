@@ -94,13 +94,3 @@ export async function handleUnban({ env, token, callback, chatId, msgId, data, a
   await answerCallback(token, callback.id, `✅ 已解封 ${name}`, true);
   await renderBannedListMenu(token, env, chatId, msgId, page);
 }
-
-/** 供「按 ID 解封」复用：解封单个用户并返回结果文案 */
-export async function unbanByUserId(env, userId, { adminId = null, chatId = null } = {}) {
-  const res = await unbanUserById(env, userId);
-  if (!res.ok) return res;
-  await logAdminAction(env, {
-    adminId, chatId, action: "user_unblock", detail: `${res.userKey}（按 ID 解封）`
-  });
-  return res;
-}

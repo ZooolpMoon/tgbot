@@ -24,6 +24,7 @@ import {
 } from "../telegram/api.js";
 import { buildUserKey } from "../core/context.js";
 import { setUserBlocked } from "./users.js";
+import { isBotAdmin } from "./admins.js";
 import { bigramScore, searchKnowledge } from "./knowledge.js";
 import { logError } from "../core/logger.js";
 import { escapeHtml } from "../utils/html.js";
@@ -508,6 +509,24 @@ export async function getPunishment(env, id) {
   return env.DB.prepare("SELECT * FROM group_punishments WHERE id = ?").bind(id).first();
 }
 
+/**
+ * 原子占用一条待确认的处置（pending → executing）。
+ *
+ * 没有这一层的话，「确认执行」就是「先 SELECT 判断 pending、再调 Telegram」——
+ * 双击确认卡片或 Telegram 重推回调时，两个请求都会读到 pending、**各自执行一次**
+ * （重复封禁 + 公告/私聊/审计各发两遍）。v3.7.0 修。
+ *
+ * @returns {Promise<boolean>} 只有 true 的那一次请求有权继续执行
+ */
+export async function claimPunishment(env, id) {
+  if (!env?.DB) return false;
+  const res = await env.DB.prepare(
+    `UPDATE group_punishments SET status = 'executing', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = 'pending'`
+  ).bind(id).run();
+  return Number(res?.meta?.changes) === 1;
+}
+
 /** 更新处置状态 */
 export async function updatePunishmentStatus(env, id, status, detail = "") {
   if (!env?.DB) return false;
@@ -516,17 +535,6 @@ export async function updatePunishmentStatus(env, id, status, detail = "") {
   ).bind(String(status), String(detail || ""), id).run();
   return true;
 }
-
-/** 某个用户在当前群是否还有生效中的处置（用于展示与去重） */
-export async function getActivePunishment(env, chatId, userId) {
-  if (!env?.DB) return null;
-  return env.DB.prepare(
-    `SELECT * FROM group_punishments
-     WHERE chat_id = ? AND user_id = ? AND status = 'done'
-     ORDER BY id DESC LIMIT 1`
-  ).bind(String(chatId), String(userId)).first();
-}
-
 /**
  * 把已到期的临时处置标记为过期，并把它们返回给调用方（定时任务据此发到期通知）。
  * Telegram 侧的限时禁言/封禁到期后由 Telegram 自动解除，这里只更新本地状态。
@@ -668,8 +676,9 @@ export async function executePunishment({ env, token, record, action, durationMi
   const chatId = String(record.chat_id);
   const userId = String(record.user_id);
 
-  // 硬性兜底：机器人管理员永远不会被处置（即使有人翻出旧的待确认卡片）
-  if (env.MY_TELEGRAM_ID && userId === String(env.MY_TELEGRAM_ID)) {
+  // 硬性兜底：机器人管理员（owner / admin / moderator）永远不会被处置 ——
+  // 即使有人翻出旧的待确认卡片，或者本群管理员自己建个群来「执法」
+  if (await isBotAdmin(env, userId)) {
     return { ok: false, error: "不能处置机器人管理员" };
   }
 

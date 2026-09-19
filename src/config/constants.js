@@ -316,12 +316,3 @@ export const SHOP_EDIT_FIELDS = {
   delivery: "发放方式",
   use: "背包用法"
 };
-
-export const SHOP_MSG = {
-  GROUP_FORBIDDEN: "🛒 商城功能仅支持<b>私聊</b>使用。",
-  DB_NOT_BOUND: "❌ 商城未启用（未绑定数据库）。",
-  ITEM_NOT_FOUND: "❌ 商品不存在或已下架。",
-  SOLD_OUT: "❌ 已售罄",
-  NO_POINTS: "❌ 积分不足",
-  BUY_SUCCESS: "✅ 兑换成功！"
-};

@@ -126,6 +126,24 @@ export async function getAdminRole(env, userId, { ownerId = null } = {}) {
   }
 }
 
+/**
+ * 这个用户是不是「机器人管理员」（owner / admin / moderator）？
+ *
+ * **只用于「不可处置 / 不可封禁」这类硬性兜底**：封了自己人会让「谁能进后台」
+ * 变得不可预期，而且被全局封禁的管理员连 `/unban` 都发不出去，只能由 owner 手动解。
+ *
+ * v3.7.0 修：这三处兜底原先**只认 owner**（`MY_TELEGRAM_ID`），于是任意用户
+ * 自己建个群把机器人拉进去（他天然是本群管理员），就能用 `/ban <某 admin 的 id>`
+ * 把除 owner 外的所有管理员全局锁死。
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function isBotAdmin(env, userId) {
+  const id = String(userId ?? "").trim();
+  if (!id) return false;
+  return (await getAdminRole(env, id)) !== null;
+}
+
 /** 列出所有额外授权的管理员（owner 由调用方单独展示） */
 export async function listAdmins(env) {
   if (!env?.DB) return [];

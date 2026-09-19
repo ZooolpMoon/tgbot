@@ -133,7 +133,10 @@ database_id = "<上一步输出的 id>"
 binding = "AI"
 
 [triggers]
-crons = ["0 16 * * *"]      # UTC 16:00 = 北京时间 00:00 跑定时任务
+crons = [
+  "0 16 * * *",   # UTC 16:00 = 北京时间 00:00：清理 + 索引维护 + 推日报
+  "*/2 * * * *"    # 每 2 分钟：长延时自动删除 + 超时牌局退款 + webhook 自愈
+]
 ```
 
 **更安全的做法**：`BOT_TOKEN` 这类敏感值不放配置文件，改用 Cloudflare Secret：
@@ -160,7 +163,7 @@ APP_TIMEZONE="Asia/Shanghai"
 ```bash
 npm run dev      # 启动本地 Worker（默认 http://localhost:8787）
 npm run check    # 语法 + import 路径自检
-npm test         # 260 个测试用例（内存 SQLite 跑真实 SQL）
+npm test         # 365 个测试用例（内存 SQLite 跑真实 SQL）
 ```
 
 ### 5. 部署

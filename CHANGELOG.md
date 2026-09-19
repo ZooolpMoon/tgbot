@@ -1,6 +1,6 @@
 # 📜 更新日志
 
-> 当前版本 **v3.6.1** · 变更记录（本页）· [README](README.md) · [文档索引](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
+> 当前版本 **v3.7.0** · 变更记录（本页）· [README](README.md) · [文档索引](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
 
 按版本**倒序**排列，最新的在最上面。带 ❗ 的是**破坏性变更**，升级前先看那一节的「升级提示」。
 
@@ -8,6 +8,7 @@
 
 | 版本 | 一句话 | 性质 |
 |------|--------|------|
+| **v3.7.0** | 审查驱动的集中修复：堵刷分赔率、堵管理员被封禁、堵重复执法 + cron 拆分与索引 | 🐛 修复 |
 | **v3.6.1** | 修 21 点资金安全：连点「停牌」可重复领奖（v3.5.0 引入） | 🐛 修复 |
 | **v3.6.0** | 新游戏 🔴⚫ 轮盘赌：欧洲轮盘 37 格，押红黑 / 单双 / 大小 / 三打 | ✨ 新增 |
 | **v3.5.0** | 新游戏 🃏 21 点：跟 AI 庄家对赌，可要牌 / 停牌 / 双倍 | ✨ 新增 |
@@ -44,6 +45,45 @@
 | **v1.0.0** | 首个版本上线 Cloudflare Workers | 🎉 首发 |
 
 ---
+
+---
+
+## v3.7.0 · 2026-09-19
+
+> 🛡️ 一次四维度代码审查（性能成本 / 并发正确性 / 安全权限 / 测试盲区）后的集中修复：堵掉一个**正在持续刷分**的赔率漏洞、一条**任意群管理员能全局封禁管理员**的越权路径，以及两处会重复执行的资金 / 执法动作。
+
+### 🐛 修复
+
+- 🔴 **老虎机与幸运转盘的返还率 > 1（可无限刷分）**：按代码倍率表实算是老虎机 `(1×50 + 5×10 + 90×2)/216 ≈ 1.296`、转盘 `0.30×0 + 0.25×0.5 + 0.20×1 + 0.15×2 + 0.08×5 + 0.015×10 + 0.005×50 = 1.425` —— **都是正期望**，配合「ALL IN」+ 无限重复就是稳定刷分。生产数据也印证了：幸运转盘 10 次让玩家净赚 **4650** 分。
+  - 老虎机改成 8 个图标（`(1×50 + 7×15 + 168×2)/512 ≈ 0.959`）；转盘档位重排为 `33%×0 / 25%×0.5 / 20%×1 / 14%×2 / 5%×3 / 2.5%×5 / 0.5%×15 ≈ 0.955`
+  - 倍率表抽成可导出常量，`test/game-odds.test.mjs` 加**返还率守卫**（与抽奖的 `expectedPrize() < PAID_COST`、轮盘的 `36/37` 同一思路）；顺带补齐四个游戏 `play()` 的零覆盖 —— 原先骰子 / 抛硬币 / 老虎机 / 转盘的结算函数**一个测试都没有**，这个漏洞正是因此藏了很久
+- 🔴 **任意群管理员可以把机器人管理员全局封禁**：「不可处置 / 不可封禁」的三处兜底（`executePunishment`、`setUserBlocked`、`banUserById`）原先**只认 owner**。攻击路径：随便谁建个群把机器人拉进去（他天然是本群管理员），`/ban <某 admin 的 id> 广告` → 确认 → 该 admin 被写进全局 `users.blocked`，之后私聊与按钮全被拦、**连 `/unban` 都发不出去**，只能由 owner 手动解。
+  - 新增 `isBotAdmin()`（走 `getAdminRole`，覆盖 owner / admin / moderator），三处统一改用它；`test/admin-protection.test.mjs` 含这条攻击路径的端到端复现
+- 🔴 **群规「确认执行」可重复执法**：确认流程是「先判断 pending、再调 Telegram」，双击确认卡片（或 Telegram 重推回调）会让两个请求**各执行一次** —— 目标被重复封禁，公告 / 私聊 / 审计各发两遍。新增 `claimPunishment()` 原子占用（`pending → executing`，`meta.changes === 1` 才继续），并给「执行中断卡在 executing」加了 30 分钟兜底（标记 failed，保持「失败不可重试」的语义，不冒重复执法的风险）
+- 🟡 **单局下注没有上限**：以前只受余额约束，「ALL IN」一次手抖就能清零（生产里出现过一笔 **110918 分**的全押）。新增 `MAX_BET = 1000`，自定义下注面板收敛到 `[1, min(余额, 上限)]`，六个游戏的 `play/start` 也都会挡下超限下注
+
+### ⚡ 性能（D1）
+
+- **cron 拆分「及时型」与「日级」**：原先每 2 分钟的 tick 都会跑一遍日级清理（15 条 DELETE）与**只给日报用的 7 条统计**（还都是全表扫描），720 次/天纯属白做。现在及时型（长延时删除 / 超时牌局退款 / webhook 自愈）每次跑，日级（清理 / 统计 / 日报推送）只在 `0 16 * * *` 跑。
+  - `reindexKnowledge` **刻意留在每次 tick**：换向量模型后靠它分批补建（每次 20 块），放进日报会让 400 块补 20 天
+- **补 5 个索引**（Schema v20）：`daily_stats(date_str)`、`daily_checkin(date_str)`、`users(blocked)`、`redeem_logs(created_at)`、`group_punishments(status, until_at)`
+  - 其中 `users(blocked)` 必须写在 `MIGRATIONS` 里而不是 `SCHEMA_SQL`：`blocked` 是迁移后加的列，老库上先建索引会 `no such column` 并让整个建表 batch 失败（`test/schema.test.mjs` 当场抓到了这一点）
+
+### 🧹 清理
+
+- 删掉 **13 个零引用导出**：`sendUserManageMenu`、`unbanByUserId`、`SHOP_MSG`、`buildToolResultText`、`cacheClearAll`、`loadScopedSetting`、`setScopedSetting`、`clearScopedSetting`、`getActivePunishment`、`getTodayCount`、`resetTodayCount`、`toggleBlockBySceneRow`、`downloadFileText`
+- **修正文档漂移**：测试用例数（260 → 365）、README 与 configuration 里的 cron 只写了 1 条（实际 2 条）、架构文档写「4 个游戏」（实际 6 个）、`configuration.md` 缺 `WEBHOOK_URL`
+- `scripts/check.mjs` 的注释声称「校验 DB Schema 里是否出现了未声明的表」，实际没实现 —— 改成如实描述，别留「已经查过了」的错觉
+
+### 🧪 测试
+
+- 测试 334 → **365 个**：新增 `game-odds`（16）、`admin-protection`（6）、`guard-atomic`（5）、`cron-split`（4）
+
+### 📌 说明
+
+- 本次是**审查驱动**的修复：性能 / 并发 / 安全 / 测试盲区四个维度分别审，每条都带 `文件:行号` 证据 —— 索引有没有走到用 `EXPLAIN QUERY PLAN` 核过，路径查询数用 D1 替身实测（私聊一条走 AI 的消息 = **15 条语句**）。
+- 审查确认**没问题**的方向也一并记下：无 SQL 注入（拼进 SQL 的都是常量表名或白名单列名）、密钥从未进过 git 历史、webhook 校验无绕过、主路径索引齐全（全部 SEARCH）、兑换码 / 签到 / 抽奖免费次数 / 订单取消退款的原子性都对、没有 IDOR。
+- **还没做的**（按优先级留作后续）：RAG 候选全量读取（满库约 2MB/条消息，随知识库线性恶化）、问题向量化无缓存、串行 `await`（商城首页 4 条、cron 15 条本可 batch）、`telegram/api.js` 退避重试零测试且 `retry_after` 被截断到 8 秒、AI 主链路「扣分 / 占额 / 回滚」零测试、商城限购与背包退款的竞态、背包 `use_value` 无上限校验。
 
 ## v3.6.1 · 2026-09-19
 

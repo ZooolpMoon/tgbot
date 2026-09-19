@@ -3,8 +3,11 @@
 // ✅ 代码自检（本地 & CI 共用）
 // 1. 语法检查所有 .js / .mjs
 // 2. 检查相对 import 路径是否存在
-// 3. 校验 DB Schema 里是否出现了未声明的表（粗查）
 // 用法：npm run check
+//
+// 说明：这里只做「机器能确定」的两件事。表名与 SCHEMA_SQL 是否一致、
+// 命令注册表的 capability 与回调路由是否对得上，目前靠 `npm test` 兜
+// （`test/schema.test.mjs`、`test/admins.test.mjs`），别在这个脚本里写半成品校验。
 // ==========================================
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";

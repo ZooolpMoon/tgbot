@@ -62,8 +62,3 @@ export function cacheClear(namespace, key = null) {
   if (key === null) store.clear();
   else store.delete(key);
 }
-
-/** 清掉所有命名空间（测试与「重置配置」时用） */
-export function cacheClearAll() {
-  STORES.clear();
-}

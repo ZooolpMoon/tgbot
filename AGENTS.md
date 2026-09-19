@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 334 个用例）
+2. `npm test` 通过（当前 365 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -87,7 +87,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - **统一配置模型（v3.0.0）**：`services/config.js` 提供「作用域链 → 生效值 + 来源」的唯一读法
   - 功能开关：场景 → 全局；消息自动删除：群 → 全局；都用 `buildScopeChain` + `loadScopedSettings`
   - 面板上要显示「来源」（`describeSource`），避免出现「改了没生效」的困惑
-  - 写配置走 `setScopedSetting` / `clearScopedSetting`，并在写完后清缓存
+  - **读取统一走这里，写入没有统一入口**：各模块自带一条 `INSERT ... ON CONFLICT(scene_key, name)`（见 `features.js` 的开关、`auto-delete.js` 的保留时长、`settings.js` 的全局键）。写完必须清各自缓存，否则会出现「改了没生效」
 - **AI 工具调用（v3.0.0，v3.0.1 改为确定性预取）**：`services/ai-tools.js` 只注册**只读**工具（查积分 / 签到 / 排行 / 群规 / 知识库）
   - **不要让模型自己决定调工具**：实测它会不按约定输出 JSON，还把工具名当指令讲给用户（v3.0.0 踩过）。现在用 `detectToolIntent` 关键词识别 → 直接查询 → 结果作为「实时数据」进上下文
   - **工具名绝不能出现在提示词里**：`buildDataContext` 只输出数据，并明确要求模型不要提来源、不要标注《》
@@ -136,7 +136,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - **发奖 / 状态流转必须由一条带条件的原子语句做唯一凭据**（v3.6.1 教训）：只要还有「先 SELECT 判断、再写」，连点或 Telegram 重推回调就会重复执行。21 点原来的 `dropSession` 是裸 `DELETE`、不校验 `meta.changes`，而结算中间还有一次**最长 8 秒**的 AI 台词调用 —— 窗口大到用户随便点两下就能撞上（赢 100 分的局能收两次）。凡是「只能发生一次」的动作（发奖 / 核销 / 执行处置），都要用 `UPDATE/DELETE ... WHERE status = '旧状态'` + `meta.changes === 1` 判定，**别拿 SELECT 的结果当凭据**。
   - 同理，**建状态行要用 `INSERT ... ON CONFLICT DO NOTHING` 并检查结果**，不要 upsert：upsert 既能「重复扣分却没有记录」（超时退款扫的是状态表，那笔分就找不回来），也能在结算之后把已删的状态「写活」，让用户反复结算同一局。
 - **新游戏的期望值绝不能 > 1（加游戏的第一条）**：积分是**消耗品**——来源主要是签到（5~20 分/天），AI 对话 1 分/次，商城与兑换码都按这个量级定价。游戏一旦做成正期望，用户就能稳定刷分，整个积分体系（定价、通胀）直接被冲垮。
-  - 现有的账：骰子 / 抛硬币 / 猜拳是 `1:2 含本金` → EV = 1.0（公平娱乐向）；老虎机 / 转盘 / 轮盘有抽水（轮盘是数学自带的 `36/37 ≈ 0.973`）；抽奖 EV ≈ 9.4 < 成本 10
+  - 现有的账：骰子 / 抛硬币是 `1:2 含本金` → EV = 1.0（公平娱乐向）；老虎机 ≈ 0.959、转盘 ≈ 0.955、轮盘 = 数学自带的 `36/37 ≈ 0.973`；抽奖 EV ≈ 9.4 < 成本 10。另外**单局下注有上限** `MAX_BET`（`games/shared.js`），防手抖梭哈清号
   - **必须配一条守卫测试**，不能只靠注释：抽奖那边是 `expectedPrize() < PAID_COST`（`test/points-play.test.mjs`），轮盘那边是每种下注的 `returnRate() === 36/37`（`test/roulette.test.mjs`）。改赔率表时守卫会直接失败，这才是「上锁」
   - 纯概率游戏（轮盘、骰宝）优先选**数学自带抽水**的玩法，别自己拍脑袋调权重
 - **商城的发放方式与背包（v3.3.0）**：`shop_items.delivery` 决定下单后谁来交付——`manual`（默认，管理员确认发放）、`group_tag`（自动发放群组标签）、`bag`（自动进「🎒 我的背包」，用户自己用）。
@@ -148,7 +148,12 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 订单状态多了 `refunded`：凡是列 `statusMap` 的地方（我的订单、管理端订单列表与详情、订单键盘）都要补上。
 - **群组标签**（`services/group-tags.js` + `shop/tags.js`）：走 Telegram 的 `setChatMemberTag`，两个硬前提缺一不可——**机器人在那个群是管理员且有 `can_manage_tags`**，且**目标用户在那个群是「普通成员」**（群主 / 管理员都不行，Telegram 会回 `CHAT_CREATOR_REQUIRED`；群主的名字归「管理员头衔」管）。所以选群和收标签两处都要用 `checkTagTarget()` 前置校验，别等 Telegram 报错。标签 0~16 字符、**不允许 emoji**（服务端先校验再请求）。群名与权限检查结果缓存在 `bot_chats`（权限 1 小时），群列表来自 `user_scenes` 里的 group / supergroup。机器人已退出的群用 `getChat` 探到后隐藏，不要让用户点了才发现。
 - **时区：库里存 UTC，给人看的一律过 `formatAppTime()`**（`services/time.js`）：`CURRENT_TIMESTAMP` / `datetime('now')` 都是 UTC，比较、去重、到期判定也都按 UTC 做，别去改存储格式；只在展示时换算到 `APP_TIMEZONE`（默认 `Asia/Shanghai`，即北京时间 UTC+8）。新增任何显示 `created_at` / `updated_at` / `until_at` 的文案都要套一层，**不要再硬编码「UTC」或直接用 `toISOString()`**。
-- **定时任务要区分「日报时段」**：`runScheduledTasks` 的 `cron` 参数决定这次该干什么——只有每天一次的 `DAILY_SUMMARY_CRON`（`0 16 * * *` = 北京 00:00）推每日概况，每 2 分钟那条兜底 cron 只做清理与长延时删除；再用全局设置 `daily.last_summary_date` 兜底去重，保证**同一天只推一条**。v3.1.2 修过「概况一直弹」，新增定时推送时照这个模式来。
+- **定时任务分「及时型」与「日级」两层**（v3.7.0）：`runScheduledTasks` 用 `cron` 参数区分该干什么
+  - **每次 tick（`*/2 * * * *`）**：长延时自动删除（`processPendingDeletes`）、**超时牌局退款**（`cleanupTimely`）、webhook 自愈巡检
+  - **只在日报（`0 16 * * *` = 北京 00:00）**：`cleanupStaleData` 的全量清理、`collectDailySummary` 的统计、日报推送
+  - 原先每次 tick 都会把日级清理与日报统计跑一遍（720 次/天，其中统计还是全表扫描），纯属白做 —— 新增清理 / 统计时**先想清楚它属于哪一层**
+  - `reindexKnowledge` 是刻意的例外，留在每次 tick：换向量模型后靠它分批补建（每次 20 块），放日报会让 400 块补 20 天
+  - 日报去重仍靠全局设置 `daily.last_summary_date`，保证同一天只推一条
 - **Webhook 是「会无声消失」的外部状态**（`services/webhook.js`，v3.4.0）：Telegram 侧的 webhook 地址会被清空——实测在 BotFather 撤销 / 更换 token 后变成空串，此时 Worker、Token、日志全都正常，表现只是「发消息完全没反应」。所以：
   - **换过 token 就要重设 webhook**，顺序是「先 `setWebhook`（带新 `secret_token`）→ 再 `deploy`」；反了的话新 Worker 会因为校验不过把更新全拒掉（401）
   - 排查这类故障先查 `getWebhookInfo` 的 `url`，别先怀疑部署或代码

@@ -485,6 +485,17 @@ CREATE TABLE IF NOT EXISTS blackjack_sessions (
   updated_at TEXT    DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (chat_id, user_key)
 );
+
+-- v3.7.0：补上「日报统计」与「定时维护」用到的索引。
+-- 这些查询原先都是全表扫描，而且被**每 2 分钟的 cron** 反复执行
+-- （后来把日级统计挪进日报时段，索引是第二道保险）。
+CREATE INDEX IF NOT EXISTS idx_daily_stats_date ON daily_stats(date_str);
+CREATE INDEX IF NOT EXISTS idx_daily_checkin_date ON daily_checkin(date_str);
+CREATE INDEX IF NOT EXISTS idx_redeem_logs_created ON redeem_logs(created_at);
+-- 注意：users(blocked) 的索引**不能**放这里 —— blocked 是 MIGRATIONS 后加的列，
+-- 老库上先建索引会报 "no such column" 并让整个建表 batch 失败。它放在 MIGRATIONS 末尾。
+-- 到期处置扫描：现有两条索引都以 chat_id / user_id 打头，这条按状态+到期时间
+CREATE INDEX IF NOT EXISTS idx_punishments_due ON group_punishments(status, until_at);
 `;
 
 let schemaReady = false;
@@ -499,7 +510,8 @@ let schemaPromise = null;
 // （老库里这三张表会保留但不再使用，需要清理可手动 DROP）
 // v3.3.0：商城「背包」（user_bag_items）+ 商品发放方式 bag + 背包物品用法 use_type/use_value
 // v3.5.0：21 点牌局（blackjack_sessions）
-export const SCHEMA_VERSION = 19;
+// v3.7.0：日报与维护查询的索引（daily_stats / daily_checkin / users.blocked / redeem_logs.created_at / 处置到期）
+export const SCHEMA_VERSION = 20;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 
@@ -547,7 +559,12 @@ const MIGRATIONS = [
   "ALTER TABLE shop_items ADD COLUMN use_value INTEGER DEFAULT 0",
   "ALTER TABLE shop_add_sessions ADD COLUMN delivery TEXT DEFAULT 'manual'",
   "ALTER TABLE shop_add_sessions ADD COLUMN use_type TEXT DEFAULT 'none'",
-  "ALTER TABLE shop_add_sessions ADD COLUMN use_value INTEGER DEFAULT 0"
+  "ALTER TABLE shop_add_sessions ADD COLUMN use_value INTEGER DEFAULT 0",
+
+  // v3.7.0：日报统计里的「当前封禁用户」按 blocked 过滤。
+  // **必须放在建表（SCHEMA_SQL）之后**：老库此时才刚补上 blocked 列，
+  // 放到 SCHEMA_SQL 里会因 "no such column" 让整个建表 batch 失败。
+  "CREATE INDEX IF NOT EXISTS idx_users_blocked ON users(blocked)"
 ];
 
 /**

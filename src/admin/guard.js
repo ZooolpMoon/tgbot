@@ -22,6 +22,7 @@ import {
   ACTIONS, formatDuration, getGroupGuard, getBotGroupRights, isGroupAdmin,
   validateReason, reasonRejectHint,
   createPendingPunishment, getPunishment, updatePunishmentStatus,
+  claimPunishment,
   executePunishment, buildPunishmentNotice,
   findAppealablePunishment, createAppeal, getAppeal, decideAppeal,
   revokePunishment, resolveAlertKeywords, scanAlertKeywords
@@ -336,6 +337,14 @@ export async function handleGuardCallback({ env, ctx, token, chatId, callback, d
       );
       return;
     }
+  }
+
+  // 原子占用：只有把 pending 改成 executing 成功的那一次请求才有权执行。
+  // 双击确认卡片 / Telegram 重推回调时，另一个请求会在这里被挡下 —— 否则会
+  // 重复调用 Telegram（重复封禁，公告与私聊通知各发两遍）。
+  if (!(await claimPunishment(env, id))) {
+    await answerCallback(token, callback.id, "⚠️ 该处置正在处理或已执行", true);
+    return;
   }
 
   const result = await executePunishment({

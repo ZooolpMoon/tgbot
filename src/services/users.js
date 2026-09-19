@@ -5,6 +5,7 @@
 import { DEFAULTS } from "../config/constants.js";
 import { buildUserKey } from "../core/context.js";
 import { escapeHtml } from "../utils/html.js";
+import { isBotAdmin } from "./admins.js";
 
 /**
  * 解析「每日额度」字段。
@@ -180,8 +181,10 @@ export async function isUserBlocked(env, userKey) {
 /** 设置封禁状态，返回设置后的结果 */
 export async function setUserBlocked(env, userKey, blocked) {
   if (!env.DB || !userKey) return false;
-  // 机器人管理员永远不进封禁名单：封了自己会让「谁能进后台」变得不可预期
-  if (env.MY_TELEGRAM_ID && String(userKey) === buildUserKey(env.MY_TELEGRAM_ID)) {
+  // 机器人管理员（owner / admin / moderator）永远不进封禁名单：封了自己人会让
+  // 「谁能进后台」变得不可预期，而且被封的管理员连 /unban 都发不出去
+  const targetId = String(userKey).replace(/^user:/, "");
+  if (await isBotAdmin(env, targetId)) {
     return false;
   }
   const value = blocked ? 1 : 0;
@@ -204,8 +207,8 @@ export async function banUserById(env, userId, { createdBy = "" } = {}) {
   const id = String(userId ?? "").trim();
   if (!env.DB) return { ok: false, error: "未绑定数据库" };
   if (!/^\d+$/.test(id)) return { ok: false, error: "用户 ID 必须是纯数字（Telegram 数字 ID）" };
-  if (env.MY_TELEGRAM_ID && id === String(env.MY_TELEGRAM_ID)) {
-    return { ok: false, error: "不能封禁机器人管理员自己" };
+  if (await isBotAdmin(env, id)) {
+    return { ok: false, error: "不能封禁机器人管理员（owner / 管理员 / 执法员）" };
   }
 
   const userKey = buildUserKey(id);
@@ -247,22 +250,6 @@ export async function unbanUserById(env, userId) {
 
   return { ok: true, userKey };
 }
-
-/** 按场景行 ID（user_scenes.id）封禁 / 解封背后的用户，供管理面板复用 */
-export async function toggleBlockBySceneRow(env, rowId, next) {
-  if (!env.DB) return { ok: false, error: "未绑定数据库" };
-  const scene = await env.DB.prepare(
-    "SELECT user_key, user_id, first_name FROM user_scenes WHERE id = ?"
-  ).bind(rowId).first();
-  if (!scene) return { ok: false, error: "场景不存在" };
-
-  await env.DB.prepare(
-    "UPDATE users SET blocked = ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ?"
-  ).bind(next ? 1 : 0, scene.user_key).run();
-
-  return { ok: true, userKey: scene.user_key, userId: scene.user_id, firstName: scene.first_name };
-}
-
 /** 分页列出封禁名单（含积分与名字，便于辨认） */
 export async function listBlockedUsers(env, page = 1, pageSize = 6) {
   if (!env.DB) return { rows: [], total: 0, page: 1, totalPages: 1 };

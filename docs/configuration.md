@@ -81,7 +81,10 @@ AI_MODELS = "@cf/meta/llama-3.1-8b-instruct-fast,@cf/mistral/mistral-7b-instruct
 
 ```toml
 [triggers]
-crons = ["0 16 * * *"]      # UTC 16:00 = 北京时间 00:00
+crons = [
+  "0 16 * * *",   # UTC 16:00 = 北京时间 00:00：清理 + 索引维护 + 推日报
+  "*/2 * * * *"    # 每 2 分钟：长延时自动删除 + 超时牌局退款 + webhook 自愈
+]
 ```
 
 > Cron 表达式**始终按 UTC 解析**，`APP_TIMEZONE` 只影响业务里的「今天」怎么算，不会改变 Cron 的触发时刻。

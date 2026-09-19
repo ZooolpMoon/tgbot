@@ -23,7 +23,7 @@ import { LAYOUT } from "../utils/layout.js";
 import { logPointChange, tryDeductPoints, adjustPoints } from "../services/points.js";
 import { randomInt } from "../utils/random.js";
 import { logWarn } from "../core/logger.js";
-import { getGameMainKeyboard } from "./shared.js";
+import { getGameMainKeyboard, betError } from "./shared.js";
 
 /** 欧洲轮盘的红色号码（其余 1-36 为黑色，0 为绿色） */
 export const RED_NUMBERS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36];
@@ -247,8 +247,9 @@ export const RouletteGame = {
   async play(token, env, callbackId, chatId, userKey, messageId, betAmount, pickKey, sceneKey = null, numberOverride = null) {
     if (!env.DB) return answerCallback(token, callbackId, "❌ 未绑定数据库！", true);
 
+    const badBet = betError(betAmount);
+    if (badBet) return answerCallback(token, callbackId, badBet, true);
     const bet = Math.floor(Number(betAmount) || 0);
-    if (bet < 1) return answerCallback(token, callbackId, "❌ 下注金额无效！", true);
     if (!BET_MAP.has(String(pickKey))) return answerCallback(token, callbackId, "❌ 未知的下注类型", true);
 
     const afterDeduct = await tryDeductPoints(env, userKey, bet);

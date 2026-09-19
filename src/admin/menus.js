@@ -92,8 +92,3 @@ export async function renderAdminMainMenu(token, chatId, messageId, showShop = t
 export async function renderUserManageMenu(token, chatId, messageId) {
   return editMessageText(token, chatId, messageId, USER_MENU_TEXT, getUserManageKeyboard(), "HTML");
 }
-
-/** 新发一条「用户管理」二级菜单（指令入口用） */
-export async function sendUserManageMenu(token, chatId) {
-  return sendMessageWithKeyboard(token, chatId, USER_MENU_TEXT, getUserManageKeyboard(), "HTML");
-}

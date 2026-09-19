@@ -32,20 +32,3 @@ export async function refundDailyQuota(env, sceneKey, dateStr) {
     "UPDATE daily_stats SET count = CASE WHEN count > 0 THEN count - 1 ELSE 0 END WHERE scene_key = ? AND date_str = ?"
   ).bind(sceneKey, dateStr).run();
 }
-
-/** 查询某场景某天已用条数 */
-export async function getTodayCount(env, sceneKey, dateStr) {
-  if (!env.DB) return 0;
-  const row = await env.DB.prepare(
-    "SELECT count FROM daily_stats WHERE scene_key = ? AND date_str = ?"
-  ).bind(sceneKey, dateStr).first();
-  return row ? Number(row.count) || 0 : 0;
-}
-
-/** 清零某场景某天的已用条数（管理员「重置今日已用」用） */
-export async function resetTodayCount(env, sceneKey, dateStr) {
-  if (!env.DB) return;
-  await env.DB.prepare(
-    "UPDATE daily_stats SET count = 0 WHERE scene_key = ? AND date_str = ?"
-  ).bind(sceneKey, dateStr).run();
-}

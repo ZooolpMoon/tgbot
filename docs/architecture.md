@@ -83,7 +83,7 @@ src/
 │   ├── text-extract.js      # 文档正文抽取（txt / docx / pdf）
 │   ├── history.js           # AI 上下文裁剪
 │   └── daily.js             # 定时任务：清理、日报、索引维护、到期通知
-├── games/                   # 游戏注册表 + 4 个游戏
+├── games/                   # 游戏注册表 + 6 个游戏
 ├── shop/                    # 商城：用户侧 / 管理侧 / 添加 / 编辑 / 订单动作 / 备注 / 通知 / 发放方式 / 背包
 └── utils/                   # html.js（转义）· random.js（加密随机）· layout.js（菜单排版与分页）
 
