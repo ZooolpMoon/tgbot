@@ -191,19 +191,56 @@ async function loadSession(env, chatId, userKey) {
   ).bind(String(chatId), String(userKey)).first();
 }
 
-async function saveSession(env, chatId, userKey, state) {
-  await env.DB.prepare(
+/**
+ * 建局：**只插入、不覆盖**。
+ * 并发双击「确认下注」时只有一个能插入成功，另一个据此把本金退回去——
+ * 否则会出现「扣了分但没有牌局」，而超时退款扫的是牌局表，那笔分就永远找不回来。
+ * @returns {Promise<boolean>} 是否成功建局
+ */
+async function insertSession(env, chatId, userKey, state) {
+  const res = await env.DB.prepare(
     `INSERT INTO ${TABLE} (chat_id, user_key, bet, player, dealer, deck, doubled, status, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'playing', CURRENT_TIMESTAMP)
-     ON CONFLICT(chat_id, user_key) DO UPDATE SET
-       bet = EXCLUDED.bet, player = EXCLUDED.player, dealer = EXCLUDED.dealer,
-       deck = EXCLUDED.deck, doubled = EXCLUDED.doubled, status = 'playing',
-       updated_at = CURRENT_TIMESTAMP`
+     ON CONFLICT(chat_id, user_key) DO NOTHING`
   ).bind(
     String(chatId), String(userKey), state.bet,
     JSON.stringify(state.player), JSON.stringify(state.dealer), JSON.stringify(state.deck),
     state.doubled ? 1 : 0
   ).run();
+  return Number(res?.meta?.changes) === 1;
+}
+
+/**
+ * 更新牌局：只更新「仍是 playing」的那一行。
+ * **绝不能写成 INSERT/upsert**：结算用的是原子 DELETE，如果一个慢请求在结算之后
+ * 才落库，就会把这一局「写活」，用户可以拿同一局反复结算。
+ * @returns {Promise<boolean>} false = 这局已经被结算掉了
+ */
+async function updateSession(env, chatId, userKey, state) {
+  const res = await env.DB.prepare(
+    `UPDATE ${TABLE}
+        SET bet = ?, player = ?, dealer = ?, deck = ?, doubled = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE chat_id = ? AND user_key = ? AND status = 'playing'`
+  ).bind(
+    state.bet, JSON.stringify(state.player), JSON.stringify(state.dealer),
+    JSON.stringify(state.deck), state.doubled ? 1 : 0,
+    String(chatId), String(userKey)
+  ).run();
+  return Number(res?.meta?.changes) === 1;
+}
+
+/**
+ * 原子抢「结算权」：删掉 playing 的那一行，只有 changes === 1 的请求有权发奖。
+ *
+ * 为什么必须这么做：Telegram 的回调会被连点、也会重推。没有这一层，
+ * 两个请求会各自读到同一局并各发一次奖 —— 而结算里还有一次最长 8 秒的
+ * AI 台词调用，窗口大到用户随便点两下就能撞上。
+ */
+async function claimSettlement(env, chatId, userKey) {
+  const res = await env.DB.prepare(
+    `DELETE FROM ${TABLE} WHERE chat_id = ? AND user_key = ? AND status = 'playing'`
+  ).bind(String(chatId), String(userKey)).run();
+  return Number(res?.meta?.changes) === 1;
 }
 
 async function dropSession(env, chatId, userKey) {
@@ -307,6 +344,13 @@ async function renderTable(token, chatId, messageId, state, balance) {
  * @param {string} [opts.toast] 覆盖回执文案
  */
 async function finishRound(token, env, { callbackId, chatId, userKey, messageId, state, revealDealer = true }) {
+  // 先抢结算权：连点「停牌」或 Telegram 重推回调时，只有第一次能继续往下发奖
+  const claimed = await claimSettlement(env, chatId, userKey);
+  if (!claimed) {
+    if (callbackId) return answerCallback(token, callbackId, "这局已经结算了", true);
+    return;
+  }
+
   if (callbackId) {
     await answerCallback(token, callbackId, revealDealer ? "庄家正在摊牌…" : "结算中…");
   }
@@ -333,8 +377,7 @@ async function finishRound(token, env, { callbackId, chatId, userKey, messageId,
     reason: settled.reason
   });
 
-  await dropSession(env, chatId, userKey);
-
+  // 会话已在 claimSettlement 里删掉，这里不用再删
   return editMessageText(
     token, chatId, messageId,
     resultText({ player: state.player, dealer: state.dealer, bet: state.bet, balance, settled, line }),
@@ -414,12 +457,26 @@ export const BlackjackGame = {
       doubled: false
     };
 
+    // 先把这一局落库：插入成功的那次请求才「拥有」它。
+    // 并发双击「确认下注」时另一方插不进去，据此把刚扣的本金退回去
+    // （否则就是「扣了分却没有牌局」，而超时退款扫的是牌局表，那笔分找不回来）。
+    const created = await insertSession(env, chatId, userKey, state);
+    if (!created) {
+      await refundPoint(env, userKey, bet, "21 点重复开局退款");
+      await answerCallback(token, callbackId, "你还有一局没打完", true);
+      const fresh = await loadSession(env, chatId, userKey);
+      const parsed = fresh ? parseSession(fresh) : null;
+      if (parsed) {
+        return renderTable(token, chatId, messageId, parsed, await getUserPoints(env, userKey));
+      }
+      return;
+    }
+
     // 首两张 21 点：不用等玩家操作，直接摊牌结算（庄家也是 Blackjack 就平局）
     if (isBlackjack(state.player)) {
       return finishRound(token, env, { callbackId, chatId, userKey, messageId, state });
     }
 
-    await saveSession(env, chatId, userKey, state);
     await answerCallback(token, callbackId, `已下注 ${bet}，牌已发好`);
     return renderTable(token, chatId, messageId, state, afterDeduct);
   },
@@ -437,7 +494,10 @@ export const BlackjackGame = {
       });
     }
 
-    await saveSession(env, chatId, userKey, state.session);
+    // 更新失败说明这一局已经被另一个请求结算掉了（连点），别再继续往下走
+    const saved = await updateSession(env, chatId, userKey, state.session);
+    if (!saved) return answerCallback(token, callbackId, "这局已经结算了", true);
+
     await answerCallback(token, callbackId, `要了一张，现在 ${handValue(state.session.player)} 点`);
     return renderTable(token, chatId, messageId, state.session, await getUserPoints(env, userKey));
   },

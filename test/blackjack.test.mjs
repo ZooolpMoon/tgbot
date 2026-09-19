@@ -355,6 +355,69 @@ test("结算之后旧按钮失效：提示没有进行中的牌局", { skip: !ha
   db.close();
 });
 
+// ==========================================
+// 并发 / 连点（结算必须先原子抢占，否则会重复发奖）
+// ==========================================
+
+test("连点：同一局「停牌」点两次只结算一次", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, USER, 1000);
+  const env = makeEnv(db);
+  // 玩家 18 打庄家 17，第一次必赢
+  seedSession(db, { bet: 50, player: ["10♠", "8♥"], dealer: ["9♣", "8♦"] });
+
+  await BlackjackGame.stand("T", env, "cb1", CHAT, USER, 7);
+  const afterFirst = await getUserPoints(env, USER);
+  assert.equal(afterFirst, 1050, "第一次正常结算");
+
+  // 连点的第二次：会话已经被抢走，不能再发一次奖
+  resetCalls();
+  await BlackjackGame.stand("T", env, "cb2", CHAT, USER, 7);
+  await BlackjackGame.hit("T", env, "cb3", CHAT, USER, 7);
+
+  assert.equal(await getUserPoints(env, USER), afterFirst, "第二次绝不能重复发奖");
+  assert.equal(db.count("points_log", "user_key = ?", USER), 1, "流水也只该有一条");
+  db.close();
+});
+
+test("并发抢结算权：会话被另一个请求删掉后，本请求不再发奖", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, USER, 1000);
+  const env = makeEnv(db);
+  seedSession(db, { bet: 50, player: ["10♠", "8♥"], dealer: ["9♣", "8♦"] });
+
+  // 模拟「另一个并发请求刚刚执行完原子抢占（DELETE ... WHERE status='playing'）」
+  db.exec("DELETE FROM blackjack_sessions WHERE status = 'playing'");
+  resetCalls();
+
+  await BlackjackGame.stand("T", env, "cb", CHAT, USER, 7);
+
+  assert.equal(await getUserPoints(env, USER), 950, "本金照旧扣着，但这一局不该再发奖");
+  assert.ok(answerTexts().some((t) => t.includes("没有进行中的牌局")), "要明确告诉用户这局已经没了");
+  db.close();
+});
+
+test("并发双击「确认下注」：插不进去的那一份本金必须退回", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, USER, 1000);
+  const env = makeEnv(db);
+
+  // 构造「两个请求同时读到没有牌局」的那一瞬间：
+  // 库里有一条**已过 30 分钟有效期**的会话 —— loadSession 看不见它（所以不会提前返回），
+  // 但主键还在，insertSession 必然冲突失败。
+  seedSession(db, { bet: 50, player: ["10♠", "7♥"], dealer: ["9♣", "8♦"] });
+  db.exec("UPDATE blackjack_sessions SET updated_at = datetime('now','-31 minutes')");
+  assert.equal(await getUserPoints(env, USER), 950, "seed 时已扣掉第一份本金");
+
+  resetCalls();
+  await BlackjackGame.start("T", env, "cb", CHAT, USER, 7, 100);
+
+  assert.equal(await getUserPoints(env, USER), 950, "第二份 100 必须退回来，不能扣了分却没有牌局");
+  const log = db.get("SELECT reason FROM points_log WHERE user_key = ? ORDER BY id DESC LIMIT 1", USER);
+  assert.match(String(log.reason), /重复开局退款/);
+  db.close();
+});
+
 test("牌局卡片：进行中不显示总点数，避免泄漏暗牌", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
   const db = createTestDB();
   seedUser(db, USER, 1000);
