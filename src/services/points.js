@@ -51,11 +51,14 @@ export async function tryDeductPoints(env, userKey, amount) {
   return res && Number.isFinite(Number(res.points)) ? Number(res.points) : null;
 }
 
-/** 退款 / 补分（会写流水，reason 用于对账） */
+/**
+ * 退款 / 补分（会写流水，reason 用于对账）。
+ * @returns {Promise<number|null>} 退款后的余额；没退（未绑定 DB / 用户不存在 / 金额 ≤ 0）返回 null
+ */
 export async function refundPoint(env, userKey, amount, reason) {
-  if (!env.DB || !userKey) return;
+  if (!env.DB || !userKey) return null;
   const safeAmount = Math.max(0, Math.floor(Number(amount) || 0));
-  if (safeAmount <= 0) return;
+  if (safeAmount <= 0) return null;
 
   const result = await env.DB.prepare(
     "UPDATE users SET points = points + ?, updated_at = CURRENT_TIMESTAMP WHERE user_key = ? RETURNING points"
@@ -63,7 +66,9 @@ export async function refundPoint(env, userKey, amount, reason) {
 
   if (result && Number.isFinite(Number(result.points))) {
     await logPointChange(env, userKey, safeAmount, Number(result.points), reason);
+    return Number(result.points);
   }
+  return null;
 }
 
 /**

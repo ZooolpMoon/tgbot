@@ -469,6 +469,22 @@ CREATE TABLE IF NOT EXISTS user_group_tags (
   PRIMARY KEY (chat_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_user_group_tags_order ON user_group_tags(order_id);
+
+-- 21 点牌局（v3.5.0）：多轮牌局状态，一个会话里一人一局
+-- deck 存「剩余牌堆」：牌局是跨多次点击进行的，把牌堆落库才能保证每局独立洗牌、
+-- 中途不会换牌，同时也让测试可以塞固定牌堆做确定性断言
+CREATE TABLE IF NOT EXISTS blackjack_sessions (
+  chat_id    TEXT    NOT NULL,               -- 会话（私聊 = 用户 ID，群聊 = 群 ID）
+  user_key   TEXT    NOT NULL,               -- 牌局归属，群里多人各玩各的靠它区分
+  bet        INTEGER NOT NULL,               -- 本局下注（双倍后已翻倍）
+  player     TEXT    NOT NULL,               -- 玩家手牌，JSON 数组
+  dealer     TEXT    NOT NULL,               -- 庄家手牌，JSON 数组（第 2 张是暗牌）
+  deck       TEXT    NOT NULL,               -- 剩余牌堆，JSON 数组
+  doubled    INTEGER NOT NULL DEFAULT 0,     -- 是否已用掉双倍下注
+  status     TEXT    NOT NULL DEFAULT 'playing',  -- playing / done
+  updated_at TEXT    DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (chat_id, user_key)
+);
 `;
 
 let schemaReady = false;
@@ -482,7 +498,8 @@ let schemaPromise = null;
 // v2.9.0 移除「每日任务」后不再建 daily_task_defs / task_edit_sessions / daily_tasks
 // （老库里这三张表会保留但不再使用，需要清理可手动 DROP）
 // v3.3.0：商城「背包」（user_bag_items）+ 商品发放方式 bag + 背包物品用法 use_type/use_value
-export const SCHEMA_VERSION = 18;
+// v3.5.0：21 点牌局（blackjack_sessions）
+export const SCHEMA_VERSION = 19;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 

@@ -14,6 +14,7 @@ import { DiceGame } from "./dice.js";
 import { SlotsGame } from "./slots.js";
 import { CoinGame } from "./coin.js";
 import { WheelGame } from "./wheel.js";
+import { BlackjackGame } from "./blackjack.js";
 import { logWarn, logError } from "../core/logger.js";
 
 /** 游戏大厅键盘：2×2 网格 + 独立关闭按钮 */
@@ -24,7 +25,8 @@ export function getGameCenterKeyboard() {
         { text: "🎲 骰子猜大小", callback_data: "game_dice_main" },
         { text: "🎰 欢乐老虎机", callback_data: "game_slots_main" },
         { text: "🪙 抛硬币", callback_data: "game_coin_main" },
-        { text: "🎡 幸运转盘", callback_data: "game_wheel_main" }
+        { text: "🎡 幸运转盘", callback_data: "game_wheel_main" },
+        { text: "🃏 21 点（AI 庄家）", callback_data: "game_bj_main" }
       ]),
       [{ text: "❌ 关闭", callback_data: "game_close" }]
     ]
@@ -40,7 +42,8 @@ export async function renderGameCenter(token, chatId, messageId = null) {
     `🎲 <b>骰子猜大小</b>：下注猜大小，1:2 赔率\n` +
     `🎰 <b>欢乐老虎机</b>：最高赢取 50 倍大奖\n` +
     `🪙 <b>抛硬币</b>：猜正反面，赢了 2 倍\n` +
-    `🎡 <b>幸运转盘</b>：转盘抽倍率，最高 50 倍`;
+    `🎡 <b>幸运转盘</b>：转盘抽倍率，最高 50 倍\n` +
+    `🃏 <b>21 点</b>：跟 AI 庄家对赌，要牌 / 停牌 / 双倍，Blackjack 赔 3:2`;
 
   const keyboard = getGameCenterKeyboard();
 
@@ -65,6 +68,11 @@ const GAME_REGISTRY = {
   wheel: {
     renderMain: (t, e, c, u, m) => WheelGame.renderMain(t, e, c, u, m),
     onBetConfirm: (t, e, cbId, c, u, m, amt, sceneKey) => WheelGame.play(t, e, cbId, c, u, m, amt, sceneKey)
+  },
+  // 21 点是多轮牌局：onBetConfirm 只负责开局，后续由 game_bj_* 回调驱动
+  bj: {
+    renderMain: (t, e, c, u, m) => BlackjackGame.renderMain(t, e, c, u, m),
+    onBetConfirm: (t, e, cbId, c, u, m, amt) => BlackjackGame.start(t, e, cbId, c, u, m, amt)
   }
 };
 
@@ -153,6 +161,12 @@ export async function handleGameCallbacks(token, env, callback, chatId, userKey,
       if (Number.isFinite(betAmount) && betAmount > 0) {
         return WheelGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount, sceneKey);
       }
+    }
+
+    // 21 点的牌局内操作（要牌 / 停牌 / 双倍），状态在 blackjack_sessions 里
+    if (data === "game_bj_hit" || data === "game_bj_stand" || data === "game_bj_double") {
+      const action = data.slice("game_bj_".length);
+      return BlackjackGame[action](token, env, callback.id, chatId, userKey, messageId);
     }
 
     logWarn("未匹配的 game 回调:", data);

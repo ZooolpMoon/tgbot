@@ -18,6 +18,7 @@ import { logError, logInfo } from "../core/logger.js";
 import { expirePunishments, ACTIONS, formatDuration } from "./guard.js";
 import { reindexKnowledge } from "./knowledge.js";
 import { ensureWebhook } from "./webhook.js";
+import { refundPoint } from "./points.js";
 import { deleteMessage } from "../telegram/api.js";
 
 /**
@@ -106,6 +107,30 @@ export async function cleanupStaleData(env) {
     "UPDATE redeem_codes SET enabled = 0 WHERE enabled = 1 AND expires_at IS NOT NULL AND expires_at < ?"
   ).bind(today).run();
 
+  // 21 点牌局超时：**先退还本金再删记录** —— 本金是开局就扣掉的，
+  // 用户没点完（或干脆忘了）不能算他输，否则等于机器人吞分。
+  let blackjackRefunded = 0;
+  let blackjackFailed = 0;
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT user_key, bet FROM blackjack_sessions
+        WHERE status = 'playing' AND updated_at <= datetime('now', '-30 minutes')`
+    ).all();
+    for (const row of results || []) {
+      const bet = Math.floor(Number(row.bet) || 0);
+      if (bet < 1) continue;
+      const refunded = await refundPoint(env, row.user_key, bet, "21 点牌局超时退款");
+      if (refunded === null) blackjackFailed++;
+      else blackjackRefunded++;
+    }
+  } catch (e) {
+    logError("21 点超时退款失败：", e);
+  }
+  const blackjackSessions = await env.DB.prepare(
+    `DELETE FROM blackjack_sessions
+      WHERE updated_at <= datetime('now', '-30 minutes')`
+  ).run();
+
   return {
     adminSessions: adminSessions.meta.changes,
     broadcastDrafts: broadcastDrafts.meta.changes,
@@ -116,6 +141,9 @@ export async function cleanupStaleData(env) {
     guardSessions: guardSessions.meta.changes,
     adminManageSessions: adminManageSessions.meta.changes,
     tagSessions: tagSessions.meta.changes,
+    blackjackSessions: blackjackSessions.meta.changes,
+    blackjackRefunded,
+    blackjackFailed,
     expiredPunishments: expiredList.length,
     stalePunishments: stalePunishments.meta.changes,
     staleAppeals: staleAppeals.meta.changes,

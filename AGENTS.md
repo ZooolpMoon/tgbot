@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 283 个用例）
+2. `npm test` 通过（当前 313 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -68,7 +68,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - `src/handlers/`：消息与回调入口
   - `src/admin/`：管理面板 UI
   - `src/shop/`：商城（`categories.js` 统一定义商品分类映射）
-  - `src/games/`：小游戏（注册表 + 4 个游戏）
+  - `src/games/`：小游戏（注册表 + 5 个游戏；`blackjack.js` 是多轮牌局，其余都是「点一下即开奖」）
   - `src/utils/`：通用工具（`html.js` 转义、`random.js` 加密随机、`layout.js` 菜单排版）
 - **知识库（RAG）**：
   - 作用域用 `scope_key`：`global` = 全局库（私聊里管理），`group:<群ID>` = 群库（群里管理，见 `core/context.js` 的 `buildGroupScopeKey`）。**群库不要用成员级 sceneKey**，否则别的群成员检索不到
@@ -127,6 +127,12 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 会随数据量增长的菜单（用户列表、任务列表、商品 / 订单列表）**必须分页**，并把键盘抽成纯函数（如 `getUserListKeyboard`），方便 `test/layout.test.mjs` 直接校验排版。
 - **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。
 - **新增引导式会话表必须登记**：新表要 (1) 读取时带 `updated_at >= datetime('now','-30 minutes')`，(2) 加进 `services/sessions.js` 的 `GUIDE_SESSION_TABLES`（否则会和别的流程抢消息），(3) 在 `services/daily.js` 里兜底清理。参考 `group_tag_sessions`。
+- **多轮牌局状态（`blackjack_sessions`，v3.5.0）**：21 点是唯一「跨多次点击」的游戏，状态落库。新增同类玩法照这套来：
+  - **余牌堆也要落库**（`deck`）：否则每次点击都重新洗牌 = 换牌。顺带让测试能塞固定牌堆做确定性断言（`BlackjackGame.start(..., deckOverride)`）
+  - 读取带 30 分钟有效期；定时任务清理时**先退还本金再删记录**——本金是开局就扣的，用户没点完不能算他输
+  - **会再次扣分的操作必须原子**（双倍用 `WHERE doubled = 0`），并给被拦下的那一次 `refundPoint`，否则并发点击会重复扣本金
+  - **判定走固定规则**（`dealerShouldHit`：<17 要牌、≥17 停），AI 只出结算台词（`blackjack-ai.js`，每局 1 次调用 + 失败回退内置台词）。**别让模型决定要不要牌**：它可能 20 点还要牌，用户只会觉得机器人在作弊
+  - 它不是引导式会话（不吃文本），所以**不进** `GUIDE_SESSION_TABLES`，但必须在 `services/daily.js` 里清理
 - **商城的发放方式与背包（v3.3.0）**：`shop_items.delivery` 决定下单后谁来交付——`manual`（默认，管理员确认发放）、`group_tag`（自动发放群组标签）、`bag`（自动进「🎒 我的背包」，用户自己用）。
   - 加新的自动发放类型时，在 `shop/index.js` 的 `handleShopBuy` 里分支：订单直接写 `status='done'`、**不要**通知管理员发货，然后把东西交付出去（进背包 / 进引导流程）；这类流程都必须「可重新进入」——用户已经付过钱，会话过期不能变成死路（在「我的订单」里给入口，参考 `shop/tags.js` 与 `getMyOrdersKeyboard`）。
   - **发放方式与用法的读写统一走 `shop/delivery.js`**（`deliveryOf` / `parseDelivery` / `useTypeOf` / `parseUseType`…），不要在别处再写一份映射。
