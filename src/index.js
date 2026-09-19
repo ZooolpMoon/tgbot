@@ -28,6 +28,10 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
       try {
+        // 必须先建表：Web 后台读的 web_login_tokens 是新表，
+        // 而 POST 分支里的 ensureSchema 只在收到 Telegram 更新时才跑。
+        // 少了这一句，「部署完立刻打开 /admin」就会 500（有 isolate 缓存，不会每次都执行）
+        await ensureSchema(env);
         return await handleWebAdmin(request, env);
       } catch (e) {
         logError("Web 后台异常：", e);
