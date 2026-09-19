@@ -15,9 +15,11 @@ import { ADMIN_CALLBACK } from "../config/constants.js";
 import { grid, compactLabel, clampPage, totalPagesOf, pageOffset, pagerRow, LAYOUT } from "../utils/layout.js";
 import {
   GLOBAL_SCOPE, FEATURES, getFeatureMap, getExplicitSettings,
-  getFeatureSources, setFeature, clearFeatureOverrides
+  getFeatureSources, setFeature, clearFeatureOverrides,
+  groupKeyOfScene
 } from "../services/features.js";
 import { describeSource } from "../services/config.js";
+import { buildGroupScopeKey } from "../core/context.js";
 import { logAdminAction } from "../services/admin-log.js";
 
 const SCENES_PER_PAGE = 8;
@@ -58,35 +60,55 @@ export async function renderFeatureHome(token, env, chatId, messageId) {
 }
 
 // ---------- 场景列表（群聊 / 私聊）----------
-/** 场景选择列表（分页，两列网格） */
+/**
+ * 场景选择列表（分页，两列网格）。
+ *
+ * 群聊**按群聚合**（v3.9.0）：原先每个群成员一条记录，同一个群会重复出现好几遍，
+ * 而且点进去写的是成员级 scene_key —— 与 /welcome 这类群级功能各写各的 key，
+ * 结果就是「功能开关面板点了没反应」。现在一个群一条，写群级键 `group:<群ID>`。
+ */
 async function renderScenePicker(token, env, chatId, messageId, kind, page = 1) {
   const isGroup = kind === "group";
-  const where = isGroup
-    ? "WHERE s.chat_type IN ('group','supergroup')"
-    : "WHERE s.chat_type = 'private'";
 
-  const countRes = await env.DB.prepare(`SELECT COUNT(*) AS total FROM user_scenes s ${where}`).first();
+  const countRes = isGroup
+    ? await env.DB.prepare(
+      "SELECT COUNT(DISTINCT chat_id) AS total FROM user_scenes WHERE chat_type IN ('group','supergroup')"
+    ).first()
+    : await env.DB.prepare(
+      "SELECT COUNT(*) AS total FROM user_scenes WHERE chat_type = 'private'"
+    ).first();
   const total = Number(countRes?.total) || 0;
   const totalPages = totalPagesOf(total, SCENES_PER_PAGE);
   // 页码越界时收敛回最后一页，否则会查出空列表且没有返回路径
   const safePage = clampPage(page, totalPages);
 
-  const { results } = await env.DB.prepare(`
-    SELECT s.id, s.scene_key, s.chat_id, s.user_id, s.first_name, s.username,
-           COALESCE(u.points, 0) AS points
-    FROM user_scenes s
-    LEFT JOIN users u ON u.user_key = s.user_key
-    ${where}
-    ORDER BY s.updated_at DESC
-    LIMIT ? OFFSET ?
-  `).bind(SCENES_PER_PAGE, pageOffset(safePage, SCENES_PER_PAGE)).all();
+  const { results } = isGroup
+    ? await env.DB.prepare(`
+        SELECT s.chat_id AS chat_id, MIN(s.id) AS id, MAX(s.updated_at) AS updated_at
+        FROM user_scenes s
+        WHERE s.chat_type IN ('group','supergroup')
+        GROUP BY s.chat_id
+        ORDER BY MAX(s.updated_at) DESC
+        LIMIT ? OFFSET ?
+      `).bind(SCENES_PER_PAGE, pageOffset(safePage, SCENES_PER_PAGE)).all()
+    : await env.DB.prepare(`
+        SELECT s.id, s.scene_key, s.chat_id, s.user_id, s.first_name, s.username,
+               COALESCE(u.points, 0) AS points
+        FROM user_scenes s
+        LEFT JOIN users u ON u.user_key = s.user_key
+        WHERE s.chat_type = 'private'
+        ORDER BY s.updated_at DESC
+        LIMIT ? OFFSET ?
+      `).bind(SCENES_PER_PAGE, pageOffset(safePage, SCENES_PER_PAGE)).all();
 
   const rows = results || [];
 
   let text = `${isGroup ? "👥 <b>群聊场景</b>" : "💬 <b>私聊场景</b>"}\n`;
-  text += `页码：<b>${safePage} / ${totalPages}</b>（共 ${total} 个）\n`;
+  text += `页码：<b>${safePage} / ${totalPages}</b>（共 ${total} 个${isGroup ? "群" : "用户"}）\n`;
   text += `${LAYOUT.DIVIDER}\n`;
-  text += `点一个场景进去设置它的开关：\n\n`;
+  text += isGroup
+    ? `点一个群进去设置它的开关（<b>按群生效</b>，本群所有成员都受影响）：\n\n`
+    : `点一个场景进去设置它的开关：\n\n`;
 
   const inline_keyboard = [];
 
@@ -96,9 +118,10 @@ async function renderScenePicker(token, env, chatId, messageId, kind, page = 1) 
     // 两列网格：8 个场景 = 4 行，加上翻页与返回也不会超过 8 行
     const buttons = rows.map((row) => {
       const name = isGroup ? `群 ${row.chat_id}` : (row.first_name || row.user_id || "未命名");
+      const scopeToken = isGroup ? `gc${row.chat_id}` : `s${row.id}`;
       return {
         text: `${isGroup ? "🏠" : "👤"} ${short(name)}`,
-        callback_data: `${ADMIN_CALLBACK.FEATURES_SCENE_PREFIX}${row.id}`
+        callback_data: `${ADMIN_CALLBACK.FEATURES_SCENE_PREFIX}${scopeToken}`
       };
     });
     inline_keyboard.push(...grid(buttons));
@@ -114,27 +137,35 @@ async function renderScenePicker(token, env, chatId, messageId, kind, page = 1) 
 }
 
 // ---------- 某个作用域的开关列表 ----------
-/** 单个作用域（全局或某个场景）的开关面板 */
-async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title, rowId = null }) {
+/**
+ * 单个作用域（全局 / 某个群 / 某个场景）的开关面板。
+ * scopeToken 会原样回填到按钮回调里，所以它必须与 renderFeatureScope 的解析规则一致。
+ */
+async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title, scopeToken }) {
   const effective = await getFeatureMap(env, scopeKey);
-  const explicit = await getExplicitSettings(env, scopeKey);
   const sources = await getFeatureSources(env, scopeKey);
   const isGlobal = scopeKey === GLOBAL_SCOPE;
+  // `group:<群ID>` 这种纯群键 vs `group:<群ID>:user:<成员ID>` 这种成员场景
+  const isGroupScope = !isGlobal && /^group:[^:]+$/.test(String(scopeKey));
+  const sourceOpts = isGroupScope
+    ? { groupKey: scopeKey }
+    : { sceneKey: scopeKey, groupKey: groupKeyOfScene(scopeKey) };
 
   let text = `⚙️ <b>${title}</b>\n`;
   text += `-------------------------\n`;
   text += isGlobal
     ? `这是<b>全局默认值</b>，场景没单独设置时就用它。\n\n`
-    : `只影响这个场景；未设置的项目<b>跟随全局</b>。\n\n`;
+    : (isGroupScope
+      ? `只影响<b>这个群</b>；未设置的项目<b>跟随全局</b>。\n\n`
+      : `只影响这个场景；未设置的项目<b>跟随全局</b>。\n\n`);
 
   for (const f of FEATURES) {
     const on = effective[f.key] !== false;
     // 来源统一用配置模型描述：本场景 / 本群 / 全局 / 内置默认
-    const tag = `（${describeSource(sources[f.key] || null, { sceneKey: scopeKey })}）`;
+    const tag = `（${describeSource(sources[f.key] || null, sourceOpts)}）`;
     text += `${on ? "✅" : "🚫"} <b>${f.label}</b>${tag}\n`;
   }
 
-  const scopeToken = isGlobal ? "g" : `s${rowId}`;
   const buttons = FEATURES.map((f) => ({
     text: `${effective[f.key] === false ? "🚫" : "✅"} ${f.label}`,
     callback_data: `${ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX}${scopeToken}_${f.key}`
@@ -144,8 +175,11 @@ async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title
   if (isGlobal) {
     inline_keyboard.push([{ text: "🔙 返回功能开关", callback_data: ADMIN_CALLBACK.FEATURES_HOME }]);
   } else {
-    inline_keyboard.push([{ text: "🔄 全部恢复跟随全局", callback_data: `${ADMIN_CALLBACK.FEATURES_RESET_PREFIX}${rowId}` }]);
-    inline_keyboard.push([{ text: "🔙 返回场景菜单", callback_data: `admin_manage_user_${rowId}` }]);
+    inline_keyboard.push([{ text: "🔄 全部恢复跟随全局", callback_data: `${ADMIN_CALLBACK.FEATURES_RESET_PREFIX}${scopeToken}` }]);
+    inline_keyboard.push([isGroupScope
+      ? { text: "🔙 返回群列表", callback_data: `${ADMIN_CALLBACK.FEATURES_GROUP_PREFIX}1` }
+      : { text: "🔙 返回场景菜单", callback_data: `admin_manage_user_${String(scopeToken).replace(/^s/, "")}` }
+    ]);
   }
 
   return editMessageText(token, chatId, messageId, text, { inline_keyboard }, "HTML");
@@ -154,24 +188,40 @@ async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title
 // ---------- 对外入口 ----------
 /**
  * 统一的开关面板入口。
- * scopeToken 约定：g = 全局；gl<页码> = 群聊场景列表；pl<页码> = 私聊场景列表；s<行ID> = 某个场景。
+ * scopeToken 约定：g = 全局；gl<页码> = 群聊列表；pl<页码> = 私聊列表；
+ *                  gc<群ID> = 某个群（群级）；s<行ID> = 某个成员场景。
  */
 export async function renderFeatureScope(token, env, chatId, messageId, scopeToken) {
   if (!env.DB) return editMessageText(token, chatId, messageId, "❌ 未绑定数据库。");
 
-  if (scopeToken.startsWith("gl")) {
-    return renderScenePicker(token, env, chatId, messageId, "group", Number.parseInt(scopeToken.slice(2), 10) || 1);
+  const scope = String(scopeToken ?? "");
+
+  if (scope.startsWith("gl")) {
+    return renderScenePicker(token, env, chatId, messageId, "group", Number.parseInt(scope.slice(2), 10) || 1);
   }
-  if (scopeToken.startsWith("pl")) {
-    return renderScenePicker(token, env, chatId, messageId, "private", Number.parseInt(scopeToken.slice(2), 10) || 1);
+  if (scope.startsWith("pl")) {
+    return renderScenePicker(token, env, chatId, messageId, "private", Number.parseInt(scope.slice(2), 10) || 1);
   }
-  if (scopeToken === "g") {
+  if (scope === "g") {
     return renderSwitchMenu(token, env, chatId, messageId, {
-      scopeKey: GLOBAL_SCOPE, title: "🌍 全局功能开关"
+      scopeKey: GLOBAL_SCOPE, title: "🌍 全局功能开关", scopeToken: "g"
     });
   }
 
-  const rowId = Number.parseInt(String(scopeToken).replace(/^s/, ""), 10);
+  // 群级作用域：写 `group:<群ID>`，与 /welcome 等群级功能共用同一个键
+  if (scope.startsWith("gc")) {
+    const groupChatId = scope.slice(2);
+    if (!groupChatId) {
+      return editMessageText(token, chatId, messageId, "⚠️ 参数无效。");
+    }
+    return renderSwitchMenu(token, env, chatId, messageId, {
+      scopeKey: buildGroupScopeKey(groupChatId),
+      title: `👥 群 <code>${escapeHtml(groupChatId)}</code>`,
+      scopeToken: scope
+    });
+  }
+
+  const rowId = Number.parseInt(scope.replace(/^s/, ""), 10);
   if (!Number.isInteger(rowId)) {
     return editMessageText(token, chatId, messageId, "⚠️ 参数无效。");
   }
@@ -190,12 +240,15 @@ export async function renderFeatureScope(token, env, chatId, messageId, scopeTok
     : `💬 ${escapeHtml(scene.first_name || scene.user_id || scene.scene_key)}`;
 
   return renderSwitchMenu(token, env, chatId, messageId, {
-    scopeKey: scene.scene_key, title: `${title} · 功能开关`, rowId
+    scopeKey: scene.scene_key, title: `${title} · 功能开关`, scopeToken: scope
   });
 }
 
 // ---------- 切换开关 ----------
-/** 点击开关按钮：当前关闭就打开，当前开启就关闭（写场景级覆盖） */
+/**
+ * 点击开关按钮：当前关闭就打开，当前开启就关闭（写该作用域的显式设置）。
+ * scopeToken 与 renderFeatureScope 保持一致：g / gc<群ID> / s<行ID>。
+ */
 export async function handleFeatureToggle({ env, token, callback, chatId, msgId, data, adminId = null }) {
   const rest = String(data).replace(ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX, "");
   const sep = rest.indexOf("_");
@@ -203,12 +256,18 @@ export async function handleFeatureToggle({ env, token, callback, chatId, msgId,
   const feature = sep === -1 ? "" : rest.slice(sep + 1);
 
   let scopeKey;
-  let rowId = null;
 
   if (scopeToken === "g") {
     scopeKey = GLOBAL_SCOPE;
+  } else if (scopeToken.startsWith("gc")) {
+    const groupChatId = scopeToken.slice(2);
+    if (!groupChatId) {
+      await answerCallback(token, callback.id, "⚠️ 参数无效", true);
+      return;
+    }
+    scopeKey = buildGroupScopeKey(groupChatId);
   } else {
-    rowId = Number.parseInt(String(scopeToken).replace(/^s/, ""), 10);
+    const rowId = Number.parseInt(String(scopeToken).replace(/^s/, ""), 10);
     if (!Number.isInteger(rowId)) {
       await answerCallback(token, callback.id, "⚠️ 参数无效", true);
       return;
@@ -236,26 +295,40 @@ export async function handleFeatureToggle({ env, token, callback, chatId, msgId,
   });
 
   await answerCallback(token, callback.id, `${next ? "✅ 已开启" : "🚫 已关闭"}`);
-  await renderFeatureScope(token, env, chatId, msgId, scopeToken === "g" ? "g" : `s${rowId}`);
+  await renderFeatureScope(token, env, chatId, msgId, scopeToken);
 }
 
 // ---------- 恢复跟随全局 ----------
-/** 清掉该场景的全部覆盖，重新跟随全局设置 */
+/** 清掉该作用域的全部覆盖，重新跟随全局设置 */
 export async function handleFeatureReset({ env, token, callback, chatId, msgId, data, adminId = null }) {
-  const rowId = Number.parseInt(String(data).replace(ADMIN_CALLBACK.FEATURES_RESET_PREFIX, ""), 10);
-  if (!Number.isInteger(rowId)) return;
+  const scopeToken = String(data).replace(ADMIN_CALLBACK.FEATURES_RESET_PREFIX, "");
 
-  const scene = await env.DB.prepare("SELECT scene_key FROM user_scenes WHERE id = ?").bind(rowId).first();
-  if (!scene) {
-    await answerCallback(token, callback.id, "❌ 场景不存在", true);
-    return;
+  let scopeKey;
+  if (scopeToken === "g") {
+    scopeKey = GLOBAL_SCOPE;
+  } else if (scopeToken.startsWith("gc")) {
+    const groupChatId = scopeToken.slice(2);
+    if (!groupChatId) {
+      await answerCallback(token, callback.id, "⚠️ 参数无效", true);
+      return;
+    }
+    scopeKey = buildGroupScopeKey(groupChatId);
+  } else {
+    const rowId = Number.parseInt(String(scopeToken).replace(/^s/, ""), 10);
+    if (!Number.isInteger(rowId)) return;
+    const scene = await env.DB.prepare("SELECT scene_key FROM user_scenes WHERE id = ?").bind(rowId).first();
+    if (!scene) {
+      await answerCallback(token, callback.id, "❌ 场景不存在", true);
+      return;
+    }
+    scopeKey = scene.scene_key;
   }
 
-  const cleared = await clearFeatureOverrides(env, scene.scene_key);
+  const cleared = await clearFeatureOverrides(env, scopeKey);
   await logAdminAction(env, {
-    adminId, chatId, action: "feature_reset", detail: `${scene.scene_key}（清除 ${cleared} 项）`
+    adminId, chatId, action: "feature_reset", detail: `${scopeKey}（清除 ${cleared} 项）`
   });
 
   await answerCallback(token, callback.id, "🔄 已恢复跟随全局");
-  await renderFeatureScope(token, env, chatId, msgId, `s${rowId}`);
+  await renderFeatureScope(token, env, chatId, msgId, scopeToken);
 }

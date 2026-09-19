@@ -45,7 +45,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 440 个用例）
+2. `npm test` 通过（当前 448 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -143,6 +143,14 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - **加功能开关**：在 `src/services/features.js` 的 `FEATURES` 里加一项即可。开关是**三级**的（全局 → 群聊场景 / 私聊场景覆盖），入口在 `src/admin/features.js`；新增开关不用改管理端代码。
   - **会主动打扰群成员的功能要写 `defaultEnabled: false`**（v3.9.0）：开关默认是「开」，但入群欢迎这类功能一升级就会往所有群发消息、限制新成员发言，必须由管理员显式打开。默认值在 `getFeatureMap` 里由 `f.defaultEnabled !== false` 决定
   - 群级功能要在**群作用域**上判断（`isFeatureEnabled(env, buildGroupScopeKey(chatId), key)`），别用成员级 sceneKey —— 否则每个成员一份设置，管理员关了自己那份别人照样触发
+- **群级功能必须写群级键（v3.9.1 教训）**：功能开关的群聊层原先按**成员**存（`group:<群ID>:user:<成员ID>`），
+  而入群欢迎写的是群级（`group:<群ID>`）—— 同一个开关两个键，于是「功能开关面板点了没反应、/welcome 也看不到」。
+  - 现在 `services/features.js` 的作用域链会把群成员场景展开成「**成员 → 本群 → 全局**」（`groupKeyOfScene`），
+    面板的群列表也**按群聚合**（同一个群不再按成员重复出现）。成员级设置仍然优先，历史数据不受影响
+  - 新增群级功能一律用 `buildGroupScopeKey(chatId)` 读写；别自己拼 `group:` 前缀
+  - **回调里不要用 `parseInt` 解析场景 token**：面板的 scopeToken 有 `s<行ID>`（成员场景）与 `gc<群ID>`（群级）两种形态，
+    `parseInt("gc-100123")` 会得到 `NaN`，点进去只会看到「参数无效」。toggle / reset / render 三处要用同一套解析
+  - 改功能开关的面板或作用域链，请跑 `test/features.test.mjs`（含「走真实回调入口打开群面板」与「与 /welcome 同一个键」两条守卫）
 - **菜单排版**：统一用 `src/utils/layout.js`（`grid` / `compactLabel` / `clampPage` / `pagerRow` / `validateKeyboard`），不要再各写一份 `grid()`。约定：单行 ≤ 2 个按钮、整个菜单 ≤ 8 行、按钮文案 ≤ 32 字、`callback_data` ≤ 64 字节。
   - 会随数据量增长的菜单（用户列表、任务列表、商品 / 订单列表）**必须分页**，并把键盘抽成纯函数（如 `getUserListKeyboard`），方便 `test/layout.test.mjs` 直接校验排版。
 - **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts` / `welcome_sessions` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。

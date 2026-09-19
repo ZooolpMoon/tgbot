@@ -789,9 +789,12 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       await answerCallback(token, callback.id, "私聊场景");
     }
     else if (data.startsWith(ADMIN_CALLBACK.FEATURES_SCENE_PREFIX)) {
-      const rowId = parseInt(data.replace(ADMIN_CALLBACK.FEATURES_SCENE_PREFIX, ""), 10);
-      await renderFeatureScope(token, env, chatId, msgId, `s${rowId}`);
-      await answerCallback(token, callback.id, `场景 #${rowId} 功能开关`);
+      // ⚠️ 这里**不能** parseInt：scopeToken 有两种形态 ——
+      //   `s<行ID>`（私聊/成员场景）与 `gc<群ID>`（群级，ID 是负数且带前缀）。
+      // parseInt 会把 gc-100123 变成 NaN，点进去只会得到「参数无效」。
+      const scopeToken = data.replace(ADMIN_CALLBACK.FEATURES_SCENE_PREFIX, "");
+      await renderFeatureScope(token, env, chatId, msgId, scopeToken);
+      await answerCallback(token, callback.id, scopeToken.startsWith("gc") ? "本群功能开关" : "场景功能开关");
     }
     else if (data === ADMIN_CALLBACK.FEATURES_GLOBAL) {
       await renderFeatureScope(token, env, chatId, msgId, "g");

@@ -47,6 +47,23 @@ export function featureLabel(key) {
   return FEATURES.find((f) => f.key === key)?.label || key;
 }
 
+/**
+ * 从「群成员场景键」里取出**群级键**（v3.9.0）。
+ *
+ * sceneKey 形如 `group:<群ID>:user:<用户ID>`，群级键是 `group:<群ID>`。
+ * 为什么需要它：入群欢迎这类功能天然属于**整个群**（配置也存在群级），
+ * 而群成员的 sceneKey 是成员级 —— 两边各写各的 key 就会出现
+ * 「功能开关面板点了没反应 / 两个面板显示不一致」。
+ * 有了群级层，链变成「成员 → 本群 → 全局」：
+ *   • 面板与 /welcome 写的是同一个群级键 → 永远同步
+ *   • 成员级设置仍然优先，不会破坏历史数据
+ * @returns {string|null} 不在群成员场景里时返回 null
+ */
+export function groupKeyOfScene(sceneKey) {
+  const matched = /^(group:[^:]+):user:/.exec(String(sceneKey || ""));
+  return matched ? matched[1] : null;
+}
+
 /** 某个作用域里显式设置过的开关（不含继承） */
 export async function getExplicitSettings(env, scopeKey) {
   const map = {};
@@ -85,8 +102,12 @@ export async function getFeatureMap(env, sceneKey = null) {
   for (const f of FEATURES) map[f.key] = f.defaultEnabled !== false;
   if (!env.DB) return map;
 
-  // 统一走配置模型：场景 → 全局（缺少哪层就用下一层）
-  const settings = await loadScopedSettings(env, buildScopeChain({ sceneKey }), PREFIX);
+  // 群成员场景会展开成「成员 → 本群 → 全局」三层（见 groupKeyOfScene）。
+  const settings = await loadScopedSettings(
+    env,
+    buildScopeChain({ sceneKey, groupKey: groupKeyOfScene(sceneKey) }),
+    PREFIX
+  );
   for (const [key, item] of settings) {
     if (isFeatureKey(key)) map[key] = item.value !== "off";
   }
@@ -96,7 +117,11 @@ export async function getFeatureMap(env, sceneKey = null) {
 
 /** 每个开关当前生效值来自哪一层（面板显示「来源」用） */
 export async function getFeatureSources(env, sceneKey = null) {
-  const settings = await loadScopedSettings(env, buildScopeChain({ sceneKey }), PREFIX);
+  const settings = await loadScopedSettings(
+    env,
+    buildScopeChain({ sceneKey, groupKey: groupKeyOfScene(sceneKey) }),
+    PREFIX
+  );
   const sources = {};
   for (const [key, item] of settings) sources[key] = item.scope;
   return sources;
