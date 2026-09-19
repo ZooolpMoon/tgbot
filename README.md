@@ -4,7 +4,7 @@
 
 全部跑在 **Cloudflare Workers** 上——不需要服务器、不需要常驻进程、不需要数据库运维，数据保存在你自己的 Cloudflare 账号里。
 
-> 当前版本 **v3.9.1** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
+> 当前版本 **v3.10.0** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
 
 ---
 
@@ -53,6 +53,12 @@
 | 👑 多管理员与角色 | 拥有者可授权「🛡️ 管理员 / ⚔️ 执法员」，权限按能力细分 | 后台 → 👑 管理员与权限 | [后台导览](docs/admin-console.md#-管理员与权限) |
 | 🎁 积分玩法 | 用户之间互相转账；每日免费抽奖 + 花积分抽奖 | `/transfer`、`/lottery` | [功能详解](docs/features.md) |
 | 🛠️ AI 工具调用 | AI 能自己查积分 / 签到 / 排行榜 / 群规 / 知识库（只读，不碰写操作） | 直接对话 | [功能详解](docs/features.md) |
+| 🧹 自动反垃圾 | 刷屏 / 重复 / 新成员链接自动处置，可按规则升级为递进禁言（默认关闭） | 群里 `/automod` | [功能详解](docs/features.md) |
+| 📰 每日群报 | 总结「昨天群里聊了什么、有哪些问题没人答」，推给管理员（默认关闭） | 群里 `/summary` | [功能详解](docs/features.md) |
+| 🎁 群内抽奖 | 管理员发起，成员点按钮报名，到点自动开奖并发积分 | `/giveaway` | [功能详解](docs/features.md) |
+| 🧠 长期记忆 | 把超出上下文窗口的旧对话压成「用户印象」，让 AI 记得老用户 | 自动 | [功能详解](docs/features.md) |
+| 📊 用量与成本 | AI 调用次数 / 失败率 / 模型分布 / 群消息量，看趋势而不是等报错 | `/usage` | [功能详解](docs/features.md) |
+| 🖥️ Web 管理后台 | 浏览器里看概览、搜用户、封禁 / 改积分、翻日志、导出 CSV | 私聊 `/web` | [后台导览](docs/admin-console.md) |
 | ⏰ 定时任务 | 清理过期会话、推送每日概况、维护知识库索引、处置到期通知 | Cron Trigger | [部署与运维](docs/deployment.md) |
 
 几个具体的使用画面：
@@ -164,7 +170,7 @@ APP_TIMEZONE="Asia/Shanghai"
 ```bash
 npm run dev      # 启动本地 Worker（默认 http://localhost:8787）
 npm run check    # 语法 + import 路径自检
-npm test         # 448 个测试用例（内存 SQLite 跑真实 SQL）
+npm test         # 489 个测试用例（内存 SQLite 跑真实 SQL）
 ```
 
 ### 5. 部署
@@ -258,7 +264,10 @@ Telegram 默认只把 `/命令` 和 @ 提及转给机器人。要在群里正常
 - **单管理员模型**：只有 `MY_TELEGRAM_ID` 能进管理后台（群规执法额外允许本群管理员）
 - **知识库规模**：向量存在 D1、在 Worker 内算余弦相似度，单作用域约 400 块 / 25 万字量级；更大规模建议迁移 Vectorize
 - **PDF 解析是尽力而为**：扫描件、加密 PDF、特殊字体编码可能抽不出文字（会明确提示，不会静默失败），需要先 OCR
-- **无 Web 后台**：所有管理操作都在 Telegram 内完成
+- **Web 后台是轻量的**：只有概览、用户、日志三块，做的是「在聊天框里很别扭」的事
+  （搜索、导出 CSV、批量看数据）；改群规、发公告这类仍然在 Telegram 里完成
+- **群报需要额外记录**：`chat_history` 不含群成员之间的聊天，所以「每日群报」是一个
+  默认关闭的开关 —— 开启后才会记录本群的文字消息（最多 7 天）
 - **平台限制**：Workers 有 CPU 时间与请求大小限制，因此群发、索引重建、处置通知都做了分批与上限
 - **多语言**：AI 回复支持中英切换（`/setlang`），但界面文案目前是中文
 

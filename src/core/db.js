@@ -522,6 +522,170 @@ CREATE TABLE IF NOT EXISTS welcome_sessions (
   chat_id    TEXT PRIMARY KEY,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ==========================================
+-- 🧹 自动反垃圾（v3.10.0）
+--
+-- 与「群规执法」的分工：执法是**人**发现违规后下指令，自动反垃圾是
+-- 机器人自己按规则先兜一层（刷屏 / 重复 / 新成员链接），把明显刷屏按住，
+-- 需要判断的一律转成确认卡片交给管理员，不自己下重手。
+--
+-- 计数走 isolate 内存窗口（见 services/automod.js），**只有真正触发动作时才写库**，
+-- 所以这两张表的写入量 = 违规次数，而不是消息条数。
+-- ==========================================
+CREATE TABLE IF NOT EXISTS automod_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id    TEXT    NOT NULL,
+  user_id    TEXT    NOT NULL,
+  user_label TEXT    DEFAULT '',
+  rule       TEXT    NOT NULL,               -- flood / repeat / link
+  action     TEXT    NOT NULL,               -- delete / warn / mute / card
+  detail     TEXT    DEFAULT '',
+  msg_id     INTEGER DEFAULT 0,
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_automod_events_chat ON automod_events(chat_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_automod_events_created ON automod_events(created_at);
+
+-- 违规累计（同一个人在同一群里被自动反垃圾拦了几次），用于递进处罚。
+-- 只记「本群」不记全局：一个人在 A 群刷屏不该影响他在 B 群的待遇。
+CREATE TABLE IF NOT EXISTS automod_strikes (
+  chat_id  TEXT    NOT NULL,
+  user_id  TEXT    NOT NULL,
+  strikes  INTEGER NOT NULL DEFAULT 0,
+  last_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (chat_id, user_id)
+);
+
+-- 新成员入群时间。**与「入群欢迎」功能无关**：不管欢迎开关是开是关，
+-- 收到 new_chat_members 就记一行，供自动反垃圾判断「是不是刚进群」。
+-- 每条消息都查一次 getChatMember 太贵，本地记时间最省。
+-- 只留最近 7 天（新成员沙盒最长也才 30 分钟），由 daily.js 清理。
+CREATE TABLE IF NOT EXISTS group_newcomers (
+  chat_id   TEXT    NOT NULL,
+  user_id   TEXT    NOT NULL,
+  joined_at INTEGER NOT NULL,                -- Unix 秒
+  PRIMARY KEY (chat_id, user_id)
+);
+
+-- ==========================================
+-- 📰 群消息流水与每日群报（v3.10.0）
+--
+-- ⚠️ 隐私相关，默认**不记录**：只有管理员在「每日群报」里显式打开
+-- 「记录群聊内容」之后才写入，且只留最近 7 天（由 daily.js 清理）。
+-- 只存文本消息的前 300 字，图片 / 语音 / 文件一律不记。
+--
+-- chat_history 存的是「与 AI 的对话」，不含群成员之间的聊天，
+-- 所以想总结「今天群里聊了什么」必须另有一张流水表。
+-- ==========================================
+CREATE TABLE IF NOT EXISTS group_message_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id    TEXT    NOT NULL,
+  user_id    TEXT    DEFAULT '',
+  user_name  TEXT    DEFAULT '',
+  text       TEXT    NOT NULL,
+  msg_ts     INTEGER NOT NULL,               -- Unix 秒
+  date_str   TEXT    NOT NULL,               -- 按 APP_TIMEZONE 的日期键
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_group_msg_log_chat_date ON group_message_log(chat_id, date_str);
+
+-- 每日群报存档：同一天同一群只生成一份（AI 总结成功后才写），
+-- 让管理员翻回来看历史，也避免 cron 重推时重复调用模型。
+CREATE TABLE IF NOT EXISTS group_daily_reports (
+  chat_id    TEXT    NOT NULL,
+  date_str   TEXT    NOT NULL,
+  content    TEXT    NOT NULL,
+  source     TEXT    DEFAULT 'auto',         -- auto（cron） / manual（/summary）
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (chat_id, date_str)
+);
+
+-- ==========================================
+-- 🎁 群内抽奖（v3.10.0）
+--
+-- 管理员在群里发起 → 成员点按钮报名 → 到点（或管理员手动）开奖，
+-- 中奖积分走 points.js 的原子加分 + 流水。
+-- status：open（报名中）/ drawn（已开奖）/ cancelled（已取消）
+-- ==========================================
+CREATE TABLE IF NOT EXISTS group_draws (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id     TEXT    NOT NULL,
+  title       TEXT    NOT NULL,
+  prize       INTEGER NOT NULL DEFAULT 0,    -- 每个中奖者得到的积分
+  winners     INTEGER NOT NULL DEFAULT 1,
+  status      TEXT    NOT NULL DEFAULT 'open',
+  msg_id      INTEGER DEFAULT 0,
+  end_at      INTEGER NOT NULL DEFAULT 0,    -- Unix 秒；0 = 只手动开奖
+  operator_id TEXT    DEFAULT '',
+  winner_ids  TEXT    DEFAULT '',            -- 开奖后写入中奖者的 user_key，逗号分隔
+  created_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_group_draws_chat ON group_draws(chat_id, status, id DESC);
+CREATE INDEX IF NOT EXISTS idx_group_draws_due ON group_draws(status, end_at);
+
+-- 报名名单。主键 (draw_id, user_key) 保证同一个人重复点只算一次。
+CREATE TABLE IF NOT EXISTS group_draw_entries (
+  draw_id    INTEGER NOT NULL,
+  user_key   TEXT    NOT NULL,
+  user_id    TEXT    DEFAULT '',
+  user_name  TEXT    DEFAULT '',
+  joined_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (draw_id, user_key)
+);
+
+-- ==========================================
+-- 🧠 长期记忆（v3.10.0）
+--
+-- 上下文窗口只有 10 条 / 6000 字符，超出就从最旧的开始丢。
+-- 这里把「即将被丢掉的历史」交给模型压成一段画像摘要，
+-- 之后每次对话作为背景注入 —— 老用户回来时机器人还记得他是谁、在关心什么。
+-- 一个 scene_key 一份（私聊一份，群里每个成员各一份）。
+-- ==========================================
+CREATE TABLE IF NOT EXISTS user_memory (
+  scene_key  TEXT PRIMARY KEY,
+  summary    TEXT    NOT NULL,
+  compressed INTEGER NOT NULL DEFAULT 0,     -- 已经压缩掉的历史条数
+  -- 待压缩的消息（JSON 数组）。之所以要缓冲：每轮对话只会丢掉一两条历史，
+  -- 每条都调模型太贵；攒够 MEMORY.MIN_MESSAGES 条再压一次。
+  pending    TEXT    DEFAULT '',
+  updated_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================================
+-- 📊 用量与成本统计（v3.10.0）
+--
+-- 按「日期 + 指标」累加，指标形如 ai.call / ai.fail / ai.model.<模型名>。
+-- 写入走单条 UPSERT（count = count + 1），并把同一天的多次自增合并成一次写
+-- （见 services/usage.js 的计数器缓冲），避免每条消息都多一次 D1 往返。
+-- ==========================================
+CREATE TABLE IF NOT EXISTS usage_stats (
+  date_str   TEXT    NOT NULL,
+  metric     TEXT    NOT NULL,
+  count      INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT    DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (date_str, metric)
+);
+
+-- ==========================================
+-- 🖥️ Web 管理后台登录令牌（v3.10.0）
+--
+-- 登录方式刻意不用 Telegram Login Widget：那需要在 BotFather 里配域名，
+-- 而且一旦换域名就登不进去。改成**一次性令牌**——
+-- 管理员在 Telegram 里发 /web，机器人回一条 5 分钟有效的链接，
+-- 点开即登录（令牌用掉就删）。权限判断跟指令侧完全一致，不会绕过任何校验。
+--
+-- 令牌本身是随机串，不携带任何身份信息；只有 hash 需要落库的说法太绕，
+-- 这里直接存原值但**短有效期 + 一次性**，被读到的窗口极小。
+-- ==========================================
+CREATE TABLE IF NOT EXISTS web_login_tokens (
+  token      TEXT PRIMARY KEY,
+  user_id    TEXT    NOT NULL,
+  expires_at INTEGER NOT NULL,               -- Unix 秒
+  created_at TEXT    DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_web_tokens_expires ON web_login_tokens(expires_at);
 `;
 
 let schemaReady = false;
@@ -539,7 +703,10 @@ let schemaPromise = null;
 // v3.7.0：日报与维护查询的索引（daily_stats / daily_checkin / users.blocked / redeem_logs.created_at / 处置到期）
 // v3.9.0：收敛「兑换积分 > 售价」的历史商品配置（改价绕过校验留下的套利数据）
 // v3.9.0：入群验证（join_verifications）+ 欢迎语编辑会话（welcome_sessions）
-export const SCHEMA_VERSION = 22;
+// v3.10.0：自动反垃圾（automod_events / automod_strikes）、群消息流水与群报
+//          （group_message_log / group_daily_reports）、群内抽奖（group_draws /
+//          group_draw_entries）、长期记忆（user_memory）、用量统计（usage_stats）
+export const SCHEMA_VERSION = 23;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 

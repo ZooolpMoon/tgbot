@@ -38,6 +38,10 @@ export function createTestDB({ withSchema = true } = {}) {
   const makeStmt = (sql) => {
     let params = [];
     const stmt = {
+      // batch 里要区分「查询」与「写入」：真实 D1 的 batch 对 SELECT 会返回
+      // results，对 UPDATE/INSERT 返回 meta。这个替身原先一律走 run()，
+      // 于是任何「batch 里带 SELECT」的代码在测试里永远读不到行（v3.10.0 踩到）。
+      __select: /^\s*(select|pragma|with)/i.test(sql),
       bind: (...args) => {
         params = args;
         return stmt;
@@ -57,7 +61,7 @@ export function createTestDB({ withSchema = true } = {}) {
 
   return {
     prepare: makeStmt,
-    batch: async (stmts) => Promise.all(stmts.map((s) => s.run())),
+    batch: async (stmts) => Promise.all(stmts.map((s) => (s.__select ? s.all() : s.run()))),
 
     // 测试便利方法（不是 D1 接口）
     _sqlite: sqlite,

@@ -19,6 +19,7 @@
 import { KB } from "../config/constants.js";
 import { logError, logWarn } from "../core/logger.js";
 import { cacheGet, cacheSet } from "./cache.js";
+import { countUsage, METRIC } from "./usage.js";
 
 /** 全局作用域标识 */
 export const KB_GLOBAL_SCOPE = "global";
@@ -512,6 +513,9 @@ async function rerankScored(env, model, query, scored, limit) {
 export async function searchKnowledge(env, sceneKey, query, options = {}) {
   const question = normalizeText(query);
   if (!env?.DB || question.length < 2) return [];
+
+  // 📊 用量统计：检索频次是判断「知识库到底有没有在用」的唯一指标
+  countUsage(env, METRIC.KB_SEARCH);
 
   let rows = [];
   try {

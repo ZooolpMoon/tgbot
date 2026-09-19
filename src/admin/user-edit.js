@@ -168,6 +168,7 @@ export async function handleDeleteScene({ env, token, callback, chatId, msgId, d
   await env.DB.batch([
     env.DB.prepare("DELETE FROM user_scenes WHERE id = ?").bind(rowId),
     env.DB.prepare("DELETE FROM chat_history WHERE scene_key = ?").bind(scene.scene_key),
+    env.DB.prepare("DELETE FROM user_memory WHERE scene_key = ?").bind(scene.scene_key),
     env.DB.prepare("DELETE FROM daily_stats WHERE scene_key = ?").bind(scene.scene_key)
   ]);
 
@@ -247,6 +248,8 @@ export async function handleClearSceneMemory({ env, token, callback, chatId, msg
   const res = await env.DB.prepare(
     "DELETE FROM chat_history WHERE scene_key = ?"
   ).bind(scene.scene_key).run();
+  // 长期记忆画像一并清掉（见 services/memory.js）
+  await env.DB.prepare("DELETE FROM user_memory WHERE scene_key = ?").bind(scene.scene_key).run();
 
   await logAdminAction(env, {
     adminId, chatId,

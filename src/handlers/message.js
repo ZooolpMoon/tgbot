@@ -31,6 +31,9 @@ import {
 import { handleKeywordAlert } from "../admin/guard.js";
 import { isGuardGuideActive, handleGuardGuideInput, cancelGuardGuide } from "../admin/guard-panel.js";
 import { handleNewMembers } from "../services/welcome.js";
+import { handleAutoMod, noteNewcomers } from "../services/automod.js";
+import { logGroupMessage } from "../services/summary.js";
+import { countUsage, METRIC } from "../services/usage.js";
 import {
   isWelcomeGuideActive, handleWelcomeGuideInput, cancelWelcomeGuide
 } from "../admin/welcome-panel.js";
@@ -72,6 +75,13 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   // 服务消息没有正文，所以必须放在「没有文本就直接返回」之前。
   // 是否真的发欢迎、要不要限制发言，都由群级配置 + 功能开关决定（默认关闭）。
   if (isGroupCtx && Array.isArray(message.new_chat_members) && message.new_chat_members.length > 0) {
+    // 先记入群时间：**与欢迎开关无关**，自动反垃圾的「新成员沙盒」要靠它。
+    // 放在 handleNewMembers 之前，这样即使欢迎功能关着、或处理抛错，时间也已经记下。
+    try {
+      await noteNewcomers(env, chatId, message.new_chat_members);
+    } catch (e) {
+      logError("记录新成员时间失败：", e);
+    }
     try {
       await handleNewMembers({
         env, token, chatId,
@@ -104,6 +114,32 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   let isCommandLike = userText.startsWith("/");
 
   if (isGroupCtx) {
+    // 📊 群消息量（用量面板用）。记的是「收到的消息条数」，
+    // 与是否被反垃圾删除无关 —— 那才是这个群真实的负载。
+    countUsage(env, METRIC.MSG_IN);
+
+    // ---------- 🧹 自动反垃圾 ----------
+    // 放在最前面：@ 机器人的消息同样可能刷屏，等走完 mention 判定就晚了。
+    // 命中时消息已被处置，这里直接结束本次处理；未命中则一切照旧。
+    try {
+      if (await handleAutoMod({ env, token, ctx, chatId, uctx, message, myId })) return;
+    } catch (e) {
+      // 反垃圾自己出错绝不能影响正常消息处理
+      logError("自动反垃圾执行失败：", e);
+    }
+
+    // ---------- 📰 群消息流水（每日群报用，默认关闭）----------
+    // 放在反垃圾之后：被删掉的消息不该进日报材料。
+    // 写入走 waitUntil，不拖慢消息处理；未开启群报的群里 logGroupMessage 直接返回。
+    try {
+      const logging = logGroupMessage({ env, chatId, uctx, message });
+      if (typeof ctx?.waitUntil === "function") ctx.waitUntil(logging);
+      // 无法 waitUntil 时（本地测试等）退化成串行，保证顺序可断言
+      else await logging;
+    } catch (e) {
+      logError("记录群消息失败：", e);
+    }
+
     if (botUsername) {
       const mentionEntities = Array.isArray(message.entities)
         ? message.entities.filter((e) => e.type === "mention")

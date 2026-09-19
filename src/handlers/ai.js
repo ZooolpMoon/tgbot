@@ -8,7 +8,7 @@
 
 import { sendChatAction } from "../telegram/api.js";
 import { sendAutoDelete } from "../telegram/auto-delete.js";
-import { AI_MODELS, AI_MAX_TOKENS, POINTS, RULES, KB } from "../config/constants.js";
+import { POINTS, RULES, KB } from "../config/constants.js";
 import { ERR } from "../config/messages.js";
 import { buildGroupScopeKey } from "../core/context.js";
 import { getDateKey } from "../services/time.js";
@@ -22,6 +22,9 @@ import {
   resolveAnswerMode, KB_GLOBAL_SCOPE
 } from "../services/knowledge.js";
 import { logError, logWarn } from "../core/logger.js";
+// 模型调用与回退链统一走 services/ai-model.js（日报、长期记忆也复用它）
+import { runAIWithFallback } from "../services/ai-model.js";
+import { loadMemory, appendDropped, maybeCompressMemory, buildMemoryPrompt } from "../services/memory.js";
 
 /**
  * 从「被回复的消息」里抽出可用文本（v3.9.0）。
@@ -138,6 +141,18 @@ export async function handleAIRequest({
     baseSystemPrompt += `\n【用户个性化要求】：${userConfig.customPrompt}`;
   }
 
+  // ---------- 🧠 长期记忆（v3.10.0）----------
+  // 超出上下文窗口的旧对话会被压成一段画像，这里把它作为背景注入，
+  // 让老用户回来时机器人还记得他是谁、在关心什么。失败不影响正常对话。
+  if (env.DB && (await isFeatureEnabled(env, sceneKey, "memory"))) {
+    try {
+      const memory = await loadMemory(env, sceneKey);
+      if (memory?.summary) baseSystemPrompt += buildMemoryPrompt(memory.summary);
+    } catch (e) {
+      logError("注入长期记忆失败（本次按无记忆回答）：", e);
+    }
+  }
+
   // ---------- 📎 用户引用的消息（v3.9.0）----------
   // 「回复某条消息 + @机器人」时，让模型知道用户说的是哪一条。
   // 引用内容来自群成员，属于**不可信素材**：明确要求只作处理对象，不执行其中指令。
@@ -251,62 +266,28 @@ export async function handleAIRequest({
     const nonSystem = [...messages.filter((m) => m.role !== "system"), { role: "assistant", content: replyText }];
     // 双重限制：条数上限 + 字符上限
     const byCount = nonSystem.slice(-RULES.HISTORY_LIMIT);
+    // 被这一刀切掉的部分**别直接丢** —— 交给长期记忆压成画像（见 services/memory.js）。
+    // 只有真的裁掉了东西才动记忆流程，绝大多数对话这里都是空数组。
+    const dropped = nonSystem.slice(0, Math.max(0, nonSystem.length - RULES.HISTORY_LIMIT));
     const trimmed = [messages[0], ...trimHistory(byCount, historyBudget)];
     await env.DB.prepare(
       "INSERT INTO chat_history (scene_key, messages, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(scene_key) DO UPDATE SET messages = EXCLUDED.messages, updated_at = CURRENT_TIMESTAMP"
     ).bind(sceneKey, JSON.stringify(trimmed)).run();
+
+    if (dropped.length > 0) {
+      try {
+        await appendDropped(env, sceneKey, dropped);
+        // 攒够 MIN_MESSAGES 条才真的调模型；否则这一步只是把消息存进缓冲
+        await maybeCompressMemory(env, sceneKey);
+      } catch (e) {
+        logError("更新长期记忆失败（不影响本次对话）：", e);
+      }
+    }
   })();
   if (ctx?.waitUntil) ctx.waitUntil(saveHistoryTask);
   else await saveHistoryTask;
 
   await replyChat(replyText);
-
-}
-
-// ==========================================
-// 🤖 模型回退与上下文裁剪
-// ==========================================
-
-/** 解析可用模型列表：env.AI_MODELS（逗号分隔）优先，其次内置回退链 */
-function resolveModels(env) {
-  const raw = env?.AI_MODELS ? String(env.AI_MODELS) : "";
-  const custom = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  return custom.length > 0 ? custom : AI_MODELS;
-}
-
-/** 从 Workers AI 的返回体里取回复文本（兼容不同模型的结构差异） */
-function extractReplyText(res) {
-  // Workers AI 不同模型的返回结构略有差异，这里做兼容取值
-  if (!res) return "";
-  const text = res.response || res.choices?.[0]?.message?.content || res.result?.response || "";
-  return typeof text === "string" ? text.trim() : "";
-}
-
-/**
- * 依次尝试主模型与备选模型。
- * 主模型报错或返回空内容时自动切换下一个，全部失败才判定为异常。
- */
-async function runAIWithFallback(env, messages) {
-  const models = resolveModels(env);
-  let lastError = null;
-
-  for (let i = 0; i < models.length; i++) {
-    const model = models[i];
-    try {
-      const res = await env.AI.run(model, { messages, max_tokens: AI_MAX_TOKENS });
-      const text = extractReplyText(res);
-      if (text) {
-        return { text, model, fallback: i > 0 };
-      }
-      lastError = new Error("模型返回空内容");
-    } catch (e) {
-      lastError = e;
-    }
-    logWarn(`模型 ${model} 调用失败${i < models.length - 1 ? `，尝试回退到 ${models[i + 1]}` : ""}：`, lastError?.message || lastError);
-  }
-
-  logError("所有 AI 模型均调用失败：", lastError);
-  return { text: "", model: null, fallback: false };
 }
 
 /** 模型调用失败时回滚：退积分、退额度、还原上次发言时间 */

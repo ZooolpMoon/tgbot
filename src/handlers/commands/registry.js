@@ -37,6 +37,11 @@ import {
 } from "./ban.js";
 import { cmdGuard, cmdAppeal, cmdReport } from "./guard.js";
 import { cmdWelcome } from "../../admin/welcome-panel.js";
+import { cmdAutoMod } from "../../admin/automod-panel.js";
+import { cmdSummary } from "../../services/summary.js";
+import { cmdDraw, cmdDrawEnd, cmdDrawCancel } from "../../services/draw.js";
+import { cmdUsage } from "../../admin/usage-panel.js";
+import { cmdWeb } from "../../web/admin.js";
 import { cmdSyncMenu } from "./system.js";
 import { isGroupAdmin } from "../../services/guard.js";
 import { can, isBackstageRole } from "../../services/admins.js";
@@ -231,6 +236,50 @@ export const COMMANDS = [
   {
     name: "/syncmenu", scope: "admin", capability: "manage_features",
     desc: "把指令同步到输入框菜单（/ 弹出列表）", handle: cmdSyncMenu
+  },
+  {
+    name: "/usage", aliases: ["/cost"], scope: "admin", capability: "view_stats",
+    desc: "用量与成本：AI 调用次数、失败率、模型分布、群消息量",
+    handle: cmdUsage
+  },
+  {
+    // 任何后台角色都能拿链接：进去之后能做什么由角色决定（见 web/admin.js）
+    name: "/web", scope: "admin", capability: "view_stats", privateOnly: true,
+    privateHint: "登录链接是凭证，请在私聊里发送 /web。",
+    desc: "打开 Web 管理后台（私聊，返回一次性登录链接）",
+    handle: cmdWeb
+  },
+  {
+    // 同样刻意**不挂** feature: "automod"：开关默认关闭，
+    // 挂上开关就等于「关了就再也进不来打开」。
+    name: "/automod", aliases: ["/antispam"], scope: "admin", capability: "manage_guard",
+    groupAdmin: true,
+    desc: "自动反垃圾（群里：刷屏 / 重复 / 新成员链接）", handle: cmdAutoMod
+  },
+  {
+    // 群报的开关写在 /summary on|off 里，所以这里同样**不挂** feature，
+    // 否则一关就再也进不来打开它。
+    name: "/summary", aliases: ["/groupreport"], scope: "admin", capability: "manage_guard",
+    groupAdmin: true,
+    desc: "每日群报：今天的群聊摘要（on / off 开关记录）",
+    usage: "/summary [on|off]", handle: cmdSummary
+  },
+  {
+    // 名字避开 /draw —— 那是 /lottery（每日抽奖）的别名
+    name: "/giveaway", aliases: ["/groupdraw"], scope: "admin", capability: "manage_guard",
+    groupAdmin: true, feature: "draw",
+    desc: "群内抽奖：发起后成员点按钮报名，到点自动开奖",
+    usage: "/giveaway <积分> [人数] [分钟] [标题]", handle: cmdDraw
+  },
+  {
+    name: "/giveaway_end", scope: "admin", capability: "manage_guard",
+    groupAdmin: true, feature: "draw",
+    desc: "立即开奖（本群进行中的抽奖）", handle: cmdDrawEnd
+  },
+  {
+    name: "/giveaway_cancel", scope: "admin", capability: "manage_guard",
+    groupAdmin: true, feature: "draw",
+    desc: "取消本群进行中的抽奖", handle: cmdDrawCancel
   },
   {
     name: "/code_new", scope: "admin", capability: "manage_codes",

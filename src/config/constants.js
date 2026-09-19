@@ -177,6 +177,109 @@ export const WELCOME = {
 };
 
 // ==========================================
+// 🧹 自动反垃圾（v3.10.0）
+//
+// 计数只在 Worker 内存里做（isolate 级滑动窗口），**只有真正触发时才写 D1**，
+// 所以 D1 的写入量等于「违规次数」而不是「消息条数」。
+// 多 isolate 会让计数分片（实际阈值比配置宽松），这可以接受：
+// 反垃圾要拦的是持续刷屏，不是精确计费；而所有动作本身都是幂等的。
+// ==========================================
+
+export const AUTOMOD = {
+  // 刷屏：窗口内同一人最多发几条（超过即触发）
+  FLOOD_WINDOW_SEC: 10,
+  FLOOD_MAX_MESSAGES: 6,
+  // 重复：窗口内同一人发同样内容超过几次（去空白与大小写后比较）
+  REPEAT_WINDOW_SEC: 60,
+  REPEAT_MAX: 3,
+  // 新成员沙盒：入群后多少分钟内不准发链接 / 转发消息
+  NEWBIE_MINUTES: 30,
+  // 超长消息阈值（字符）：超过按刷屏处理，挡住「一句话刷屏」
+  MAX_MESSAGE_CHARS: 1200,
+  // 递进禁言时长（分钟）：第 1 / 2 / 3 次及以后依次取，超出取最后一档
+  ESCALATE_MINUTES: [10, 60, 1440],
+  // 内存窗口最多跟踪多少个「群:用户」键（防止 isolate 内存无限增长）
+  WINDOW_MAX_KEYS: 2000,
+  // 同一人触发后多少秒内不再重复处理（避免一次刷屏刷出十几条记录）
+  COOLDOWN_SEC: 20,
+  // 一次 cron 最多清理多少条历史记录
+  EVENT_KEEP_DAYS: 30
+};
+
+// ==========================================
+// 📰 每日群报（v3.10.0）
+// ==========================================
+
+export const SUMMARY = {
+  // 群消息流水保留天数（隐私与体积的折中）
+  KEEP_DAYS: 7,
+  // 单条流水最多存多少字符
+  MESSAGE_MAX_CHARS: 300,
+  // 生成一份总结最多读多少条流水
+  MAX_MESSAGES: 300,
+  // 拼给模型的正文上限（字符），超出按时间倒序截断
+  MAX_INPUT_CHARS: 8000,
+  // 每个群每天最多生成几份（自动 1 份 + 允许管理员手动重生成 1 次）
+  MAX_REPORTS_PER_DAY: 2,
+  // 一次 cron 最多给几个群生成日报（模型调用要控量）
+  MAX_CHATS_PER_RUN: 5
+};
+
+// ==========================================
+// 🎁 群内抽奖（v3.10.0）
+// ==========================================
+
+export const DRAW = {
+  TITLE_MAX: 60,
+  // 一次抽奖最多几个中奖者
+  MAX_WINNERS: 10,
+  // 单个中奖者的积分上限（防手抖把奖品设成巨款）
+  MAX_PRIZE: 10000,
+  // 报名时长候选（分钟）
+  DURATION_CHOICES: [10, 60, 180],
+  // 同一个群同时只允许一个进行中的抽奖
+  MAX_OPEN_PER_CHAT: 1,
+  // 一次开奖最多发放多少人（防止越界）
+  MAX_ENTRIES_PER_DRAW: 500
+};
+
+// ==========================================
+// 🧠 长期记忆（v3.10.0）
+// ==========================================
+
+export const MEMORY = {
+  // 压缩后画像的字符上限
+  SUMMARY_MAX_CHARS: 600,
+  // 历史少于这么多条时不压缩（信息量不够，白花模型调用）
+  MIN_MESSAGES: 8,
+  // 两次压缩之间的最小间隔（秒）：同一个人短时间内不必反复压缩
+  COOLDOWN_SEC: 600,
+  // 注入提示词的画像截断长度
+  INJECT_MAX_CHARS: 500,
+  // 一次 cron 最多压缩几个会话
+  MAX_PER_RUN: 10
+};
+
+// ==========================================
+// 📊 用量与成本统计（v3.10.0）
+// 指标名统一用「域.动作」，面板按前缀聚合展示。
+// ==========================================
+
+export const USAGE = {
+  // 自增缓冲：攒够多少条（或超过间隔）就落库一次
+  FLUSH_THRESHOLD: 10,
+  FLUSH_INTERVAL_MS: 30000,
+  // 单次 flush 最多几条语句
+  MAX_FLUSH_STATEMENTS: 40,
+  // 内存缓冲最多记多少个「日期:指标」键
+  MAX_BUFFER_KEYS: 500,
+  // 面板展示最近多少天
+  PANEL_DAYS: 7,
+  // 明细保留天数
+  KEEP_DAYS: 90
+};
+
+// ==========================================
 // 👑 管理员回调数据（callback_data）
 // 前缀统一为 admin_ / shop_ / game_ / rank_ / points_，分发时按前缀路由。
 // 注意：新增前缀时不要与已有前缀互为前缀关系，否则会被提前匹配。
@@ -218,6 +321,16 @@ export const ADMIN_CALLBACK = {
   GUARD_VERSIONS_PREFIX: "admin_guard_ver_",
   GUARD_VERSION_RESTORE_PREFIX: "admin_guard_vr_",
   GUARD_REVOKE_PREFIX: "admin_guard_rev_",
+  // ---------- 🧹 自动反垃圾面板（v3.10.0）----------
+  AUTOMOD_HOME: "admin_automod",
+  AUTOMOD_TOGGLE: "admin_automod_toggle",
+  AUTOMOD_RULE_PREFIX: "admin_automod_rule_",
+  AUTOMOD_ACTION: "admin_automod_action",
+  AUTOMOD_NOTICE: "admin_automod_notice",
+  AUTOMOD_LOG: "admin_automod_log",
+  AUTOMOD_CLEAR: "admin_automod_clear",
+  // ---------- 📊 用量与成本面板（v3.10.0）----------
+  USAGE_REFRESH: "admin_usage_refresh",
   // 申诉卡片（发给管理员私聊）
   APPEAL_OK_PREFIX: "appeal_ok_",
   APPEAL_NO_PREFIX: "appeal_no_",

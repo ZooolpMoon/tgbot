@@ -31,7 +31,16 @@ export const FEATURES = [
   { key: "ai_tools", label: "AI 工具调用", desc: "让 AI 能查积分 / 签到 / 排行榜 / 群规 / 知识库（只读）" },
   // v3.9.0：默认**关闭**。开启后机器人会主动在群里发消息、甚至限制新成员发言，
   // 属于「会打扰人」的功能，必须由管理员显式打开（见下面的 defaultEnabled）。
-  { key: "welcome", label: "入群欢迎与验证", desc: "新成员入群时发欢迎语，可要求点按钮通过验证", defaultEnabled: false }
+  { key: "welcome", label: "入群欢迎与验证", desc: "新成员入群时发欢迎语，可要求点按钮通过验证", defaultEnabled: false },
+  // v3.10.0：以下四项都新增在同一个版本里，默认值按「会不会打扰人」定：
+  //   · automod 会删消息 / 禁言 → 默认关
+  //   · summary 要记录群成员聊天内容（隐私）→ 默认关
+  //   · draw 只在管理员主动发起后才动 → 默认开
+  //   · memory 只影响 AI 自己的上下文质量 → 默认开
+  { key: "automod", label: "自动反垃圾", desc: "自动删除刷屏 / 重复 / 新成员链接，可按规则升级为禁言", defaultEnabled: false },
+  { key: "summary", label: "每日群报", desc: "记录群消息并生成「今天聊了什么」摘要（涉及群成员聊天内容）", defaultEnabled: false },
+  { key: "draw", label: "群内抽奖", desc: "管理员在群里发起抽奖，成员点按钮报名，到点开奖" },
+  { key: "memory", label: "长期记忆", desc: "把超出上下文窗口的旧对话压成画像，让 AI 记得老用户" }
 ];
 
 const PREFIX = "feature.";

@@ -203,6 +203,53 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - **随机**：用 `src/utils/random.js`（`crypto.getRandomValues`），不要用 `Math.random`。
 - **Telegram API**：统一走 `src/telegram/api.js`（自带 429/5xx 退避重试）。
 
+- **自动反垃圾（v3.10.0，`services/automod.js` + `admin/automod-panel.js`）**：与群规执法分工明确——
+  执法是**人**下指令（理由要校验），反垃圾是机器人按**行为特征**先兜一层
+  - **只看行为，不解析内容语义**：判据只有频率 / 重复 / 单条长度 / 新成员发链接。
+    绝不要把「消息里出现了某类词」接成自动处置，那等于绕开执法那套理由校验（见上面的执法约定）
+  - **自己人一律豁免**：`isProtectedMember` 会放行群主、本群管理员、机器人管理员 / 执法员。
+    自动禁言一个管理员可能把后台访问权限一起锁掉。**别为了「对谁都一样」把这条去掉** ——
+    那句话只适用于「预警」（只提醒、不处置），不适用于自动处置
+  - 计数走 isolate 内存窗口（`windows` Map），**只有真正触发时才写 automod_events**；
+    配置读取有 30 秒缓存。想加新规则时请沿用这个结构，不要在每条消息上加 D1 查询
+  - 群级配置写 `scene_settings` 的 `automod.*`（用 `buildGroupScopeKey`），
+    功能开关 `automod` **默认关闭**（会自动删消息的功能不能默认开）
+  - 新成员时间来自 `group_newcomers`（收到 `new_chat_members` 就记，与欢迎开关无关），
+    判定结果有负缓存，别改成每条消息查一次库
+- **每日群报（v3.10.0，`services/summary.js`）**：
+  - **`chat_history` 不含群成员之间的聊天**，群报靠的是 `group_message_log`。
+    这张表涉及隐私，所以功能开关 `summary` **默认关闭**、只记文本消息的前 300 字、
+    只留 7 天（`cleanupGroupMessages`），图片 / 语音 / 文件 / 指令都不记
+  - 统计走 SQL（`collectGroupStats`），**只有摘要花模型调用**；模型失败要降级成
+    「只有统计」，`formatReportText` 会写明「未生成摘要」，不要假装成功
+  - 提示词里禁止复述隐私信息，这条别删
+- **群内抽奖（v3.10.0，`services/draw.js`）**：
+  - **开奖只认 `UPDATE ... WHERE status='open'` 的 `meta.changes === 1`**：
+    到点 cron（每 2 分钟的 `processDueDraws`）与管理员 `/giveaway_end` 会并发，
+    拿 SELECT 的结果当凭据就会发两次奖（与 21 点同一类事故）
+  - 报名用 `INSERT ... ON CONFLICT DO NOTHING`；中奖加分复用 `refundPoint`
+    （原子加分 + 写流水），不要自己写 `UPDATE users`
+  - 命令名避开 `/draw`（那是 `/lottery` 的别名）；回调 `draw_join_` 必须放在
+    `callback.js` 的管理员校验**之前**（普通成员也要能点）
+- **长期记忆（v3.10.0，`services/memory.js`）**：超出 `RULES.HISTORY_LIMIT` 的历史会进
+  `user_memory.pending`，攒够 `MEMORY.MIN_MESSAGES` 条才压缩成画像
+  - **节流靠「压缩后清空缓冲」，不要加时间冷却** —— 那会把「刚攒够就压」的正常情况一起挡掉
+  - 模型返回空内容时**必须保留缓冲**（`return { compressed: false }` 之前不要清 pending）
+  - 画像注入时标注为背景 + 不可信素材；**清空对话记忆的地方都要一起清 user_memory**
+    （`/clear`、`/clearmem`、后台的「清空记忆」、删除场景），否则清完机器人照样记得
+- **用量统计（v3.10.0，`services/usage.js`）**：内存缓冲 + 请求结束时
+  `ctx.waitUntil(flushUsage(env, { force: true }))` 一次 batch UPSERT
+  - 指标名统一 `域.动作`（`METRIC` 里有常量）；模型维度用 `modelMetric(model)`
+  - **统计是近似值**（多 isolate 各算各的），文档与面板都要这么写，不要暗示它是精确计费
+- **Web 管理后台（v3.10.0，`src/web/admin.js`）**：
+  - 路由在 `index.js` 里**必须在「非 POST 一律返回部署探活文案」之前**拦下，否则 GET 永远进不来
+  - 登录是一次性令牌（`web_login_tokens`，5 分钟，用过即删），**不要改成 Telegram Login Widget**：
+    那需要在 BotFather 配域名，换域名就登不进去
+  - 会话是 HMAC 签名的 HttpOnly + SameSite=Strict cookie，且**每次请求都重新查一次角色**——
+    cookie 有效不代表还是管理员，撤权要立即生效
+  - 写操作一律复用指令侧的既有函数（`banUserById` / `unbanUserById` / `resolvePointTarget`），
+    不要在这里另写一套更新语句，否则「不能封禁机器人管理员」之类的兜底会被绕过
+
 ## Git 约定
 
 - 提交信息中文，前缀：`feat:` / `fix:` / `docs:` / `chore:` / `refactor:`；破坏性变更用 `feat!:`。

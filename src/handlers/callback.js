@@ -89,6 +89,9 @@ import { handleGuardCallback } from "../admin/guard.js";
 import { handleAppealCallback } from "../admin/guard.js";
 import { handleGuardPanelCallback } from "../admin/guard-panel.js";
 import { handleWelcomeCallback } from "../admin/welcome-panel.js";
+import { handleAutoModCallback } from "../admin/automod-panel.js";
+import { DRAW_CALLBACK, joinDraw } from "../services/draw.js";
+import { renderUsagePanel } from "../admin/usage-panel.js";
 import { handleJoinVerifyCallback } from "../services/welcome.js";
 import { handleAdminsCallback } from "../admin/admins.js";
 import { CAPABILITIES, can, getAdminRole, isBackstageRole } from "../services/admins.js";
@@ -122,6 +125,8 @@ const CALLBACK_CAPABILITIES = [
   ["admin_kb", "manage_kb"],
   ["admin_guard", "manage_guard"],
   ["admin_welcome", "manage_guard"],
+  ["admin_automod", "manage_guard"],
+  ["admin_usage", "view_stats"],
   ["admin_feat", "manage_features"],
   ["admin_autodel", "manage_autodelete"],
   ["admin_codes_", "manage_codes"],
@@ -200,6 +205,31 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   // ==========================================
   // 1. 游戏（任何用户）
   // ==========================================
+  // 群内抽奖的「参与」按钮：任何群成员都能点，所以必须放在管理员校验之前
+  if (data.startsWith(DRAW_CALLBACK.JOIN_PREFIX)) {
+    const drawId = Number.parseInt(data.slice(DRAW_CALLBACK.JOIN_PREFIX.length), 10);
+    if (!Number.isInteger(drawId)) {
+      await answerCallback(token, callback.id, "⚠️ 参数无效", true);
+      return;
+    }
+    const res = await joinDraw({
+      env, token, chatId, userKey,
+      userId: fromId,
+      userName: uctx.firstName || uctx.username || "",
+      drawId
+    });
+    // answerCallback 只接受纯文本：把提示里可能带的 HTML 标签去掉
+    const text = String(res.error || "").replace(/<[^>]+>/g, "");
+    await answerCallback(
+      token, callback.id,
+      res.ok
+        ? (res.joined ? `🎉 报名成功（第 ${res.total} 位）` : "ℹ️ 你已经报名过了")
+        : text,
+      !res.ok
+    );
+    return;
+  }
+
   if (data.startsWith("game_")) {
     if (!(await isFeatureEnabled(env, sceneKey, "game"))) {
       await answerCallback(token, callback.id, "⚠️ 本场景已关闭「游戏大厅」", true);
@@ -653,6 +683,19 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
       });
     }
 
+    // ---------- 🧹 自动反垃圾面板 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.AUTOMOD_HOME)) {
+      await handleAutoModCallback({
+        env, ctx, token, callback, data, chatId, userId: fromId, messageId: msgId
+      });
+    }
+
+    // ---------- 📊 用量与成本面板 ----------
+    else if (data === ADMIN_CALLBACK.USAGE_REFRESH) {
+      await renderUsagePanel(token, env, chatId, msgId);
+      await answerCallback(token, callback.id, "已刷新");
+    }
+
     // ---------- 用户列表 ----------
     else if (data.startsWith(ADMIN_CALLBACK.USERS_PRIVATE_PREFIX)) {
       const page = parseInt(data.replace(ADMIN_CALLBACK.USERS_PRIVATE_PREFIX, ""), 10) || 1;
@@ -858,6 +901,7 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     else if (data === ADMIN_CALLBACK.CLEAR_HISTORY) {
       if (env.DB) {
         await env.DB.prepare("DELETE FROM chat_history WHERE scene_key = ?").bind(sceneKey).run();
+        await env.DB.prepare("DELETE FROM user_memory WHERE scene_key = ?").bind(sceneKey).run();
       }
       await answerCallback(token, callback.id, "🧹 对话历史已清空", true);
     }

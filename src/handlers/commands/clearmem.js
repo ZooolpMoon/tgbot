@@ -8,6 +8,7 @@
 
 import { sendAutoDelete } from "../../telegram/auto-delete.js";
 import { logAdminAction } from "../../services/admin-log.js";
+import { clearMemory, clearGroupMemory } from "../../services/memory.js";
 
 const USAGE =
   "🧹 <b>清除 AI 记忆</b>\n-------------------------\n" +
@@ -44,6 +45,7 @@ export async function cmdClearMem({ env, ctx, token, chatId, isMaster, isGroupCt
   // 当前场景
   if (args.length === 1 && /^(me|self|当前|这里)$/i.test(args[0])) {
     const res = await env.DB.prepare("DELETE FROM chat_history WHERE scene_key = ?").bind(sceneKey).run();
+    await clearMemory(env, sceneKey);
     await logAdminAction(env, { adminId: myId, chatId, action: "scene_clear_memory", detail: `${sceneKey}` });
     await sendAutoDelete(
       token, chatId,
@@ -68,6 +70,7 @@ export async function cmdClearMem({ env, ctx, token, chatId, isMaster, isGroupCt
     }
     const targetKey = `group:${groupId}:user:${userId}`;
     const res = await env.DB.prepare("DELETE FROM chat_history WHERE scene_key = ?").bind(targetKey).run();
+    await clearMemory(env, targetKey);
     await logAdminAction(env, {
       adminId: myId, chatId, action: "scene_clear_memory", detail: targetKey
     });
@@ -84,6 +87,7 @@ export async function cmdClearMem({ env, ctx, token, chatId, isMaster, isGroupCt
   // 整个群
   const likeKey = `group:${groupId}:user:%`;
   const res = await env.DB.prepare("DELETE FROM chat_history WHERE scene_key LIKE ?").bind(likeKey).run();
+  await clearGroupMemory(env, groupId);
   await logAdminAction(env, {
     adminId: myId, chatId, action: "group_clear_memory",
     detail: `群 ${groupId}（清除 ${res.meta.changes} 个场景）`

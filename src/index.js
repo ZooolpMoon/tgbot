@@ -13,6 +13,8 @@ import { runScheduledTasks } from "./services/daily.js";
 import { syncCommandMenuOnce } from "./services/command-menu.js";
 import { noteIncomingWebhook } from "./services/webhook.js";
 import { alertAdmin } from "./services/alerts.js";
+import { flushUsage } from "./services/usage.js";
+import { handleWebAdmin } from "./web/admin.js";
 
 export default {
   /**
@@ -21,6 +23,18 @@ export default {
    * 真正的异常会写入日志，方便 wrangler tail 排查。
    */
   async fetch(request, env, ctx) {
+    // 🖥️ Web 管理后台（v3.10.0）：与 webhook 的 POST / 分属不同路径，互不干扰。
+    // 这里必须在「非 POST 一律返回部署探活文案」之前拦下来。
+    const url = new URL(request.url);
+    if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
+      try {
+        return await handleWebAdmin(request, env);
+      } catch (e) {
+        logError("Web 后台异常：", e);
+        return new Response("Web 后台暂时不可用", { status: 500 });
+      }
+    }
+
     if (request.method !== "POST") {
       return new Response("已成功部署！", { status: 200 });
     }
@@ -40,6 +54,18 @@ export default {
     const myId = env.MY_TELEGRAM_ID ? String(env.MY_TELEGRAM_ID).trim() : null;
     if (!token) return new Response("Bot Token Missing", { status: 500 });
 
+    /**
+     * 统一出口：把这次请求攒下的用量统计落库（force 立即写，不等节流）。
+     * 统计只占内存时不落库，isolate 一回收就没了 —— 落库放在 waitUntil 里，
+     * 既不拖慢响应，也不会因为「刚好没到节流间隔」而白记一场。
+     */
+    const done = async (text = "OK", status = 200) => {
+      const flush = flushUsage(env, { force: true });
+      if (ctx?.waitUntil) ctx.waitUntil(flush);
+      else await flush;
+      return new Response(text, { status });
+    };
+
     try {
       // 首次请求时自动建表（IF NOT EXISTS，幂等，不破坏已有数据）
       await ensureSchema(env);
@@ -55,18 +81,18 @@ export default {
 
       const payload = await request.json();
       const uctx = resolveUserContext(payload);
-      if (!uctx) return new Response("OK", { status: 200 });
+      if (!uctx) return await done();
       const isGroupCtx = uctx.chatType === "group" || uctx.chatType === "supergroup";
 
       if (payload.callback_query) {
         await handleCallback({ env, ctx, token, myId, uctx, payload });
-        return new Response("OK", { status: 200 });
+        return await done();
       }
       if (payload.message || payload.edited_message) {
         await handleMessage({ env, ctx, token, myId, uctx, payload, isGroupCtx });
-        return new Response("OK", { status: 200 });
+        return await done();
       }
-      return new Response("OK", { status: 200 });
+      return await done();
     } catch (e) {
       logError("Worker 运行异常:", e);
       // 顺手私聊管理员（同类错误 5 分钟只提醒一次，失败静默）

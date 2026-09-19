@@ -23,6 +23,12 @@ import { buildGroupScopeKey } from "../core/context.js";
 import { logAdminAction } from "../services/admin-log.js";
 
 const SCENES_PER_PAGE = 8;
+/**
+ * 开关列表每页显示几个（两列 = 3 行）。
+ * 功能变多之后（v3.10.0 到了 14 个）一页铺满会顶破「整菜单 ≤ 8 行」的约定，
+ * 所以这里分页：3 行开关 + 1 行翻页 + 1~2 行返回，最多 6 行。
+ */
+const SWITCHES_PER_PAGE = 6;
 const LABEL_MAX = 12;
 
 /** 菜单按钮文案统一走 compactLabel，避免溢出与截断 emoji */
@@ -141,7 +147,7 @@ async function renderScenePicker(token, env, chatId, messageId, kind, page = 1) 
  * 单个作用域（全局 / 某个群 / 某个场景）的开关面板。
  * scopeToken 会原样回填到按钮回调里，所以它必须与 renderFeatureScope 的解析规则一致。
  */
-async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title, scopeToken }) {
+async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title, scopeToken, page = 1 }) {
   const effective = await getFeatureMap(env, scopeKey);
   const sources = await getFeatureSources(env, scopeKey);
   const isGlobal = scopeKey === GLOBAL_SCOPE;
@@ -151,26 +157,40 @@ async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title
     ? { groupKey: scopeKey }
     : { sceneKey: scopeKey, groupKey: groupKeyOfScene(scopeKey) };
 
+  const totalPages = totalPagesOf(FEATURES.length, SWITCHES_PER_PAGE);
+  const safePage = clampPage(page, totalPages);
+  const offset = pageOffset(safePage, SWITCHES_PER_PAGE);
+  const visible = FEATURES.slice(offset, offset + SWITCHES_PER_PAGE);
+
   let text = `⚙️ <b>${title}</b>\n`;
   text += `-------------------------\n`;
+  if (totalPages > 1) text += `第 <b>${safePage} / ${totalPages}</b> 页（共 ${FEATURES.length} 项）\n`;
   text += isGlobal
     ? `这是<b>全局默认值</b>，场景没单独设置时就用它。\n\n`
     : (isGroupScope
       ? `只影响<b>这个群</b>；未设置的项目<b>跟随全局</b>。\n\n`
       : `只影响这个场景；未设置的项目<b>跟随全局</b>。\n\n`);
 
-  for (const f of FEATURES) {
+  for (const f of visible) {
     const on = effective[f.key] !== false;
     // 来源统一用配置模型描述：本场景 / 本群 / 全局 / 内置默认
     const tag = `（${describeSource(sources[f.key] || null, sourceOpts)}）`;
     text += `${on ? "✅" : "🚫"} <b>${f.label}</b>${tag}\n`;
   }
 
-  const buttons = FEATURES.map((f) => ({
+  // ⚠️ 按钮里回填的 scopeToken 必须是**干净**的（不带页码），
+  // 否则 handleFeatureToggle 解析 `gc<群ID>` 时会多出一截 "~2"，群 ID 就废了。
+  const buttons = visible.map((f) => ({
     text: `${effective[f.key] === false ? "🚫" : "✅"} ${f.label}`,
     callback_data: `${ADMIN_CALLBACK.FEATURE_TOGGLE_PREFIX}${scopeToken}_${f.key}`
   }));
   const inline_keyboard = grid(buttons);
+
+  // 翻页：页码附在 scopeToken 后面（用 ~ 分隔，scopeToken 本身不含它）
+  const nav = pagerRow({
+    page: safePage, totalPages, prefix: `${ADMIN_CALLBACK.FEATURES_SCENE_PREFIX}${scopeToken}~`
+  });
+  if (nav) inline_keyboard.push(nav);
 
   if (isGlobal) {
     inline_keyboard.push([{ text: "🔙 返回功能开关", callback_data: ADMIN_CALLBACK.FEATURES_HOME }]);
@@ -194,7 +214,11 @@ async function renderSwitchMenu(token, env, chatId, messageId, { scopeKey, title
 export async function renderFeatureScope(token, env, chatId, messageId, scopeToken) {
   if (!env.DB) return editMessageText(token, chatId, messageId, "❌ 未绑定数据库。");
 
-  const scope = String(scopeToken ?? "");
+  // 页码用 ~ 附在作用域 token 后面（例如 gc-100123~2 = 群 -100123 的第 2 页）
+  const raw = String(scopeToken ?? "");
+  const tilde = raw.lastIndexOf("~");
+  const scope = tilde === -1 ? raw : raw.slice(0, tilde);
+  const page = tilde === -1 ? 1 : (Number.parseInt(raw.slice(tilde + 1), 10) || 1);
 
   if (scope.startsWith("gl")) {
     return renderScenePicker(token, env, chatId, messageId, "group", Number.parseInt(scope.slice(2), 10) || 1);
@@ -204,7 +228,7 @@ export async function renderFeatureScope(token, env, chatId, messageId, scopeTok
   }
   if (scope === "g") {
     return renderSwitchMenu(token, env, chatId, messageId, {
-      scopeKey: GLOBAL_SCOPE, title: "🌍 全局功能开关", scopeToken: "g"
+      scopeKey: GLOBAL_SCOPE, title: "🌍 全局功能开关", scopeToken: "g", page
     });
   }
 
@@ -217,7 +241,7 @@ export async function renderFeatureScope(token, env, chatId, messageId, scopeTok
     return renderSwitchMenu(token, env, chatId, messageId, {
       scopeKey: buildGroupScopeKey(groupChatId),
       title: `👥 群 <code>${escapeHtml(groupChatId)}</code>`,
-      scopeToken: scope
+      scopeToken: scope, page
     });
   }
 
@@ -240,7 +264,7 @@ export async function renderFeatureScope(token, env, chatId, messageId, scopeTok
     : `💬 ${escapeHtml(scene.first_name || scene.user_id || scene.scene_key)}`;
 
   return renderSwitchMenu(token, env, chatId, messageId, {
-    scopeKey: scene.scene_key, title: `${title} · 功能开关`, scopeToken: scope
+    scopeKey: scene.scene_key, title: `${title} · 功能开关`, scopeToken: scope, page
   });
 }
 

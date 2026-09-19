@@ -294,7 +294,14 @@ test("走真实回调入口：点群列表里的群能打开**群级**开关面�
   const text = lastEditedText();
   assert.match(text, /群 <code>-100123<\/code>/, `应打开群级面板，实际：${text.slice(0, 120)}`);
   assert.ok(!/参数无效/.test(text), "不该再报参数无效");
-  assert.ok(text.includes("入群欢迎与验证"), "应列出 welcome 开关");
+
+  // 开关变多后列表分页（每页 6 个），welcome 在第 2 页 —— 要能翻到
+  const nextButton = (lastEditedKeyboard()?.inline_keyboard || [])
+    .flat().find((b) => String(b.text).includes("下一页"));
+  assert.ok(nextButton, "开关多于每页条数时应给出翻页按钮");
+  await clickAdmin(env, nextButton.callback_data);
+  assert.ok(lastEditedText().includes("入群欢迎与验证"), "第 2 页应列出 welcome 开关");
+  assert.match(lastEditedText(), /群 <code>-100123<\/code>/, "翻页后仍应停留在同一个群的面板");
   db.close();
 });
 
@@ -356,7 +363,13 @@ test("群面板显示的来源是「本群设置」而不是「本场景设置�
   await renderFeatureScope("T", env, "999", 7, `gc${groupChatId}`);
 
   const text = lastEditedText();
-  assert.match(text, /本群设置/, `群级面板应把来源标为「本群设置」：${text.slice(0, 200)}`);
-  assert.ok(text.includes("入群欢迎与验证"), "应列出 welcome 开关");
+  assert.match(text, /群 <code>-100123<\/code>/, "应打开群级面板");
+
+  // welcome 在第 2 页（列表分页），翻过去仍要标「本群设置」
+  await renderFeatureScope("T", env, "999", 7, `gc${groupChatId}~2`);
+  const page2 = lastEditedText();
+  assert.match(page2, /本群设置/, `群级面板应把来源标为「本群设置」：${page2.slice(0, 200)}`);
+  assert.ok(page2.includes("入群欢迎与验证"), "第 2 页应列出 welcome 开关");
+  assert.ok(!/本场景设置/.test(page2), "群级作用域不该显示「本场景设置」");
   db.close();
 });

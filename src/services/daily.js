@@ -20,6 +20,10 @@ import { reindexKnowledge } from "./knowledge.js";
 import { ensureWebhook } from "./webhook.js";
 import { refundPoint } from "./points.js";
 import { processJoinVerifications } from "./welcome.js";
+import { cleanupAutoMod } from "./automod.js";
+import { pushDailyReports, cleanupGroupMessages } from "./summary.js";
+import { processDueDraws } from "./draw.js";
+import { countUsage, METRIC, cleanupUsage } from "./usage.js";
 import { deleteMessage } from "../telegram/api.js";
 
 /**
@@ -95,8 +99,48 @@ export async function cleanupStaleData(env) {
   // 群规处置：把已到期的临时禁言标记为 expired（返回明细，供定时任务发通知）
   const expiredList = await expirePunishments(env);
 
+  // 群内抽奖：结束（已开奖 / 已取消）的记录留 30 天，报名名单随抽奖一起清。
+  // 必须**先删名单再删抽奖**：名单是按 draw_id 关联的，反过来会变成孤儿数据。
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        "DELETE FROM group_draw_entries WHERE draw_id IN (SELECT id FROM group_draws WHERE status <> 'open' AND created_at <= datetime('now', '-30 days'))"
+      ),
+      env.DB.prepare(
+        "DELETE FROM group_draws WHERE status <> 'open' AND created_at <= datetime('now', '-30 days')"
+      )
+    ]);
+  } catch (e) {
+    logError("清理抽奖记录失败：", e);
+  }
+
   // 21 点牌局超时退款（及时型，抽出去了，见 cleanupTimely）
   const blackjack = await refundStaleBlackjack(env);
+
+  // 自动反垃圾的历史记录（30 天）与新成员时间（7 天）。
+  // 属于「日级」维护：没人会指望违规记录在 2 分钟里被清掉。
+  let automod = { events: 0, newcomers: 0 };
+  try {
+    automod = await cleanupAutoMod(env);
+  } catch (e) {
+    logError("清理反垃圾记录失败：", e);
+  }
+
+  // 群消息流水（7 天）与群报正文（30 天）
+  let groupLog = { messages: 0, reports: 0 };
+  try {
+    groupLog = await cleanupGroupMessages(env);
+  } catch (e) {
+    logError("清理群消息流水失败：", e);
+  }
+
+  // 用量统计明细（保留 90 天）
+  let usageCleaned = 0;
+  try {
+    usageCleaned = await cleanupUsage(env);
+  } catch (e) {
+    logError("清理用量统计失败：", e);
+  }
 
   return {
     adminSessions: adminSessions.meta.changes,
@@ -109,6 +153,12 @@ export async function cleanupStaleData(env) {
     adminManageSessions: adminManageSessions.meta.changes,
     tagSessions: tagSessions.meta.changes,
     welcomeSessions: welcomeSessions.meta.changes,
+    // 展平成数字：上面的「本次清理」求和直接遍历这一层
+    automodEvents: automod.events,
+    newcomers: automod.newcomers,
+    groupMessages: groupLog.messages,
+    groupReports: groupLog.reports,
+    usageStats: usageCleaned,
     ...blackjack,
     expiredPunishments: expiredList.length,
     stalePunishments: stalePunishments.meta.changes,
@@ -186,11 +236,23 @@ async function refundStaleBlackjack(env) {
 export async function cleanupTimely(env, token = null) {
   const empty = {
     blackjackSessions: 0, blackjackRefunded: 0, blackjackFailed: 0,
-    joinVerifications: { checked: 0, kicked: 0, released: 0, failed: 0 }
+    joinVerifications: { checked: 0, kicked: 0, released: 0, failed: 0 },
+    draws: { checked: 0, drawn: 0 }
   };
   if (!env?.DB) return empty;
 
   const blackjack = await refundStaleBlackjack(env);
+
+  // 群内抽奖到点开奖（v3.10.0）：报名时长最短 10 分钟，
+  // 和牌局、入群验证一样属于「等不到第二天的及时型」，所以挂在每 2 分钟的 tick 上。
+  let draws = empty.draws;
+  if (token) {
+    try {
+      draws = await processDueDraws(env, token);
+    } catch (e) {
+      logError("抽奖自动开奖失败：", e);
+    }
+  }
 
   // 入群验证超时：没点「通过验证」的新成员，按本群配置踢出或仅解除限制
   let joinVerifications = empty.joinVerifications;
@@ -202,7 +264,7 @@ export async function cleanupTimely(env, token = null) {
     }
   }
 
-  return { ...blackjack, joinVerifications };
+  return { ...blackjack, joinVerifications, draws };
 }
 
 /**
@@ -302,6 +364,7 @@ export async function collectDailySummary(env) {
  */
 export async function runScheduledTasks(env, token, ctx = null, { cron = null } = {}) {
   const isDailyRun = !cron || cron === DAILY_SUMMARY_CRON;
+  countUsage(env, METRIC.CRON);
 
   // ---------- 每次 tick 都要做的（及时型）----------
   // 1) 长延时自动删除：到点就该删，不能等日报
@@ -338,6 +401,21 @@ export async function runScheduledTasks(env, token, ctx = null, { cron = null } 
   const cleanup = await cleanupStaleData(env);
   const summary = await collectDailySummary(env);
 
+  // ---------- 📰 每日群报（v3.10.0）----------
+  // 只给「开启了群报且昨天有消息」的群生成，一次最多几个群（模型调用要控量）。
+  // 放在「每日概况」推送**之前**：概况有自己的去重标记，命中时会提前 return。
+  const adminChatForReports = resolveAdminChatId(env);
+  let groupReports = { chats: 0, sent: 0 };
+  if (token && adminChatForReports) {
+    try {
+      groupReports = await pushDailyReports({
+        env, token, ctx, adminChatId: adminChatForReports
+      });
+    } catch (e) {
+      logError("推送每日群报失败：", e);
+    }
+  }
+
   // 索引维护：补上「上传时没有 AI」或「换过向量模型」的分块（每次有上限，分多次跑完）。
   // 刻意留在每次 tick：换模型后要靠它分批补，放到日报会让 400 块要补 20 天。
   let reindex = null;
@@ -352,6 +430,7 @@ export async function runScheduledTasks(env, token, ctx = null, { cron = null } 
     reindex,
     pendingDeletes,
     webhook,
+    groupReports,
     summary: { ...summary, pendingList: summary.pendingList.length }
   }));
 
