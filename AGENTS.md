@@ -44,7 +44,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 331 个用例）
+2. `npm test` 通过（当前 334 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -133,6 +133,8 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - **会再次扣分的操作必须原子**（双倍用 `WHERE doubled = 0`），并给被拦下的那一次 `refundPoint`，否则并发点击会重复扣本金
   - **判定走固定规则**（`dealerShouldHit`：<17 要牌、≥17 停），AI 只出结算台词（`blackjack-ai.js`，每局 1 次调用 + 失败回退内置台词）。**别让模型决定要不要牌**：它可能 20 点还要牌，用户只会觉得机器人在作弊
   - 它不是引导式会话（不吃文本），所以**不进** `GUIDE_SESSION_TABLES`，但必须在 `services/daily.js` 里清理
+  - **发奖 / 状态流转必须由一条带条件的原子语句做唯一凭据**（v3.6.1 教训）：只要还有「先 SELECT 判断、再写」，连点或 Telegram 重推回调就会重复执行。21 点原来的 `dropSession` 是裸 `DELETE`、不校验 `meta.changes`，而结算中间还有一次**最长 8 秒**的 AI 台词调用 —— 窗口大到用户随便点两下就能撞上（赢 100 分的局能收两次）。凡是「只能发生一次」的动作（发奖 / 核销 / 执行处置），都要用 `UPDATE/DELETE ... WHERE status = '旧状态'` + `meta.changes === 1` 判定，**别拿 SELECT 的结果当凭据**。
+  - 同理，**建状态行要用 `INSERT ... ON CONFLICT DO NOTHING` 并检查结果**，不要 upsert：upsert 既能「重复扣分却没有记录」（超时退款扫的是状态表，那笔分就找不回来），也能在结算之后把已删的状态「写活」，让用户反复结算同一局。
 - **新游戏的期望值绝不能 > 1（加游戏的第一条）**：积分是**消耗品**——来源主要是签到（5~20 分/天），AI 对话 1 分/次，商城与兑换码都按这个量级定价。游戏一旦做成正期望，用户就能稳定刷分，整个积分体系（定价、通胀）直接被冲垮。
   - 现有的账：骰子 / 抛硬币 / 猜拳是 `1:2 含本金` → EV = 1.0（公平娱乐向）；老虎机 / 转盘 / 轮盘有抽水（轮盘是数学自带的 `36/37 ≈ 0.973`）；抽奖 EV ≈ 9.4 < 成本 10
   - **必须配一条守卫测试**，不能只靠注释：抽奖那边是 `expectedPrize() < PAID_COST`（`test/points-play.test.mjs`），轮盘那边是每种下注的 `returnRate() === 36/37`（`test/roulette.test.mjs`）。改赔率表时守卫会直接失败，这才是「上锁」
