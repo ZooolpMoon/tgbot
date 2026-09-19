@@ -15,6 +15,7 @@ import { SlotsGame } from "./slots.js";
 import { CoinGame } from "./coin.js";
 import { WheelGame } from "./wheel.js";
 import { BlackjackGame } from "./blackjack.js";
+import { RouletteGame } from "./roulette.js";
 import { logWarn, logError } from "../core/logger.js";
 
 /** 游戏大厅键盘：2×2 网格 + 独立关闭按钮 */
@@ -26,7 +27,8 @@ export function getGameCenterKeyboard() {
         { text: "🎰 欢乐老虎机", callback_data: "game_slots_main" },
         { text: "🪙 抛硬币", callback_data: "game_coin_main" },
         { text: "🎡 幸运转盘", callback_data: "game_wheel_main" },
-        { text: "🃏 21 点（AI 庄家）", callback_data: "game_bj_main" }
+        { text: "🃏 21 点（AI 庄家）", callback_data: "game_bj_main" },
+        { text: "🔴⚫ 轮盘赌", callback_data: "game_roulette_main" }
       ]),
       [{ text: "❌ 关闭", callback_data: "game_close" }]
     ]
@@ -43,7 +45,8 @@ export async function renderGameCenter(token, chatId, messageId = null) {
     `🎰 <b>欢乐老虎机</b>：最高赢取 50 倍大奖\n` +
     `🪙 <b>抛硬币</b>：猜正反面，赢了 2 倍\n` +
     `🎡 <b>幸运转盘</b>：转盘抽倍率，最高 50 倍\n` +
-    `🃏 <b>21 点</b>：跟 AI 庄家对赌，要牌 / 停牌 / 双倍，Blackjack 赔 3:2`;
+    `🃏 <b>21 点</b>：跟 AI 庄家对赌，要牌 / 停牌 / 双倍，Blackjack 赔 3:2\n` +
+    `🔴⚫ <b>轮盘赌</b>：押红黑 / 单双 / 大小 / 三打，最高 2:1`;
 
   const keyboard = getGameCenterKeyboard();
 
@@ -73,6 +76,11 @@ const GAME_REGISTRY = {
   bj: {
     renderMain: (t, e, c, u, m) => BlackjackGame.renderMain(t, e, c, u, m),
     onBetConfirm: (t, e, cbId, c, u, m, amt) => BlackjackGame.start(t, e, cbId, c, u, m, amt)
+  },
+  // 轮盘赌：选金额后先选下注类型（红/黑…），点下注类型才开奖
+  roulette: {
+    renderMain: (t, e, c, u, m) => RouletteGame.renderMain(t, e, c, u, m),
+    onBetConfirm: (t, e, cbId, c, u, m, amt) => RouletteGame.renderBetChoice(t, e, c, u, m, amt)
   }
 };
 
@@ -161,6 +169,17 @@ export async function handleGameCallbacks(token, env, callback, chatId, userKey,
       if (Number.isFinite(betAmount) && betAmount > 0) {
         return WheelGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount, sceneKey);
       }
+    }
+
+    // 轮盘赌：game_roulette_play_<金额>_<下注类型>，点下即开奖
+    if (data.startsWith("game_roulette_play_")) {
+      const parts = data.replace("game_roulette_play_", "").split("_");
+      const betAmount = parseInt(parts[0], 10);
+      const pickKey = parts[1];
+      if (Number.isFinite(betAmount) && betAmount > 0 && pickKey) {
+        return RouletteGame.play(token, env, callback.id, chatId, userKey, messageId, betAmount, pickKey, sceneKey);
+      }
+      return answerCallback(token, callback.id, "⚠️ 无效下注", true);
     }
 
     // 21 点的牌局内操作（要牌 / 停牌 / 双倍），状态在 blackjack_sessions 里
