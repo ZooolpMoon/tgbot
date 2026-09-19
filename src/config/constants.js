@@ -89,7 +89,10 @@ export const RULES = {
   // AI 上下文总量上限（字符数），超出时从最旧的消息开始丢弃
   HISTORY_MAX_CHARS: 6000,
   // 单条消息写入历史前的截断长度
-  HISTORY_MESSAGE_MAX_CHARS: 2000
+  HISTORY_MESSAGE_MAX_CHARS: 2000,
+  // 「回复某条消息 + @机器人」时，引用进提示词的那条消息最多取多少字符
+  // （总结长文够用，又不至于把一次对话的上下文预算吃光）
+  QUOTED_MESSAGE_MAX_CHARS: 1500
 };
 
 // ==========================================
@@ -142,7 +145,35 @@ export const KB = {
   ANSWER_MODE: "hybrid",
   // 向量模型（可用环境变量 KB_EMBED_MODEL 覆盖；换模型后需要重建索引）
   EMBED_MODEL: "@cf/baai/bge-m3",
-  EMBED_BATCH: 8
+  EMBED_BATCH: 8,
+  // 单条语句最多补读多少个分块向量。D1 对**单条语句的绑定参数**有 100 个的硬上限，
+  // 而检索兜底（关键词零命中）时候选可达 MAX_TOTAL_CHUNKS * 2 个，所以必须分批读。
+  EMBED_ID_BATCH: 80,
+  // 重排序（v3.9.0，**默认关闭**）：候选多于 TOP_K 时用交叉编码模型重新排序，
+  // 检索质量更好但要**多一次 Workers AI 调用**，所以不默认打开。
+  // 开启方式：把 KB_RERANK_MODEL 设为模型名（如 @cf/baai/bge-reranker-base）；
+  // 设为 off / none / 空串则保持关闭。模型报错时自动回退到原排序。
+  RERANK_MODEL: "",
+  // 最多拿多少条合格候选去重排序（交叉编码的开销与候选数成正比）
+  RERANK_LIMIT: 20,
+  // 送进重排序模型的单条正文截断长度
+  RERANK_DOC_CHARS: 400
+};
+
+// ==========================================
+// 👋 入群欢迎与人机验证（v3.9.0）
+// ==========================================
+
+export const WELCOME = {
+  // 默认欢迎语（{name} = 新成员，{group} = 群名）；管理员可用 /welcome 改
+  DEFAULT_TEXT: "👋 欢迎 {name} 加入 {group}！\n请先看一遍群规，和大家友好相处～",
+  // 欢迎语最大字符数
+  TEXT_MAX: 500,
+  // 验证超时候选（分钟）与默认值
+  TIMEOUT_CHOICES: [5, 10, 30],
+  DEFAULT_TIMEOUT_MIN: 10,
+  // 一次 cron 最多处理多少个超时验证（避免一个 tick 里踢太多人）
+  PROCESS_LIMIT: 20
 };
 
 // ==========================================
@@ -246,6 +277,18 @@ export const ADMIN_CALLBACK = {
   KB_REINDEX: "admin_kb_reindex",
   KB_PROMOTE_PREFIX: "admin_kb_promote_",
   KB_COPY_PREFIX: "admin_kb_copy_",
+
+  // ---------- 👋 入群欢迎与人机验证（v3.9.0）----------
+  // 管理面板按钮统一 admin_welcome 前缀（capability = manage_guard）；
+  // 新成员点的「通过验证」按钮**不带 admin_ 前缀**，任何成员都要能点。
+  WELCOME_HOME: "admin_welcome",
+  WELCOME_TOGGLE: "admin_welcome_on",
+  WELCOME_VERIFY: "admin_welcome_verify",
+  WELCOME_KICK: "admin_welcome_kick",
+  WELCOME_TIMEOUT_PREFIX: "admin_welcome_time_",
+  WELCOME_EDIT: "admin_welcome_edit",
+  WELCOME_RESET: "admin_welcome_reset",
+  JOIN_VERIFY_OK: "joinok",
 
   // ---------- 📋 操作日志筛选 ----------
   LOGS_FILTER_PREFIX: "admin_logs_f_",

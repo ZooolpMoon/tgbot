@@ -21,7 +21,8 @@ export const GUIDE_SESSION_TABLES = [
   "kb_sessions",
   "guard_sessions",
   "admin_manage_sessions",
-  "group_tag_sessions"
+  "group_tag_sessions",
+  "welcome_sessions"
 ];
 
 /**

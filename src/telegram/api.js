@@ -171,6 +171,16 @@ export function editMessageText(token, chatId, messageId, text, replyMarkup = nu
   return postJSON(`${BASE(token)}/editMessageText`, body);
 }
 
+/**
+ * 只替换消息的按钮，不动正文。
+ * 入群验证用它：成员通过后把「✅ 我已阅读群规」收掉，欢迎语本身保留。
+ */
+export function editMessageReplyMarkup(token, chatId, messageId, replyMarkup = null) {
+  const body = { chat_id: chatId, message_id: messageId };
+  if (replyMarkup) body.reply_markup = replyMarkup;
+  return postJSON(`${BASE(token)}/editMessageReplyMarkup`, body);
+}
+
 /** 回应按钮点击；showAlert=true 时以弹窗形式提示用户 */
 export function answerCallback(token, callbackQueryId, text, showAlert = false) {
   return postJSON(`${BASE(token)}/answerCallbackQuery`, {

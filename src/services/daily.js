@@ -19,6 +19,7 @@ import { expirePunishments, ACTIONS, formatDuration } from "./guard.js";
 import { reindexKnowledge } from "./knowledge.js";
 import { ensureWebhook } from "./webhook.js";
 import { refundPoint } from "./points.js";
+import { processJoinVerifications } from "./welcome.js";
 import { deleteMessage } from "../telegram/api.js";
 
 /**
@@ -55,64 +56,44 @@ export async function cleanupStaleData(env) {
   const nowSec = Math.floor(Date.now() / 1000);
   const today = getDateKey(env);
 
-  const adminSessions = await env.DB.prepare(
-    "DELETE FROM admin_sessions WHERE expires_at <= ?"
-  ).bind(nowSec).run();
+  // 这些清理彼此独立，合并成**一次** env.DB.batch：原先 13 条串行 await
+  // 就是 13 个 D1 往返，而这段每天都要跑一次。batch 按顺序执行，
+  // 返回结果的顺序与传入一致，下面按位解构。
+  const [
+    adminSessions, broadcastDrafts, orderDrafts, addSessions, editSessions,
+    kbSessions, guardSessions, adminManageSessions, tagSessions, welcomeSessions,
+    stalePunishments, stuckPunishments, staleAppeals, expiredCodes
+  ] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM admin_sessions WHERE expires_at <= ?").bind(nowSec),
+    env.DB.prepare("DELETE FROM broadcast_drafts WHERE updated_at <= datetime('now', '-7 days')"),
+    env.DB.prepare("DELETE FROM shop_order_drafts WHERE updated_at <= datetime('now', '-1 day')"),
+    env.DB.prepare("DELETE FROM shop_add_sessions WHERE updated_at <= datetime('now', '-1 day')"),
+    env.DB.prepare("DELETE FROM shop_edit_sessions WHERE updated_at <= datetime('now', '-1 day')"),
+    env.DB.prepare("DELETE FROM kb_sessions WHERE updated_at <= datetime('now', '-1 day')"),
+    env.DB.prepare("DELETE FROM guard_sessions WHERE updated_at <= datetime('now', '-1 day')"),
+    env.DB.prepare("DELETE FROM admin_manage_sessions WHERE updated_at <= datetime('now', '-1 day')"),
+    // 群标签引导流程（选群 → 填标签）也是 30 分钟有效，这里兜底
+    env.DB.prepare("DELETE FROM group_tag_sessions WHERE updated_at <= datetime('now', '-1 day')"),
+    // 欢迎语编辑会话（v3.9.0）同样 30 分钟有效
+    env.DB.prepare("DELETE FROM welcome_sessions WHERE updated_at <= datetime('now', '-1 day')"),
+    // 清理一天前仍未确认的处置记录
+    env.DB.prepare("DELETE FROM group_punishments WHERE status = 'pending' AND created_at <= datetime('now', '-1 day')"),
+    // 执行中断的处置（Worker 在「原子占用」与「写回结果」之间被杀）：
+    // 30 分钟后标记为 failed，避免记录永久卡在 executing。保持「失败不可重试」
+    // 的现有语义 —— 宁可让管理员重新发起，也不要冒「重复执法」的风险。
+    env.DB.prepare(
+      `UPDATE group_punishments SET status = 'failed', detail = '执行中断（未完成）', updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'executing' AND updated_at <= datetime('now', '-30 minutes')`
+    ),
+    // 已处理完的申诉保留 30 天，避免无限增长
+    env.DB.prepare("DELETE FROM punishment_appeals WHERE status <> 'pending' AND created_at <= datetime('now', '-30 days')"),
+    env.DB.prepare(
+      "UPDATE redeem_codes SET enabled = 0 WHERE enabled = 1 AND expires_at IS NOT NULL AND expires_at < ?"
+    ).bind(today)
+  ]);
 
-  const broadcastDrafts = await env.DB.prepare(
-    "DELETE FROM broadcast_drafts WHERE updated_at <= datetime('now', '-7 days')"
-  ).run();
-
-  const orderDrafts = await env.DB.prepare(
-    "DELETE FROM shop_order_drafts WHERE updated_at <= datetime('now', '-1 day')"
-  ).run();
-
-  const addSessions = await env.DB.prepare(
-    "DELETE FROM shop_add_sessions WHERE updated_at <= datetime('now', '-1 day')"
-  ).run();
-
-  const editSessions = await env.DB.prepare(
-    "DELETE FROM shop_edit_sessions WHERE updated_at <= datetime('now', '-1 day')"
-  ).run();
-
-  const kbSessions = await env.DB.prepare(
-    "DELETE FROM kb_sessions WHERE updated_at <= datetime('now', '-1 day')"
-  ).run();
-
-  const guardSessions = await env.DB.prepare(
-    "DELETE FROM guard_sessions WHERE updated_at <= datetime('now', '-1 day')"
-  ).run();
-
-  const adminManageSessions = await env.DB.prepare(
-    "DELETE FROM admin_manage_sessions WHERE updated_at <= datetime('now', '-1 day')"
-  ).run();
-
-  // 群标签引导流程（选群 → 填标签）也是 30 分钟有效，这里兜底
-  const tagSessions = await env.DB.prepare(
-    "DELETE FROM group_tag_sessions WHERE updated_at <= datetime('now', '-1 day')"
-  ).run();
-
-  // 群规处置：把已到期的临时禁言标记为 expired（返回明细，供定时任务发通知），
-  // 并清理一天前仍未确认的处置记录
+  // 群规处置：把已到期的临时禁言标记为 expired（返回明细，供定时任务发通知）
   const expiredList = await expirePunishments(env);
-  const stalePunishments = await env.DB.prepare(
-    "DELETE FROM group_punishments WHERE status = 'pending' AND created_at <= datetime('now', '-1 day')"
-  ).run();
-  // 执行中断的处置（Worker 在「原子占用」与「写回结果」之间被杀）：
-  // 30 分钟后标记为 failed，避免记录永久卡在 executing。保持「失败不可重试」
-  // 的现有语义 —— 宁可让管理员重新发起，也不要冒「重复执法」的风险。
-  const stuckPunishments = await env.DB.prepare(
-    `UPDATE group_punishments SET status = 'failed', detail = '执行中断（未完成）', updated_at = CURRENT_TIMESTAMP
-      WHERE status = 'executing' AND updated_at <= datetime('now', '-30 minutes')`
-  ).run();
-  // 已处理完的申诉保留 30 天，避免无限增长
-  const staleAppeals = await env.DB.prepare(
-    "DELETE FROM punishment_appeals WHERE status <> 'pending' AND created_at <= datetime('now', '-30 days')"
-  ).run();
-
-  const expiredCodes = await env.DB.prepare(
-    "UPDATE redeem_codes SET enabled = 0 WHERE enabled = 1 AND expires_at IS NOT NULL AND expires_at < ?"
-  ).bind(today).run();
 
   // 21 点牌局超时退款（及时型，抽出去了，见 cleanupTimely）
   const blackjack = await refundStaleBlackjack(env);
@@ -127,6 +108,7 @@ export async function cleanupStaleData(env) {
     guardSessions: guardSessions.meta.changes,
     adminManageSessions: adminManageSessions.meta.changes,
     tagSessions: tagSessions.meta.changes,
+    welcomeSessions: welcomeSessions.meta.changes,
     ...blackjack,
     expiredPunishments: expiredList.length,
     stalePunishments: stalePunishments.meta.changes,
@@ -141,6 +123,10 @@ export async function cleanupStaleData(env) {
 /**
  * 21 点牌局超时退款（**及时型**：本金 30 分钟就该退回去，不能等到日报）。
  * 先退本金再删记录 —— 本金是开局就扣的，用户没点完不能算他输。
+ *
+ * ⚠️ 只删「退款成功 / 本来就没本金」的行：退款失败（D1 抖动、用户记录缺失）
+ * 就把牌局留着，下一个 tick 再试。原先是无条件 DELETE，一次退款失败
+ * 这笔本金就永远找不回来了。
  * @returns {Promise<{blackjackSessions:number, blackjackRefunded:number, blackjackFailed:number}>}
  */
 async function refundStaleBlackjack(env) {
@@ -148,28 +134,44 @@ async function refundStaleBlackjack(env) {
   let failed = 0;
   try {
     const { results } = await env.DB.prepare(
-      `SELECT user_key, bet FROM blackjack_sessions
+      `SELECT chat_id, user_key, bet FROM blackjack_sessions
         WHERE status = 'playing' AND updated_at <= datetime('now', '-30 minutes')`
     ).all();
+
+    // 牌局表是 (chat_id, user_key) 复合主键，没有自增 id，按主键定位
+    const settled = [];
     for (const row of results || []) {
       const bet = Math.floor(Number(row.bet) || 0);
-      if (bet < 1) continue;
+      if (bet < 1) {
+        // 没有本金可退（理论上不该出现），直接清理
+        settled.push(row);
+        continue;
+      }
       const refunded = await refundPoint(env, row.user_key, bet, "21 点牌局超时退款");
-      if (refunded === null) failed++;
-      else refundedCount++;
+      if (refunded === null) {
+        failed++;
+        continue;   // 留着下次重试
+      }
+      refundedCount++;
+      settled.push(row);
     }
-  } catch (e) {
-    logError("21 点超时退款失败：", e);
-  }
-  const deleted = await env.DB.prepare(
-    `DELETE FROM blackjack_sessions WHERE updated_at <= datetime('now', '-30 minutes')`
-  ).run();
 
-  return {
-    blackjackSessions: Number(deleted?.meta?.changes) || 0,
-    blackjackRefunded: refundedCount,
-    blackjackFailed: failed
-  };
+    if (settled.length > 0) {
+      await env.DB.batch(settled.map((row) =>
+        env.DB.prepare("DELETE FROM blackjack_sessions WHERE chat_id = ? AND user_key = ?")
+          .bind(row.chat_id, row.user_key)
+      ));
+    }
+
+    return {
+      blackjackSessions: settled.length,
+      blackjackRefunded: refundedCount,
+      blackjackFailed: failed
+    };
+  } catch (e) {
+    logError("21 点超时退款失败（记录保留，下个 tick 重试）：", e);
+    return { blackjackSessions: 0, blackjackRefunded: refundedCount, blackjackFailed: failed };
+  }
 }
 
 /**
@@ -178,11 +180,29 @@ async function refundStaleBlackjack(env) {
  * 为什么单独拆出来（v3.7.0）：原先每次 tick 都会跑「一整天 / 一周 / 一个月才需要
  * 一次」的清理与日报统计，720 次/天白做，其中日报那几条还是全表扫描
  * （见 `collectDailySummary`）。这里只保留真正需要及时性的：**超时牌局退款**
- * （牌局 30 分钟有效，本金不能等到第二天才退）。
+ * （牌局 30 分钟有效，本金不能等到第二天才退）与**入群验证超时处理**
+ * （超时 5~30 分钟，同样不能等到日报）。
  */
-export async function cleanupTimely(env) {
-  if (!env?.DB) return { blackjackSessions: 0, blackjackRefunded: 0, blackjackFailed: 0 };
-  return await refundStaleBlackjack(env);
+export async function cleanupTimely(env, token = null) {
+  const empty = {
+    blackjackSessions: 0, blackjackRefunded: 0, blackjackFailed: 0,
+    joinVerifications: { checked: 0, kicked: 0, released: 0, failed: 0 }
+  };
+  if (!env?.DB) return empty;
+
+  const blackjack = await refundStaleBlackjack(env);
+
+  // 入群验证超时：没点「通过验证」的新成员，按本群配置踢出或仅解除限制
+  let joinVerifications = empty.joinVerifications;
+  if (token) {
+    try {
+      joinVerifications = await processJoinVerifications(env, token);
+    } catch (e) {
+      logError("入群验证超时处理失败：", e);
+    }
+  }
+
+  return { ...blackjack, joinVerifications };
 }
 
 /**
@@ -210,6 +230,8 @@ export async function processPendingDeletes(env, token, { limit = 30 } = {}) {
   const rows = results || [];
   let deleted = 0;
   let failed = 0;
+  /** 处理完的待删记录（成功失败都算，失败重试没有意义） */
+  const doneIds = [];
   for (const row of rows) {
     try {
       const res = await deleteMessage(token, row.chat_id, row.message_id);
@@ -220,7 +242,15 @@ export async function processPendingDeletes(env, token, { limit = 30 } = {}) {
       logError("删除待删消息失败：", e);
     }
     // 无论成功失败都清掉记录：失败多半是「消息已被删 / 太久」，重试没有意义
-    await env.DB.prepare("DELETE FROM pending_deletes WHERE id = ?").bind(row.id).run();
+    doneIds.push(Number(row.id));
+  }
+
+  // 一次 IN 收口：原先每行一条 DELETE，30 条/次 × 720 次/天 ≈ 2 万条多余语句
+  if (doneIds.length > 0) {
+    const placeholders = doneIds.map(() => "?").join(", ");
+    await env.DB.prepare(
+      `DELETE FROM pending_deletes WHERE id IN (${placeholders})`
+    ).bind(...doneIds).run();
   }
 
   return { deleted, failed, purged: Number(purgedRes?.meta?.changes) || 0 };
@@ -284,8 +314,8 @@ export async function runScheduledTasks(env, token, ctx = null, { cron = null } 
     }
   }
 
-  // 2) 超时牌局退款（牌局 30 分钟有效，本金不能等到第二天才退）
-  const timely = await cleanupTimely(env);
+  // 2) 超时牌局退款 + 入群验证超时处理
+  const timely = await cleanupTimely(env, token);
 
   // 3) webhook 自愈巡检（isolate 内每 10 分钟最多查一次）
   let webhook = null;

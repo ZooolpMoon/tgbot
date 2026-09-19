@@ -4,7 +4,7 @@
 
 全部跑在 **Cloudflare Workers** 上——不需要服务器、不需要常驻进程、不需要数据库运维，数据保存在你自己的 Cloudflare 账号里。
 
-> 当前版本 **v3.2.2** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
+> 当前版本 **v3.9.0** · 变更记录 [CHANGELOG.md](CHANGELOG.md) · 文档索引 [docs/](docs/README.md) · 许可 [GPL-3.0-or-later](LICENSE)
 
 ---
 
@@ -43,6 +43,7 @@
 | 🤖 AI 对话 | 多模型自动回退、上下文预算、积分计费、失败自动退款 | 私聊直接说，群里 @ 机器人 | [功能详解](docs/features.md) |
 | 📚 知识库问答（RAG） | 上传群规 / 手册 / FAQ，AI 先检索再回答并标注来源 | `/kb` 或后台 → 📚 知识库 | [知识库](docs/knowledge-base.md) |
 | 🛡️ 群规执法 | 用指令处置违规（先校验理由再执行）；支持踢出 / 群封 / 限时禁言 / 举报 / 申诉 / 预警 | 群里 `/ban` `/mute` 等，或 `/guard` 面板 | [群规执法](docs/group-guard.md) |
+| 👋 入群欢迎与验证 | 新成员入群自动欢迎，可要求先点按钮通过验证（默认关闭） | `/welcome` | [功能详解](docs/features.md#-入群欢迎与验证) |
 | 🪙 积分体系 | 全局共享积分、流水、排行榜、管理员增减与封禁 | `/points`、`/rank` | [功能详解](docs/features.md) |
 | 📅 每日签到 | 连续签到奖励递增，断签重置；支持里程碑奖励 | `/checkin` | [功能详解](docs/features.md) |
 | 🎮 小游戏 | 骰子猜大小、老虎机、抛硬币、幸运转盘、🃏 21 点（AI 庄家）、🔴⚫ 轮盘赌 | `/game` | [功能详解](docs/features.md) |
@@ -163,7 +164,7 @@ APP_TIMEZONE="Asia/Shanghai"
 ```bash
 npm run dev      # 启动本地 Worker（默认 http://localhost:8787）
 npm run check    # 语法 + import 路径自检
-npm test         # 365 个测试用例（内存 SQLite 跑真实 SQL）
+npm test         # 440 个测试用例（内存 SQLite 跑真实 SQL）
 ```
 
 ### 5. 部署
@@ -228,7 +229,7 @@ Telegram 默认只把 `/命令` 和 @ 提及转给机器人。要在群里正常
 
 **用户**：`/start` 开始 · `/help` 帮助 · `/checkin` 签到 · `/points` 积分流水 · `/rank` 排行榜 · `/game` 游戏大厅 · `/lottery` 抽奖 · `/transfer` 转账 · `/profile` 我的资料 · `/shop` 商城 · `/orders` 我的订单 · `/bag` 我的背包 · `/redeem` 兑换码 · `/report` 举报（群里） · `/appeal` 申诉（私聊）
 
-**管理员**：`/admin` 控制台 · `/admins` 管理员与权限（仅拥有者）· `/users` `/users_group` 用户列表 · `/stats` 统计 · `/kb` 知识库 · `/guard` `/rules` `/setrules` 群规执法 · `/ban` `/kick` `/groupban` `/mute` `/unban` `/unmute` 处置 · `/code_new` `/code_list` 兑换码 · `/broadcast` 群发 · `/shop_admin` `/shop_add` `/shop_edit` 商城管理 · `/syncmenu` 刷新输入框菜单 · 控制台 → 🗑️ 自动删除
+**管理员**：`/admin` 控制台 · `/admins` 管理员与权限（仅拥有者）· `/users` `/users_group` 用户列表 · `/stats` 统计 · `/kb` 知识库 · `/guard` `/rules` `/setrules` 群规执法 · `/welcome` 入群欢迎与验证 · `/ban` `/kick` `/groupban` `/mute` `/unban` `/unmute` 处置 · `/code_new` `/code_list` 兑换码 · `/broadcast` 群发 · `/shop_admin` `/shop_add` `/shop_edit` 商城管理 · `/syncmenu` 刷新输入框菜单 · 控制台 → 🗑️ 自动删除
 
 > 管理员指令需要先在私聊发 `/admin` 解锁（30 分钟内有效）。完整表格、别名与参数说明见 [指令一览](docs/commands.md)。
 

@@ -9,14 +9,14 @@ npm run dev            # 本地预览（读取 .dev.vars）
 npm run deploy         # 部署（wrangler.toml）
 npm run deploy:prod    # 部署（wrangler.production.toml）
 npm run tail           # 实时看线上日志
-npm run check          # 语法 + 相对 import 路径自检
-npm test               # 365 个测试用例
+npm run check          # 语法 + import 路径 + 文档版本/测试数一致性自检
+npm test               # 440 个测试用例
 npm run backup         # 导出线上 D1 到 backups/
 npm run backup:local   # 导出本地 D1
 npm run backup:config  # 把生产配置备份到私有仓库（需 .config-backup）
 ```
 
-`npm run check` 做三件事：所有 `.js` / `.mjs` 语法检查、相对 import 路径是否存在、扫描 `src` `scripts` `test` `test-helpers` 四个目录。
+`npm run check` 扫描 `src` `scripts` `test` `test-helpers` 四个目录，做语法与相对 import 路径检查；此外还会校验文档一致性：`README.md` / `CHANGELOG.md` 里声明的版本号必须与 `package.json` 一致，文档里写的测试用例数必须与 `test/*.test.mjs` 里的实际数量一致（两者都是手工维护、最容易漂移的地方）。
 
 ## 测试
 

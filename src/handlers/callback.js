@@ -88,6 +88,8 @@ import { logError } from "../core/logger.js";
 import { handleGuardCallback } from "../admin/guard.js";
 import { handleAppealCallback } from "../admin/guard.js";
 import { handleGuardPanelCallback } from "../admin/guard-panel.js";
+import { handleWelcomeCallback } from "../admin/welcome-panel.js";
+import { handleJoinVerifyCallback } from "../services/welcome.js";
 import { handleAdminsCallback } from "../admin/admins.js";
 import { CAPABILITIES, can, getAdminRole, isBackstageRole } from "../services/admins.js";
 
@@ -119,6 +121,7 @@ const CALLBACK_CAPABILITIES = [
   ["shop_admin_", "manage_shop"],
   ["admin_kb", "manage_kb"],
   ["admin_guard", "manage_guard"],
+  ["admin_welcome", "manage_guard"],
   ["admin_feat", "manage_features"],
   ["admin_autodel", "manage_autodelete"],
   ["admin_codes_", "manage_codes"],
@@ -398,6 +401,17 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   }
 
   // ==========================================
+  // 2.7 👋 入群验证按钮（任何成员都能点，因此放在管理员校验之前）
+  // ==========================================
+  // 只能通过**自己**的验证：user_id 取点击者，绝不从 callback_data 里带。
+  if (data === ADMIN_CALLBACK.JOIN_VERIFY_OK) {
+    await handleJoinVerifyCallback({
+      env, token, callback, chatId, userId: fromId, messageId: msgId
+    });
+    return;
+  }
+
+  // ==========================================
   // 2.8 群规执法确认卡片（本群管理员也能点，因此放在管理员校验之前）
   // ==========================================
   // 走到这里才解析角色：游戏 / 商城 / 积分这些普通用户的按钮不会多查一次库
@@ -630,6 +644,13 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
     // ---------- 群规执法面板 ----------
     else if (data.startsWith(ADMIN_CALLBACK.GUARD_HOME)) {
       await handleGuardPanelCallback({ env, token, callback, chatId, msgId, data, uctx, adminId: fromId });
+    }
+
+    // ---------- 👋 入群欢迎与验证面板 ----------
+    else if (data.startsWith(ADMIN_CALLBACK.WELCOME_HOME)) {
+      await handleWelcomeCallback({
+        env, ctx, token, callback, data, chatId, userId: fromId, messageId: msgId
+      });
     }
 
     // ---------- 用户列表 ----------

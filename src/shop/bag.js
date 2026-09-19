@@ -116,8 +116,11 @@ export async function renderBag(token, env, chatId, userKey, messageId = null, p
   const counts = await getBagCounts(env, userKey);
   const totalPages = totalPagesOf(counts.total, BAG_PER_PAGE);
   const safePage = clampPage(page, totalPages);
-  const items = await listBagItems(env, userKey, safePage);
-  const pts = await getUserPoints(env, userKey);
+  // 物品列表与积分互不依赖，并行取（原先 3 条串行 await = 3 个 D1 往返）
+  const [items, pts] = await Promise.all([
+    listBagItems(env, userKey, safePage),
+    getUserPoints(env, userKey)
+  ]);
 
   let text = `🎒 <b>我的背包</b>\n`;
   text += `${LAYOUT.DIVIDER}\n`;

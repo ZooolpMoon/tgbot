@@ -36,6 +36,7 @@ import {
   cmdBan, cmdUnban, cmdKick, cmdMute, cmdUnmute, cmdGroupBan, cmdRules, cmdSetRules
 } from "./ban.js";
 import { cmdGuard, cmdAppeal, cmdReport } from "./guard.js";
+import { cmdWelcome } from "../../admin/welcome-panel.js";
 import { cmdSyncMenu } from "./system.js";
 import { isGroupAdmin } from "../../services/guard.js";
 import { can, isBackstageRole } from "../../services/admins.js";
@@ -221,6 +222,13 @@ export const COMMANDS = [
     desc: "设置本群群规（执法时用它校验理由）", usage: "/setrules <群规正文>", handle: cmdSetRules
   },
   {
+    // ⚠️ 刻意**不挂** feature: "welcome"：功能开关默认关闭，
+    // 如果命令也被开关拦住，管理员就再也进不去把它打开了。
+    name: "/welcome", aliases: ["/joinwelcome"], scope: "admin", capability: "manage_guard",
+    groupAdmin: true,
+    desc: "入群欢迎与验证（群里：欢迎语 / 验证 / 超时）", handle: cmdWelcome
+  },
+  {
     name: "/syncmenu", scope: "admin", capability: "manage_features",
     desc: "把指令同步到输入框菜单（/ 弹出列表）", handle: cmdSyncMenu
   },
@@ -391,6 +399,7 @@ export function buildHelpText({ isMaster, isGroupCtx, role: roleArg, groupAdmin 
   text += `\n💡 <b>${isGroupCtx ? "群聊" : "私聊"}规则</b>\n`;
   if (isGroupCtx) {
     text += `• 只有 <b>@我</b> 或使用 <b>/指令</b> 时才会回复\n`;
+    text += `• 回复某条消息再 <b>@我</b>，可以让 AI 总结 / 翻译那条消息\n`;
     text += `• 处置违规请用 <code>/ban</code>、<code>/mute</code>、<code>/report</code> 等指令，机器人不猜自然语言\n`;
     text += `• 群聊里的指令回执默认 <b>5 秒后自动删除</b>，管理员可在「🗑️ 自动删除」里按消息类型调整\n`;
     text += `• <code>/points</code>、<code>/rank</code> 等带按钮的卡片会保留，方便翻页\n`;

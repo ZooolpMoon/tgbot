@@ -422,15 +422,83 @@ async function loadCandidateChunks(env, scopeKey, { withEmbedding = true } = {})
   return results || [];
 }
 
-/** 按 id 补读 embedding（只读真正要算相似度的那些行） */
+/**
+ * 按 id 补读 embedding（只读真正要算相似度的那些行）。
+ *
+ * ⚠️ D1 对**单条语句的绑定参数**有 100 个硬上限，而「关键词零命中 → 全量兜底」
+ * 这条路径上的候选可达 `MAX_TOTAL_CHUNKS * 2 = 800` 个 id。一次 `IN (?,?,…)`
+ * 会被 D1 直接拒绝，报错又被上面 catch 成「本次只用关键词」，最终表现为
+ * **一条都检索不到**——正好废掉纯语义检索。所以这里分批读，批内留足余量。
+ */
 async function loadEmbeddings(env, ids) {
   const list = [...new Set((ids || []).map(Number).filter((n) => Number.isInteger(n)))];
   if (list.length === 0) return new Map();
-  const placeholders = list.map(() => "?").join(", ");
-  const { results } = await env.DB.prepare(
-    `SELECT id, embedding FROM kb_chunks WHERE id IN (${placeholders})`
-  ).bind(...list).all();
-  return new Map((results || []).map((r) => [Number(r.id), String(r.embedding || "")]));
+
+  const map = new Map();
+  const size = Math.max(1, Math.floor(KB.EMBED_ID_BATCH) || 80);
+  for (let i = 0; i < list.length; i += size) {
+    const part = list.slice(i, i + size);
+    const placeholders = part.map(() => "?").join(", ");
+    const { results } = await env.DB.prepare(
+      `SELECT id, embedding FROM kb_chunks WHERE id IN (${placeholders})`
+    ).bind(...part).all();
+    for (const row of results || []) map.set(Number(row.id), String(row.embedding || ""));
+  }
+  return map;
+}
+
+// ==========================================
+// 🔀 重排序（可选，v3.9.0）
+// ==========================================
+
+/**
+ * 当前生效的重排序模型。未配置环境变量时取内置常量（默认空 = 关闭）；
+ * 显式设成 off / none / false / 0 / 空串都表示关闭。
+ */
+export function resolveRerankModel(env) {
+  const raw = env?.KB_RERANK_MODEL;
+  if (raw === undefined || raw === null) return KB.RERANK_MODEL;
+  const value = String(raw).trim();
+  if (!value || /^(off|none|false|0)$/i.test(value)) return "";
+  return value;
+}
+
+/**
+ * 用交叉编码模型给「已经过相关度门槛」的候选重新排序。
+ *
+ * 只改**顺序**，不改 `score`（门槛判断仍用原分），因此不会放宽或收紧命中条件。
+ * 模型不可用、返回结构不认识、候选太少 → 返回 null，调用方保持原排序。
+ * @returns {Promise<Array|null>}
+ */
+async function rerankScored(env, model, query, scored, limit) {
+  const head = scored.slice(0, Math.max(1, Math.floor(Number(limit) || KB.RERANK_LIMIT)));
+  if (head.length < 2) return null;
+
+  const res = await env.AI.run(model, {
+    query: String(query || "").slice(0, 300),
+    contexts: head.map((item) => ({
+      text: String(item.content || "").slice(0, KB.RERANK_DOC_CHARS)
+    }))
+  });
+
+  const list = Array.isArray(res?.response) ? res.response : null;
+  if (!list || list.length === 0) return null;
+
+  const byIndex = new Map();
+  for (const entry of list) {
+    const index = Number(entry?.id);
+    if (!Number.isInteger(index) || index < 0 || index >= head.length) continue;
+    const value = Number(entry?.score);
+    if (Number.isFinite(value)) byIndex.set(index, value);
+  }
+  if (byIndex.size === 0) return null;
+
+  const reranked = head
+    .map((item, index) => ({ item, rank: byIndex.has(index) ? byIndex.get(index) : -Infinity }))
+    .sort((a, b) => b.rank - a.rank)
+    .map((entry) => entry.item);
+
+  return [...reranked, ...scored.slice(head.length)];
 }
 
 /**
@@ -510,14 +578,33 @@ export async function searchKnowledge(env, sceneKey, query, options = {}) {
 
   scored.sort((a, b) => b.score - a.score);
 
+  // 先按原门槛筛出「合格候选」（此时仍是分数序）：
+  // 语义分数只是勉强过线时，要求确实有关键词重叠——否则属于「沾边但不相关」，
+  // 注入给模型只会让它被迫回答「资料中未提及」。
+  const qualified = [];
+  for (const item of scored) {
+    if (item.score < minScore) break;
+    if (item.score < strongScore && !(item.keyword > 0)) continue;
+    qualified.push(item);
+  }
+
+  // 可选重排序（v3.9.0，默认关闭）：只在「合格候选确实多于要取的条数」时
+  // 才多花一次模型调用；失败/未配置都保持原排序，命中集合一个不差。
+  let ordered = qualified;
+  const rerankModel = resolveRerankModel(env);
+  if (rerankModel && qualified.length > topK) {
+    try {
+      const reranked = await rerankScored(env, rerankModel, question, qualified, KB.RERANK_LIMIT);
+      if (reranked) ordered = reranked;
+    } catch (e) {
+      logWarn("知识库重排序失败（保持原排序）：", e?.message || e);
+    }
+  }
+
   // 同一篇文档最多取 2 块，给更多文档留出机会
   const perDoc = new Map();
   const hits = [];
-  for (const item of scored) {
-    if (item.score < minScore) break;
-    // 语义分数只是勉强过线时，要求确实有关键词重叠——否则属于「沾边但不相关」，
-    // 注入给模型只会让它被迫回答「资料中未提及」。
-    if (item.score < strongScore && !(item.keyword > 0)) continue;
+  for (const item of ordered) {
     const used = perDoc.get(item.docId) || 0;
     if (used >= 2) continue;
     perDoc.set(item.docId, used + 1);

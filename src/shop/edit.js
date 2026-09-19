@@ -203,8 +203,20 @@ export async function handleEditItemInput({ env, token, chatId, userText, adminI
       break;
     case "price": {
       const price = Number.parseInt(text, 10);
-      if (!Number.isInteger(price) || price < 0) validationError = "⚠️ 价格必须是大于等于 0 的整数，请重新输入：";
-      else value = price;
+      const useType = useTypeOf(item);
+      const useValue = useValueOf(item);
+      if (!Number.isInteger(price) || price < 0) {
+        validationError = "⚠️ 价格必须是大于等于 0 的整数，请重新输入：";
+      } else if (useType === USE_TYPE.POINTS && useValue > price) {
+        // 「兑换积分 ≤ 售价」是添加 / 编辑用法时都把守的底线（白送分套利闭环）。
+        // 改价同样不能绕过它：先配「售价 100、兑换 100」，再把售价改成 1，
+        // 就成了「买 1 分兑 100 分」的稳定套利。这里直接拦住，要求先改用法。
+        validationError =
+          `⚠️ 该商品的背包用法是「兑换 ${useValue} 积分」，售价不能低于它，否则等于白送分。\n` +
+          `请先把用法改成不超过新售价的值，或把价格设为 ≥ ${useValue}：`;
+      } else {
+        value = price;
+      }
       break;
     }
     case "stock": {

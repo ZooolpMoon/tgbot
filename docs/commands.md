@@ -43,6 +43,7 @@
 | `/clearmem me \| <群ID> \| <群ID> <用户ID>` | 清除当前 / 整群 / 某群某成员的 AI 记忆 |
 | `/kb` | 知识库面板：上传资料、文档列表、检索测试（群里打开 = 本群知识库） |
 | `/guard` | 群规执法面板：编辑群规、默认处置、预警关键词、处置记录 |
+| `/welcome` | 入群欢迎与验证面板：欢迎语、是否验证、超时、超时是否移出（群里使用） |
 | `/rules` / `/setrules <正文>` | 查看 / 设置本群群规 |
 | `/ban <用户ID\|@某人> [理由]` | 封禁（群里会先校验理由再弹确认卡片） |
 | `/kick` / `/groupban` / `/mute` | 踢出 / 群内封禁 / 限时禁言（都需理由） |
@@ -52,7 +53,7 @@
 | `/shop_admin` / `/shop_add` / `/shop_edit <商品ID>` | 商城管理 / 添加商品 / 编辑商品（仅私聊） |
 | `/syncmenu` | 把指令同步到输入框菜单 |
 
-> `/ban` `/unban` `/kick` `/groupban` `/mute` `/unmute` `/rules` 在群里也允许**本群管理员**
+> `/ban` `/unban` `/kick` `/groupban` `/mute` `/unmute` `/rules` `/welcome` 在群里也允许**本群管理员**
 > （creator / administrator）使用，不需要机器人管理员的 `/admin` 解锁；
 > 群规面板 `/guard` 与 `/setrules` 仍然只给机器人管理员。
 

@@ -24,9 +24,18 @@ test("开关定义与识别", () => {
   assert.equal(featureLabel("game"), "游戏大厅");
 });
 
-test("默认全部开启；未知开关视为开启", async () => {
+test("默认开启，但标记了 defaultEnabled:false 的开关默认关闭；未知开关视为开启", async () => {
   const map = await getFeatureMap({});
-  for (const f of FEATURES) assert.equal(map[f.key], true);
+  for (const f of FEATURES) {
+    // 「会主动打扰群成员」的功能（如入群欢迎）必须由管理员显式打开，
+    // 否则升级一次就会往所有群发消息、限制新成员发言
+    const expected = f.defaultEnabled !== false;
+    assert.equal(map[f.key], expected, `开关 ${f.key} 的默认值不符合声明`);
+  }
+  assert.ok(
+    FEATURES.some((f) => f.defaultEnabled === false),
+    "至少要有一个默认关闭的开关，否则上面那句断言形同虚设"
+  );
   assert.equal(await isFeatureEnabled({}, PRIVATE, "nope"), true);
 });
 

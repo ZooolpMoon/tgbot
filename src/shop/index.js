@@ -50,15 +50,17 @@ export async function renderShopHome(token, env, chatId, userKey, messageId = nu
   }
 
   const pageSize = SHOP.ITEMS_PER_PAGE;
-  const countRes = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM shop_items WHERE enabled = 1"
-  ).first();
+  // 计数 / 我的积分 / 背包件数三者互不依赖，并行取。
+  // 原先 3 条串行 await = 3 个 D1 往返；商品列表要等 safePage 算出来才能查，单独放后面。
+  const [countRes, pts, bag] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS n FROM shop_items WHERE enabled = 1").first(),
+    getUserPoints(env, userKey),
+    getBagCounts(env, userKey)
+  ]);
   const total = Number(countRes?.n) || 0;
   const totalPages = totalPagesOf(total, pageSize);
   const safePage = clampPage(page, totalPages);
 
-  const pts = await getUserPoints(env, userKey);
-  const bag = await getBagCounts(env, userKey);
   const { results } = await env.DB.prepare(
     "SELECT id, name, icon, price, stock FROM shop_items WHERE enabled = 1 ORDER BY id ASC LIMIT ? OFFSET ?"
   ).bind(pageSize, pageOffset(safePage, pageSize)).all();

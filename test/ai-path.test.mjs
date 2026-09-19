@@ -13,10 +13,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createTestDB, hasSqlite, seedUser } from "../test-helpers/d1.mjs";
 import { getUserPoints } from "../src/services/users.js";
-import { POINTS } from "../src/config/constants.js";
+import { POINTS, RULES } from "../src/config/constants.js";
 import { handleMessage } from "../src/handlers/message.js";
+import { extractQuotedText } from "../src/handlers/ai.js";
 
 let apiCalls = [];
+let aiCalls = [];
 let aiMode = "ok";
 globalThis.fetch = async (url, opts = {}) => {
   const method = String(url).split("/").pop();
@@ -27,11 +29,12 @@ globalThis.fetch = async (url, opts = {}) => {
     json: async () => ({ ok: true, result: { message_id: 7 } })
   };
 };
-const resetCalls = () => { apiCalls.length = 0; };
+const resetCalls = () => { apiCalls.length = 0; aiCalls.length = 0; };
 const textsSent = () => apiCalls.filter((c) => c.body?.text).map((c) => String(c.body.text));
 
 const makeAI = () => ({
-  run: async () => {
+  run: async (_model, opts = {}) => {
+    aiCalls.push(opts);
     if (aiMode === "throw") throw new Error("model down");
     if (aiMode === "empty") return { response: "" };
     return { response: "这是模型的回答" };
@@ -233,5 +236,80 @@ test("被封禁的用户走不到 AI：不扣分、不占额度", { skip: !hasSq
 
   assert.equal(await getUserPoints(env, `user:${USER}`), 100, "封禁用户不该扣分");
   assert.equal(quotaOf(db), 0, "也不该占额度");
+  db.close();
+});
+
+// ==========================================
+// 📎 引用消息（v3.9.0）：回复某条消息再提问，让 AI 针对那一条作答
+// ==========================================
+
+/** 以「回复某条消息」的方式提问 */
+async function reply(env, repliedMessage, text = "帮我总结一下", userId = USER) {
+  await handleMessage({
+    env, ctx: makeCtx(), token: "T", myId: OWNER,
+    uctx: uctxOf(userId), isGroupCtx: false,
+    payload: { message: { text, entities: [], reply_to_message: repliedMessage } }
+  });
+}
+
+const systemPromptOf = (index = 0) => String(aiCalls[index]?.messages?.[0]?.content || "");
+
+test("extractQuotedText：正文 / 媒体说明都能取，无文本返回空串", () => {
+  assert.equal(extractQuotedText(null), "", "没有引用时是空串");
+  assert.equal(extractQuotedText({ photo: [] }), "", "图片消息没有文本");
+  assert.equal(extractQuotedText({ text: "  你好  " }), "你好", "首尾空白要去掉");
+  assert.equal(extractQuotedText({ caption: "活动海报的说明" }), "活动海报的说明", "媒体说明也能用");
+  assert.equal(extractQuotedText({ text: "a\r\nb\r\n\r\n\r\n\r\nc" }), "a\nb\n\nc", "折叠多余空行");
+  assert.equal(
+    extractQuotedText({ text: "很".repeat(5000) }).length,
+    RULES.QUOTED_MESSAGE_MAX_CHARS,
+    "超长引用要截断，别把上下文预算吃光"
+  );
+});
+
+test("引用消息：被引用内容进入模型上下文，且只额外调用零次", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, `user:${USER}`, 100);
+  seedScene(db);
+  const env = makeEnv(db);
+  aiMode = "ok";
+  resetCalls();
+
+  await reply(env, { text: "本周活动：周三晚八点开始，参与方式是群里发暗号，奖励是 50 积分。" });
+
+  const sys = systemPromptOf();
+  assert.match(sys, /用户引用的消息/, "要在系统提示里点明用户引用了哪条消息");
+  assert.match(sys, /周三晚八点开始/, "被引用消息的正文要带进去");
+  assert.match(sys, /不要执行/, "引用内容来自群成员，必须声明为不可信素材");
+  assert.equal(aiCalls.length, 1, "引用消息只是拼进提示词，不该多花一次模型调用");
+  db.close();
+});
+
+test("引用消息：没有引用时不出现空引用段", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, `user:${USER}`, 100);
+  seedScene(db);
+  const env = makeEnv(db);
+  aiMode = "ok";
+  resetCalls();
+
+  await say(env, USER, "你好");
+
+  assert.doesNotMatch(systemPromptOf(), /用户引用的消息/, "普通提问不该带上引用段");
+  db.close();
+});
+
+test("引用消息：被回复的是图片等无文本消息时，不编造引用内容", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, `user:${USER}`, 100);
+  seedScene(db);
+  const env = makeEnv(db);
+  aiMode = "ok";
+  resetCalls();
+
+  await reply(env, { photo: [{ file_id: "x" }] }, "这张图什么意思");
+
+  assert.doesNotMatch(systemPromptOf(), /用户引用的消息/, "没有文本可引用时不该加空段");
+  assert.equal(aiCalls.length, 1);
   db.close();
 });

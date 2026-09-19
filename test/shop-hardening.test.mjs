@@ -15,6 +15,7 @@ import { createTestDB, hasSqlite, seedUser, seedItem } from "../test-helpers/d1.
 import { handleCallback } from "../src/handlers/callback.js";
 import { getUserPoints } from "../src/services/users.js";
 import { handleAddItemInput } from "../src/shop/add.js";
+import { handleEditItemInput } from "../src/shop/edit.js";
 import { refundDoneOrder } from "../src/shop/actions.js";
 
 let apiCalls = [];
@@ -216,5 +217,73 @@ test("添加商品：免费商品不能设置「使用后兑换积分」", { ski
 
   assert.equal(db.count("shop_items", "name = '免费商品'"), 0, "免费 + 换积分 = 无限刷分，必须拦住");
   assert.ok(textsSent().some((t) => /免费商品/.test(t)));
+  db.close();
+});
+
+// ==========================================
+// 4) 改价不能绕过「兑换积分 ≤ 售价」（v3.9.0）
+//
+// 添加 / 编辑「用法」时都会拦超售价的兑换值，但**改价分支原先只看整数**：
+// 先配「售价 100、兑换 100」（合法），再把售价改成 1 —— 就成了买 1 分兑 100 分。
+// ==========================================
+
+/** 造一个「售价 = 兑换值」的商品，并开好改价会话 */
+function seedPriceEditSession(db, { price = 100, useValue = 100 } = {}) {
+  const itemId = seedItem(db, {
+    name: "套利商品", price, stock: -1, delivery: "bag", useType: "points", useValue
+  });
+  db.exec(`INSERT INTO shop_edit_sessions (chat_id, item_id, field) VALUES ('999', ${itemId}, 'price')`);
+  return itemId;
+}
+
+test("改价：不能把售价压到低于已配置的兑换积分", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 100);
+  const env = makeEnv(db);
+  const itemId = seedPriceEditSession(db, { price: 100, useValue: 100 });
+  resetCalls();
+
+  await handleEditItemInput({ env, token: "T", chatId: "999", userText: "1", adminId: "999" });
+
+  const item = db.get("SELECT price, use_value FROM shop_items WHERE id = ?", itemId);
+  assert.equal(Number(item.price), 100, "价格不能被压到兑换值以下（否则 1 分买、100 分兑）");
+  assert.equal(Number(item.use_value), 100, "兑换值不该被悄悄改掉");
+  assert.ok(
+    textsSent().some((t) => /白送分/.test(t)),
+    `要说明为什么拒绝：${textsSent().join(" | ").slice(0, 120)}`
+  );
+  db.close();
+});
+
+test("改价：不低于兑换积分时正常生效（边界）", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 100);
+  const env = makeEnv(db);
+
+  // 等于兑换值：允许
+  const a = seedPriceEditSession(db, { price: 100, useValue: 100 });
+  resetCalls();
+  await handleEditItemInput({ env, token: "T", chatId: "999", userText: "100", adminId: "999" });
+  assert.equal(Number(db.get("SELECT price FROM shop_items WHERE id = ?", a).price), 100);
+
+  // 高于兑换值：允许
+  const b = seedPriceEditSession(db, { price: 100, useValue: 100 });
+  resetCalls();
+  await handleEditItemInput({ env, token: "T", chatId: "999", userText: "150", adminId: "999" });
+  assert.equal(Number(db.get("SELECT price FROM shop_items WHERE id = ?", b).price), 150);
+  db.close();
+});
+
+test("改价：与背包用法无关的商品不受限制", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  seedUser(db, "user:999", 100);
+  const env = makeEnv(db);
+  const itemId = seedItem(db, { name: "普通商品", price: 100, stock: -1, delivery: "manual", useType: "none" });
+  db.exec(`INSERT INTO shop_edit_sessions (chat_id, item_id, field) VALUES ('999', ${itemId}, 'price')`);
+  resetCalls();
+
+  await handleEditItemInput({ env, token: "T", chatId: "999", userText: "1", adminId: "999" });
+
+  assert.equal(Number(db.get("SELECT price FROM shop_items WHERE id = ?", itemId).price), 1, "没有兑换用法的商品可以自由改价");
   db.close();
 });

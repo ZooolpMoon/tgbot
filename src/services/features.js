@@ -28,7 +28,10 @@ export const FEATURES = [
   { key: "redeem", label: "兑换码", desc: "用兑换码领积分" },
   { key: "transfer", label: "积分转账", desc: "用户之间互相转积分" },
   { key: "lottery", label: "每日抽奖", desc: "免费抽奖与花积分抽奖" },
-  { key: "ai_tools", label: "AI 工具调用", desc: "让 AI 能查积分 / 签到 / 排行榜 / 群规 / 知识库（只读）" }
+  { key: "ai_tools", label: "AI 工具调用", desc: "让 AI 能查积分 / 签到 / 排行榜 / 群规 / 知识库（只读）" },
+  // v3.9.0：默认**关闭**。开启后机器人会主动在群里发消息、甚至限制新成员发言，
+  // 属于「会打扰人」的功能，必须由管理员显式打开（见下面的 defaultEnabled）。
+  { key: "welcome", label: "入群欢迎与验证", desc: "新成员入群时发欢迎语，可要求点按钮通过验证", defaultEnabled: false }
 ];
 
 const PREFIX = "feature.";
@@ -76,7 +79,10 @@ export async function getFeatureMap(env, sceneKey = null) {
   if (cached) return cached;
 
   const map = {};
-  for (const f of FEATURES) map[f.key] = true;
+  // 默认开启；显式标了 defaultEnabled: false 的开关默认关闭。
+  // 「会主动打扰群成员」的功能（如入群欢迎）必须由管理员显式打开，
+  // 否则升级一次就会往所有群发消息、限制新成员发言。
+  for (const f of FEATURES) map[f.key] = f.defaultEnabled !== false;
   if (!env.DB) return map;
 
   // 统一走配置模型：场景 → 全局（缺少哪层就用下一层）

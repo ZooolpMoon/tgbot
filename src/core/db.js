@@ -496,6 +496,32 @@ CREATE INDEX IF NOT EXISTS idx_redeem_logs_created ON redeem_logs(created_at);
 -- 老库上先建索引会报 "no such column" 并让整个建表 batch 失败。它放在 MIGRATIONS 末尾。
 -- 到期处置扫描：现有两条索引都以 chat_id / user_id 打头，这条按状态+到期时间
 CREATE INDEX IF NOT EXISTS idx_punishments_due ON group_punishments(status, until_at);
+
+-- ==========================================
+-- 👋 入群欢迎与人机验证（v3.9.0）
+--
+-- 新成员进群后（可选）先**限制发言**，给一个「通过验证」按钮，点了才放开；
+-- 超时没点由 cron（每 2 分钟）按本群配置决定踢出还是仅解除限制。
+-- 状态：pending（待验证）/ passed（已通过）/ expired（超时已处理）
+-- 群级配置（欢迎语 / 是否验证 / 超时 / 是否踢出）存 scene_settings 的 group:<群ID>。
+-- ==========================================
+CREATE TABLE IF NOT EXISTS join_verifications (
+  chat_id       TEXT    NOT NULL,
+  user_id       TEXT    NOT NULL,
+  status        TEXT    NOT NULL DEFAULT 'pending',
+  verify_msg_id INTEGER DEFAULT 0,          -- 验证卡片的消息 ID（通过后原地改写）
+  joined_at     TEXT    DEFAULT CURRENT_TIMESTAMP,
+  until_at      INTEGER NOT NULL,           -- Unix 秒：超过它由 cron 处理
+  updated_at    TEXT    DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (chat_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_join_verify_due ON join_verifications(status, until_at);
+
+-- 欢迎语编辑会话（群级，30 分钟过期；读取时校验 updated_at）
+CREATE TABLE IF NOT EXISTS welcome_sessions (
+  chat_id    TEXT PRIMARY KEY,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 let schemaReady = false;
@@ -511,7 +537,9 @@ let schemaPromise = null;
 // v3.3.0：商城「背包」（user_bag_items）+ 商品发放方式 bag + 背包物品用法 use_type/use_value
 // v3.5.0：21 点牌局（blackjack_sessions）
 // v3.7.0：日报与维护查询的索引（daily_stats / daily_checkin / users.blocked / redeem_logs.created_at / 处置到期）
-export const SCHEMA_VERSION = 20;
+// v3.9.0：收敛「兑换积分 > 售价」的历史商品配置（改价绕过校验留下的套利数据）
+// v3.9.0：入群验证（join_verifications）+ 欢迎语编辑会话（welcome_sessions）
+export const SCHEMA_VERSION = 22;
 
 const SCHEMA_VERSION_KEY = "schema.version";
 
@@ -564,7 +592,13 @@ const MIGRATIONS = [
   // v3.7.0：日报统计里的「当前封禁用户」按 blocked 过滤。
   // **必须放在建表（SCHEMA_SQL）之后**：老库此时才刚补上 blocked 列，
   // 放到 SCHEMA_SQL 里会因 "no such column" 让整个建表 batch 失败。
-  "CREATE INDEX IF NOT EXISTS idx_users_blocked ON users(blocked)"
+  "CREATE INDEX IF NOT EXISTS idx_users_blocked ON users(blocked)",
+
+  // v3.9.0：收敛「兑换积分 > 售价」的历史商品配置。
+  // 添加 / 编辑「用法」时本来就会拦（见 shop/edit.js），但**改价分支原先不校验**，
+  // 于是「先配售价 100、兑换 100，再把售价改成 1」就能做出买 1 分兑 100 分的套利。
+  // 幂等：收敛之后不再有满足条件的行。
+  "UPDATE shop_items SET use_value = price WHERE use_type = 'points' AND use_value > price"
 ];
 
 /**

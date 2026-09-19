@@ -12,7 +12,8 @@ const EXPECTED_TABLES = [
   "admin_sessions", "shop_items", "shop_orders", "shop_order_log",
   "shop_add_sessions", "shop_edit_sessions", "admin_logs", "broadcast_drafts",
   "redeem_codes", "redeem_logs", "shop_order_drafts",
-  "bot_chats", "group_tag_sessions", "user_group_tags", "user_bag_items"
+  "bot_chats", "group_tag_sessions", "user_group_tags", "user_bag_items",
+  "join_verifications", "welcome_sessions"
 ];
 
 test("SCHEMA_SQL 覆盖全部预期的表", { skip: !hasSqlite && "需要 node:sqlite" }, () => {
@@ -97,6 +98,38 @@ test("数据迁移：实物分类归入虚拟、已发货订单归入已完成",
 
   assert.equal(db.get("SELECT status FROM shop_orders WHERE order_no = 'SOLD1'").status, "done");
   assert.equal(db.get("SELECT status FROM shop_orders WHERE order_no = 'SOLD2'").status, "pending", "待处理订单不应被改动");
+  db.close();
+});
+
+test("数据迁移：兑换积分高于售价的历史商品会被收敛到售价", { skip: !hasSqlite && "需要 node:sqlite" }, async () => {
+  const db = createTestDB();
+  db.exec(`
+    INSERT INTO shop_items (name, price, category, delivery, use_type, use_value)
+      VALUES ('套利商品', 1, 'virtual', 'bag', 'points', 100);
+    INSERT INTO shop_items (name, price, category, delivery, use_type, use_value)
+      VALUES ('正常商品', 100, 'virtual', 'bag', 'points', 100);
+    INSERT INTO shop_items (name, price, category, delivery, use_type, use_value)
+      VALUES ('核销商品', 1, 'virtual', 'bag', 'none', 0);
+  `);
+
+  const { ensureSchema } = await import(`../src/core/db.js?useval=${Date.now()}`);
+  await ensureSchema({ DB: db });
+
+  assert.equal(
+    Number(db.get("SELECT use_value FROM shop_items WHERE name = '套利商品'").use_value),
+    1,
+    "兑换值高于售价时要收敛到售价（改价绕过校验留下的套利配置）"
+  );
+  assert.equal(
+    Number(db.get("SELECT use_value FROM shop_items WHERE name = '正常商品'").use_value),
+    100,
+    "合法配置不该被动"
+  );
+  assert.equal(
+    Number(db.get("SELECT use_value FROM shop_items WHERE name = '核销商品'").use_value),
+    0,
+    "非兑换积分的用法不受影响"
+  );
   db.close();
 });
 

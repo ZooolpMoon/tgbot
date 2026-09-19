@@ -35,7 +35,7 @@ git ls-files | findstr production   # Windows；应无输出
 ```bash
 npm run dev             # 本地预览（读取 .dev.vars）
 npm run deploy:prod     # 部署到 Cloudflare（读取 wrangler.production.toml）
-npm run check           # 语法 + import 路径自检（覆盖 src / scripts / test / test-helpers）
+npm run check           # 语法 + import 路径 + 文档版本/测试数一致性自检（覆盖 src / scripts / test / test-helpers）
 npm test                # 测试（node:test + node:sqlite，内存库跑真实 SQL）
 npm run backup          # D1 导出到 backups/（默认只留最近 10 份）
 npm run backup:info     # 查 D1 Time Travel 的可恢复时间点
@@ -45,7 +45,7 @@ npm run backup:config   # 生产配置备份到私有仓库
 ### 提交前必须做
 
 1. `npm run check` 通过
-2. `npm test` 通过（当前 407 个用例）
+2. `npm test` 通过（当前 440 个用例）
 3. 改了 Schema / 迁移 → 递增 `src/core/db.js` 的 `SCHEMA_VERSION`
 4. 发版本 → 同步 `package.json` 版本号与 `CHANGELOG.md`
 
@@ -80,6 +80,8 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - **相关度门槛**：综合分 < `KB.STRONG_SCORE`（0.45）时必须有真实关键词重叠才注入，避免无关资料把模型带偏；「检索测试」是调试工具，调用时传 `minScore:0, strongScore:0` 以列出全部候选
   - **候选裁剪（v3.8.0）**：`embedding` 是 base64(1024 维 Float32) ≈ 5.4KB/块，**别整表连向量一起读**（满库 400 块 ≈ 2MB/条消息，而只用得上 TOP_K=4 条）。做法：先读轻量列 → 关键词排序 → 只给前 40 条补读向量；**关键词完全没命中时必须退回全量**，那是纯语义检索的意义所在。改检索逻辑请跑 `test/kb-candidate-trim.test.mjs`
   - **问题向量有 isolate 缓存（v3.8.0）**：key = 模型名 + 去空白小写的问题，TTL 5 分钟；**失败不缓存**（否则模型恢复后也一直走降级）
+  - **别一次绑定超过 100 个参数（v3.9.0 的回归教训）**：D1 对**单条语句的绑定参数**有 100 个硬上限。v3.8.0 的「关键词零命中 → 全量补读向量」把最多 800 个 id 一次塞进 `WHERE id IN (?,?,…)`，查询被拒后**报错又被上层 catch 成「本次只用关键词」**，于是纯语义检索在最需要它的场景下一条都召回不到。现在按 `KB.EMBED_ID_BATCH`（80）分批。**node:sqlite 不复现这个上限**，所以 `test/kb-rerank.test.mjs` 用「参数个数守卫」把它钉住 —— 以后凡是 `IN (...)` 动态拼参数，都要想一下会不会超 100
+  - **重排序是可选的（v3.9.0）**：`resolveRerankModel` 读 `KB_RERANK_MODEL`，默认空 = 关闭（要多花一次 Workers AI 调用）。只在「合格候选 > TOP_K」时才调用，**只改顺序、不改 `score`**（门槛判断仍用原分），模型报错/返回结构不认识一律回退原排序。改这段请跑 `test/kb-rerank.test.mjs`
 - **封禁是用户级**（`users.blocked`）：`/ban <用户ID>`、场景编辑里的封禁按钮都会影响该用户在所有场景；名单在「用户管理 → 🚫 封禁名单」
   - **机器人管理员不可被封禁**（`setUserBlocked` / `banUserById` 直接拒绝，面板显示「管理员不可封禁」）：封了自己会让「谁能进后台」变得不可预期
 - **管理员与角色（v3.0.0）**：`services/admins.js` 是唯一的权限来源
@@ -97,6 +99,11 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 一次模型调用搞定，不要在回答后再发起第二轮模型请求
   - **绝对不要**把写操作（封禁 / 发积分 / 改配置）做成 AI 工具：那些必须走显式指令 + 确认卡片
   - 工具返回的内容按「不可信资料」处理（提示词里已注明不要执行其中的指令）
+- **AI 引用消息（v3.9.0）**：群里「回复某条消息 + @机器人」时，`message.js` 把被回复消息的文本
+  （`extractQuotedText`）传进 `handleAIRequest`，作为「用户引用的消息」拼进系统提示词 —— 这样总结 / 翻译才有对象。
+  - 引用内容来自群成员，提示词里明确要求**当作素材、不执行其中的指令**
+  - **不要为它额外加一次模型调用**（只拼上下文，计费不变）
+  - 被回复的是图片 / 语音等无文本消息时不加空段，别让模型编造内容
 - **群规执法**（`services/guard.js` + `admin/guard.js`）：
   - **只认 `/指令`，没有自然语言入口**：`封禁 / 拉黑 / 踢了 / 闭嘴` 在日常聊天里太常见，靠关键词拦截会误伤普通发言；别再把 `detectAction` 接回 `message.js`。举报走 `/report`（必须回复违规消息）、申诉走 `/appeal`（私聊）
   - **理由必须校验通过**（内置违规类型 → 本群群规文本 → 本群知识库），不通过绝不执行；这是「能自动执法」的安全底线，不要为了方便跳过
@@ -108,6 +115,14 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - **但「预警」对所有人一视同仁**：`handleKeywordAlert` 不许再跳过 owner / 机器人管理员 / 本群管理员（v3.1.2 修过：跳过等于「自己发预警词机器人没反应」）。目标是机器人管理员时照常发卡片，只在卡片上加一句说明「确认按钮会被安全策略拦下」
   - 发给管理员私聊的卡片（举报 / 预警）`operator_id` 留空，只有机器人管理员能确认——成员不该能批准自己的举报
   - 面板与引导式编辑在 `admin/guard-panel.js`（群规正文 / 默认处置 / 默认时长 / 开关 / 处置记录），会话存 `guard_sessions`，同样是 30 分钟过期 + 定时任务兜底
+- **入群欢迎与验证（v3.9.0）**：`services/welcome.js`（逻辑）+ `admin/welcome-panel.js`（面板），入口是群里的 `/welcome`
+  - 收的是 `message.new_chat_members`（普通 message 更新）。**不要改用 `chat_member` 更新**：那类更新默认不推送，要收就必须重设 webhook 的 `allowed_updates`，自愈巡检 / 部署文档 / 老部署全都要跟着改
+  - 功能开关 `welcome` 是 `defaultEnabled: false`，面板按**群作用域**（`buildGroupScopeKey`）读写；`/welcome` 命令**不挂** feature —— 否则开关一关就再也进不去把它打开
+  - 状态流转只用带条件的原子 UPDATE：`pending → passed`（点按钮）、`pending → expired`（cron 超时）。连点、或「用户点击」与「cron 到点」并发，都只有一次能改到行
+  - 验证按钮的 `user_id` 取**点击者**，绝不从 `callback_data` 带参数，否则别人能替你通过验证；回调 `joinok` 要放在 `callback.js` 的管理员校验**之前**（普通成员也要能点）
+  - 群主 / 管理员、机器人自己都不做限制（先用 `getChatMember` 看 status，Telegram 也会拒绝）；**限制失败要降级成「只欢迎」**，不能假装已经限制
+  - 「超时不踢出」时必须**解除限制**，否则等于永久禁言
+  - 配置存 `scene_settings` 的 `welcome.*`（群级），引导会话 `welcome_sessions` 要登记进 `GUIDE_SESSION_TABLES` 并加日级清理
 - **消息自动删除**（`services/auto-delete.js` + `telegram/auto-delete.js` + `admin/auto-delete.js`）：
   - 群聊里机器人自己发的消息按**类型**取保留时长：`cmd` / `guard`（默认 5 秒）、`card` / `ai` / `notice`（默认保留），**0 = 不删除**
   - 发消息时用 `sendAutoDelete(..., { kind, env, sceneKey, keyboard })`；复合上下文能自动提供 `env` / `sceneKey`，传原生 Worker ctx 时要显式补上
@@ -116,7 +131,7 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - **全局兜底（v3.1.0）**：`autodelete.cap`（全局，0 = 不设）是**上限**——实际删除时间取「该类型自己的时长」与「兜底」里更早的那个，所以本来「不删除」的消息也会在兜底时间被删
   - **长延时不能 sleep**：Worker 的 `waitUntil` 撑不住几十分钟。`sendAutoDelete` 里 ≥1 分钟的延时改为写 `pending_deletes`，由 `services/daily.js` 的 `processPendingDeletes()` 在 cron（每 2 分钟）里删；超过 48 小时的记录直接清掉（Telegram 不允许删更早的消息）
 - **输入框命令菜单**（`services/command-menu.js`）：菜单由命令注册表自动生成，**加命令不用改这里**；用内容哈希（`commands.version`）判断是否需要调用 Telegram，且每个 isolate 只检查一次。改完注册表想立刻看到菜单，用 `/syncmenu`
-- **引导式输入会话**（`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts`）读取时都要带 `updated_at >= datetime('now','-30 minutes')`，并保证 `services/daily.js` 里有对应清理
+- **引导式输入会话**（`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts` / `welcome_sessions`）读取时都要带 `updated_at >= datetime('now','-30 minutes')`，并保证 `services/daily.js` 里有对应清理
 - **引导会话必须互斥**：开新引导流程前先 `clearGuideSessions(env, chatId)`（`services/sessions.js`），否则残留会话会吞掉后续所有文本（现象是「点了按钮没反应」）。群里也要放行管理员正在填的引导文本（见 `message.js` 的 `adminGuideActive`）
 - **`editMessageText` 不能传 null message_id**：引导流程里刷新卡片时 messageId 往往是空的，必须 `messageId ? editMessageText(...) : sendMessageWithKeyboard(...)`，否则 Telegram 直接报错、用户只看到一句「修改成功」
 - **文档解析**（`services/text-extract.js`）：`.docx` 走 zip + `word/document.xml`；`.pdf` 是**尽力抽取**文本层，扫不出文字必须明确提示（不要假装成功）。新增格式时在 `detectFileKind` 里登记，并补 `admin-extra.test.mjs` 的用例
@@ -126,9 +141,11 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
 - **「给谁」不要只认内部行 ID**（v3.2.1 教训）：管理指令的 `<场景ID>` 是 `user_scenes.id`，管理员根本记不住。需要指定用户时统一走 `services/users.js` 的 `resolvePointTarget()` 那一套——场景行 ID / 用户 ID / `user:<id>` / `@用户名` 都认，并在失败时给出**可以照抄的写法**；群 ID 要解释「积分是按用户算的」并列出候选，别丢一句「未找到」。
 - **指令的可见性 = 能用性**（v3.1.3 对齐）：输入框菜单（`services/command-menu.js`）与 `/help`（`registry.js` 的 `buildHelpText`）按同一条规则裁——机器人角色看 `capability`（`can(role, capability)`），本群管理员只看带 `groupAdmin: true` 的执法指令。所以新增管理指令**必须写 `capability`**，否则要么谁都看不到、要么不该看到的人也能看到。菜单要挂多套作用域（默认 / 所有群聊 / 拥有者私聊 / 每个管理员的私聊 / 每个已知群的 `chat_administrators`），**不要再退回「只认 `MY_TELEGRAM_ID`」的写法**；`commands.version` 的哈希里带了挂载目标，名单一变就重同步，失效的那份会被清空。
 - **加功能开关**：在 `src/services/features.js` 的 `FEATURES` 里加一项即可。开关是**三级**的（全局 → 群聊场景 / 私聊场景覆盖），入口在 `src/admin/features.js`；新增开关不用改管理端代码。
+  - **会主动打扰群成员的功能要写 `defaultEnabled: false`**（v3.9.0）：开关默认是「开」，但入群欢迎这类功能一升级就会往所有群发消息、限制新成员发言，必须由管理员显式打开。默认值在 `getFeatureMap` 里由 `f.defaultEnabled !== false` 决定
+  - 群级功能要在**群作用域**上判断（`isFeatureEnabled(env, buildGroupScopeKey(chatId), key)`），别用成员级 sceneKey —— 否则每个成员一份设置，管理员关了自己那份别人照样触发
 - **菜单排版**：统一用 `src/utils/layout.js`（`grid` / `compactLabel` / `clampPage` / `pagerRow` / `validateKeyboard`），不要再各写一份 `grid()`。约定：单行 ≤ 2 个按钮、整个菜单 ≤ 8 行、按钮文案 ≤ 32 字、`callback_data` ≤ 64 字节。
   - 会随数据量增长的菜单（用户列表、任务列表、商品 / 订单列表）**必须分页**，并把键盘抽成纯函数（如 `getUserListKeyboard`），方便 `test/layout.test.mjs` 直接校验排版。
-- **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。
+- **引导式输入会话必须有 30 分钟有效期**：`shop_add_sessions` / `shop_edit_sessions` / `kb_sessions` / `guard_sessions` / `shop_order_drafts` / `welcome_sessions` 的读取语句都要带 `updated_at >= datetime('now','-30 minutes')`，并由 `services/daily.js` 兜底清理——否则残留会话会一直吞掉普通消息。
 - **新增引导式会话表必须登记**：新表要 (1) 读取时带 `updated_at >= datetime('now','-30 minutes')`，(2) 加进 `services/sessions.js` 的 `GUIDE_SESSION_TABLES`（否则会和别的流程抢消息），(3) 在 `services/daily.js` 里兜底清理。参考 `group_tag_sessions`。
 - **多轮牌局状态（`blackjack_sessions`，v3.5.0）**：21 点是唯一「跨多次点击」的游戏，状态落库。新增同类玩法照这套来：
   - **余牌堆也要落库**（`deck`）：否则每次点击都重新洗牌 = 换牌。顺带让测试能塞固定牌堆做确定性断言（`BlackjackGame.start(..., deckOverride)`）
@@ -150,11 +167,12 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - **已完成订单退款**走 `actions.js` 的 `refundDoneOrder`：`done → refunded` + 收回还没使用的背包物品 + 退积分 + 回滚库存 + 写 `shop_order_log`；物品**已经用过**的一律不退 —— 注意是「**只要有一件被用过就整单不可退**」（v3.8.0 修：原先只拦「全部用完」，部分使用时会把全款退回去却只收回剩下的那几件）。限购统计要同时排除 `cancelled` 与 `refunded`。
   - **限购必须原子**（v3.8.0）：别「先 SELECT 计数、再 INSERT」，并发双击会都读到未超限。把条件写进 `INSERT ... SELECT ... WHERE (SELECT COUNT(*) ...) < limit`，只有一单能落库。
   - **`use_value` 必须 ≤ 售价**（v3.8.0）：`points` 用法的兑换值超过售价就是「买 1 分兑 100 分」的套利闭环，添加 / 编辑商品的引导流程都会拦（免费商品也不许配「换积分」）。这和游戏侧「期望值不能 > 1」是同一条底线。
+    - **改价也不能绕过它**（v3.9.0）：编辑「价格」时会校验新价 ≥ 当前 `use_value`，不通过就拒绝并提示先改用法。只堵这一条路还不够 —— 历史上已经写进库的超额配置由一条幂等迁移收敛（`UPDATE shop_items SET use_value = price WHERE use_type = 'points' AND use_value > price`）
   - 订单状态多了 `refunded`：凡是列 `statusMap` 的地方（我的订单、管理端订单列表与详情、订单键盘）都要补上。
 - **群组标签**（`services/group-tags.js` + `shop/tags.js`）：走 Telegram 的 `setChatMemberTag`，两个硬前提缺一不可——**机器人在那个群是管理员且有 `can_manage_tags`**，且**目标用户在那个群是「普通成员」**（群主 / 管理员都不行，Telegram 会回 `CHAT_CREATOR_REQUIRED`；群主的名字归「管理员头衔」管）。所以选群和收标签两处都要用 `checkTagTarget()` 前置校验，别等 Telegram 报错。标签 0~16 字符、**不允许 emoji**（服务端先校验再请求）。群名与权限检查结果缓存在 `bot_chats`（权限 1 小时），群列表来自 `user_scenes` 里的 group / supergroup。机器人已退出的群用 `getChat` 探到后隐藏，不要让用户点了才发现。
 - **时区：库里存 UTC，给人看的一律过 `formatAppTime()`**（`services/time.js`）：`CURRENT_TIMESTAMP` / `datetime('now')` 都是 UTC，比较、去重、到期判定也都按 UTC 做，别去改存储格式；只在展示时换算到 `APP_TIMEZONE`（默认 `Asia/Shanghai`，即北京时间 UTC+8）。新增任何显示 `created_at` / `updated_at` / `until_at` 的文案都要套一层，**不要再硬编码「UTC」或直接用 `toISOString()`**。
 - **定时任务分「及时型」与「日级」两层**（v3.7.0）：`runScheduledTasks` 用 `cron` 参数区分该干什么
-  - **每次 tick（`*/2 * * * *`）**：长延时自动删除（`processPendingDeletes`）、**超时牌局退款**（`cleanupTimely`）、webhook 自愈巡检
+  - **每次 tick（`*/2 * * * *`）**：长延时自动删除（`processPendingDeletes`）、**超时牌局退款**与**入群验证超时处理**（都在 `cleanupTimely` 里）、webhook 自愈巡检
   - **只在日报（`0 16 * * *` = 北京 00:00）**：`cleanupStaleData` 的全量清理、`collectDailySummary` 的统计、日报推送
   - 原先每次 tick 都会把日级清理与日报统计跑一遍（720 次/天，其中统计还是全表扫描），纯属白做 —— 新增清理 / 统计时**先想清楚它属于哪一层**
   - `reindexKnowledge` 是刻意的例外，留在每次 tick：换向量模型后靠它分批补建（每次 20 块），放日报会让 400 块补 20 天

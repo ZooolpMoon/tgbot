@@ -16,7 +16,7 @@
 import { sendAutoDelete } from "../telegram/auto-delete.js";
 import { sendMessage } from "../telegram/api.js";
 import { dispatchCommand } from "./commands/registry.js";
-import { handleAIRequest } from "./ai.js";
+import { handleAIRequest, extractQuotedText } from "./ai.js";
 import { upsertUserInfo, loadUserConfig } from "../services/users.js";
 import { isFeatureEnabled, featureLabel } from "../services/features.js";
 import { ERR } from "../config/messages.js";
@@ -30,6 +30,10 @@ import {
 } from "../admin/knowledge.js";
 import { handleKeywordAlert } from "../admin/guard.js";
 import { isGuardGuideActive, handleGuardGuideInput, cancelGuardGuide } from "../admin/guard-panel.js";
+import { handleNewMembers } from "../services/welcome.js";
+import {
+  isWelcomeGuideActive, handleWelcomeGuideInput, cancelWelcomeGuide
+} from "../admin/welcome-panel.js";
 import { isAdminGuideActive, handleAdminGuideInput, cancelAdminGuide } from "../admin/admins.js";
 import { can, getAdminRole, isBackstageRole } from "../services/admins.js";
 import { getTagSession, handleTagCancel, handleTagInput } from "../shop/tags.js";
@@ -61,6 +65,22 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
       "其他格式（图片、压缩包、PDF）请转换成文本后，用「📚 知识库 → ➕ 添加文档」粘贴进来。",
       "HTML"
     );
+    return;
+  }
+
+  // ---------- 👋 新成员入群（欢迎 / 验证）----------
+  // 服务消息没有正文，所以必须放在「没有文本就直接返回」之前。
+  // 是否真的发欢迎、要不要限制发言，都由群级配置 + 功能开关决定（默认关闭）。
+  if (isGroupCtx && Array.isArray(message.new_chat_members) && message.new_chat_members.length > 0) {
+    try {
+      await handleNewMembers({
+        env, token, chatId,
+        chatTitle: message.chat?.title || "",
+        members: message.new_chat_members
+      });
+    } catch (e) {
+      logError("入群欢迎处理失败：", e);
+    }
     return;
   }
 
@@ -110,6 +130,7 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
         && (
           (await isKnowledgeGuideActive(env, chatId))
           || (await isGuardGuideActive(env, chatId))
+          || (await isWelcomeGuideActive(env, chatId))
           || (await isAdminGuideActive(env, chatId))
         );
       if (!adminGuideActive) {
@@ -228,6 +249,18 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     }
   }
 
+  // ---------- 👋 入群欢迎语编辑（引导式输入）----------
+  if (canManageGuard && (await isWelcomeGuideActive(env, chatId))) {
+    if (isCommandLike) {
+      if (/^\/(cancel|取消)$/i.test(command)) {
+        await cancelWelcomeGuide({ env, token, chatId });
+        return;
+      }
+    } else if (await handleWelcomeGuideInput({ env, token, chatId, userText })) {
+      return;
+    }
+  }
+
   // ---------- 👑 管理员与权限：添加管理员的引导式输入（私聊与群聊都支持）----------
   if (can(role, "manage_admins") && (await isAdminGuideActive(env, chatId))) {
     if (isCommandLike) {
@@ -307,6 +340,8 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
 
   return handleAIRequest({
     env, ctx, token, chatId, userKey, sceneKey, isGroupCtx, isMaster,
-    firstName, userText, userConfig
+    firstName, userText, userConfig,
+    // 「回复某条消息 + @我」→ 把那一条的内容作为这次提问的对象（总结 / 翻译 / 解释）
+    quotedText: extractQuotedText(message.reply_to_message)
   });
 }
