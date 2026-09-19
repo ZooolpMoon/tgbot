@@ -245,6 +245,12 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   - 路由在 `index.js` 里**必须在「非 POST 一律返回部署探活文案」之前**拦下，否则 GET 永远进不来
   - 登录是一次性令牌（`web_login_tokens`，5 分钟，用过即删），**不要改成 Telegram Login Widget**：
     那需要在 BotFather 配域名，换域名就登不进去
+  - **登录链接只能放在按钮里，正文绝不要出现明文 URL**（v3.10.1 的教训）：
+    Telegram 会为了生成链接预览去抓取消息里的 URL，那一次抓取会打到 `/admin?t=...`，
+    把一次性令牌当场消费掉 —— 用户点开只剩「链接无效」，而且最难查的地方是**表里一行都不剩**。
+    同理，发任何带凭证的链接都要 `{ linkPreview: false }`（`telegram/api.js` 已支持）
+  - 令牌语义是「**首次使用后收缩到 `LOGIN_REUSE_WINDOW_SEC`（90 秒）**」，不是用过即删：
+    预览抓取的那一次不该影响用户点击。改这段请跑 `test/v310-usage-web.test.mjs`
   - 会话是 HMAC 签名的 HttpOnly + SameSite=Strict cookie，且**每次请求都重新查一次角色**——
     cookie 有效不代表还是管理员，撤权要立即生效
   - 写操作一律复用指令侧的既有函数（`banUserById` / `unbanUserById` / `resolvePointTarget`），

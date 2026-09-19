@@ -13,7 +13,7 @@ import {
   countUsage, flushUsage, readUsage, groupUsage, resetUsageBuffer, METRIC
 } from "../src/services/usage.js";
 import { summarizeUsage } from "../src/admin/usage-panel.js";
-import { handleWebAdmin, createLoginToken, csvCell } from "../src/web/admin.js";
+import { handleWebAdmin, createLoginToken, csvCell, cmdWeb } from "../src/web/admin.js";
 import { USAGE } from "../src/config/constants.js";
 
 function makeEnv(db, { aiReply = "ok" } = {}) {
@@ -116,7 +116,7 @@ test("Web 后台：未登录时给说明页，API 给 401", { skip: !hasSqlite }
   db.close();
 });
 
-test("Web 后台：一次性令牌换 cookie，令牌不能复用", { skip: !hasSqlite }, async () => {
+test("Web 后台：令牌换 cookie，且能容忍被链接预览消费一次", { skip: !hasSqlite }, async () => {
   const db = createTestDB();
   const env = makeEnv(db);
   seedUser(db, "user:999", 100);
@@ -131,9 +131,17 @@ test("Web 后台：一次性令牌换 cookie，令牌不能复用", { skip: !has
   assert.ok(cookie.includes("HttpOnly"), "cookie 必须是 HttpOnly");
   assert.ok(cookie.includes("SameSite=Strict"));
 
-  // 同一个令牌再来一次 → 已经被消费掉
+  // ⚠️ 这条曾经是「用过即失效」，线上因此翻车：Telegram 为了生成链接预览会先抓取
+  // 正文里的 URL，把一次性令牌当场消费掉，用户点开只剩「链接无效」。
+  // 现在改成「首次使用后收缩有效期」——预览消耗掉的那一次不该影响用户点击。
   const replay = await handleWebAdmin(new Request(`https://x.test/admin?t=${token}`), env);
-  assert.equal(replay.status, 401);
+  assert.equal(replay.status, 302, "预览抓取过一次后，用户点击仍要能进");
+
+  // 但窗口过后必须失效：把有效期改到过去模拟窗口结束
+  db.exec(`UPDATE web_login_tokens SET expires_at = 1 WHERE token = '${token}'`);
+  const expired = await handleWebAdmin(new Request(`https://x.test/admin?t=${token}`), env);
+  assert.equal(expired.status, 401, "窗口结束后必须失效");
+  assert.equal(db.count("web_login_tokens", "token = ?", token), 0, "过期令牌会被顺手清掉");
 
   // 带 cookie 可以访问 API
   const cookieValue = cookie.split(";")[0];
@@ -226,4 +234,39 @@ test("Web 后台：写接口会复核角色，执法员改不了用户积分", {
   assert.equal(data.error, "forbidden", "执法员不该能改积分");
   assert.equal(db.get("SELECT points FROM users WHERE user_key = 'user:1'").points, 100, "积分没被改动");
   db.close();
+});
+
+test("Web 后台：/web 只把链接放在按钮里，正文不留明文 URL", { skip: !hasSqlite }, async () => {
+  const db = createTestDB();
+  const env = { ...makeEnv(db), WEBHOOK_URL: "https://bot.example.com" };
+
+  const sent = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    sent.push({ method: String(url).split("/").pop(), body: JSON.parse(opts.body || "{}") });
+    return {
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ ok: true, result: { message_id: 1 } })
+    };
+  };
+
+  try {
+    await cmdWeb({
+      env, token: "T", chatId: "999",
+      uctx: { userId: "999" }, isGroupCtx: false
+    });
+
+    const msg = sent.find((s) => s.method === "sendMessage");
+    assert.ok(msg, "应该发出一条消息");
+    // 这是本次事故的核心守卫：正文里出现 URL 就会被 Telegram 抓取生成预览，
+    // 抓取请求会把登录令牌消费掉，用户点开只剩「链接无效」
+    assert.ok(!/https?:\/\//.test(msg.body.text), "正文不能出现明文 URL");
+    const button = msg.body.reply_markup?.inline_keyboard?.[0]?.[0];
+    assert.ok(String(button?.url || "").includes("/admin?t="), "链接要放在按钮里");
+    assert.equal(msg.body.link_preview_options?.is_disabled, true, "必须显式关闭链接预览");
+    assert.equal(db.count("web_login_tokens"), 1, "令牌要写进库");
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.close();
+  }
 });

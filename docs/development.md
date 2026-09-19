@@ -10,7 +10,7 @@ npm run deploy         # 部署（wrangler.toml）
 npm run deploy:prod    # 部署（wrangler.production.toml）
 npm run tail           # 实时看线上日志
 npm run check          # 语法 + import 路径 + 文档版本/测试数一致性自检
-npm test               # 489 个测试用例
+npm test               # 490 个测试用例
 npm run backup         # 导出线上 D1 到 backups/
 npm run backup:local   # 导出本地 D1
 npm run backup:config  # 把生产配置备份到私有仓库（需 .config-backup）

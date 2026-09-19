@@ -25,7 +25,8 @@ import { logAdminAction } from "../services/admin-log.js";
 import { banUserById, unbanUserById, resolvePointTarget } from "../services/users.js";
 import { logPointChange } from "../services/points.js";
 import { formatAppTime } from "../services/time.js";
-import { sendMessage } from "../telegram/api.js";
+import { sendMessage, sendMessageWithKeyboard } from "../telegram/api.js";
+import { logInfo } from "../core/logger.js";
 import { expectedWebhookUrl } from "../services/webhook.js";
 
 const COOKIE_NAME = "tgbot_admin";
@@ -33,6 +34,16 @@ const COOKIE_NAME = "tgbot_admin";
 const SESSION_TTL_SEC = 12 * 3600;
 /** 一次性登录令牌有效期 */
 export const LOGIN_TTL_SEC = 5 * 60;
+/**
+ * 首次使用后，令牌还能再用多久（秒）。
+ *
+ * 为什么不是「用完即删」：Telegram 会为了生成链接预览去**抓取消息里的 URL**，
+ * 那一次抓取同样打到 /admin?t=... 上，等于把一次性令牌当场消费掉 ——
+ * 用户随后点开链接只会看到「链接无效」（线上实测表里一行都不剩）。
+ * 现在改成「首次使用后把有效期收缩到 90 秒」：预览消耗掉的那次不影响用户点击，
+ * 过了窗口又确实失效，仍然远小于原来 5 分钟的可利用时间。
+ */
+export const LOGIN_REUSE_WINDOW_SEC = 90;
 
 // ==========================================
 // 🔐 令牌与签名
@@ -126,16 +137,29 @@ export async function cmdWeb({ env, token, chatId, uctx, isGroupCtx }) {
   const loginToken = await createLoginToken(env, uctx.userId);
   if (!loginToken) return sendMessage(token, chatId, "❌ 生成登录链接失败，请稍后再试。");
 
-  return sendMessage(token, chatId,
+  // ⚠️ 登录链接**只能放在按钮里**，正文里绝不要出现明文 URL：
+  // Telegram 会为了生成预览去抓取正文里的链接，那一次抓取会把令牌消费掉，
+  // 用户再点就只剩「链接无效」。同时显式关掉链接预览（双保险）。
+  const url = `${origin}/admin?t=${loginToken}`;
+  logInfo(`已生成 Web 后台登录链接（用户 ${uctx.userId}）`);
+
+  return sendMessageWithKeyboard(
+    token, chatId,
     `🖥️ <b>Web 管理后台</b>\n-------------------------\n` +
-    `<a href="${escapeHtml(origin)}/admin?t=${loginToken}">👉 点这里打开后台</a>\n\n` +
-    `链接 <b>${Math.round(LOGIN_TTL_SEC / 60)} 分钟内有效</b>，用过即失效。\n` +
+    `点下面的按钮打开（链接 <b>${Math.round(LOGIN_TTL_SEC / 60)} 分钟内有效</b>）。\n\n` +
     `登录后可看概览、搜用户、封禁 / 解封、改积分、翻审计日志、导出 CSV。\n` +
     `权限与指令侧一致：你能在后台做什么，取决于你的角色。`,
-    "HTML");
+    { inline_keyboard: [[{ text: "🖥️ 打开管理后台", url }]] },
+    "HTML",
+    { linkPreview: false }
+  );
 }
 
-/** 消费令牌（一次性：读到的同时删掉） */
+/**
+ * 校验并「使用」登录令牌。
+ * 首次使用把有效期收缩到 LOGIN_REUSE_WINDOW_SEC，过期就删掉。
+ * @returns {Promise<string|null>} 通过则返回 user_id
+ */
 async function consumeLoginToken(env, token) {
   if (!env?.DB || !token) return null;
   const nowSec = Math.floor(Date.now() / 1000);
@@ -143,9 +167,25 @@ async function consumeLoginToken(env, token) {
     "SELECT user_id, expires_at FROM web_login_tokens WHERE token = ?"
   ).bind(String(token)).first();
   if (!row) return null;
-  // 无论是否过期都删掉，避免令牌被反复试探
-  await env.DB.prepare("DELETE FROM web_login_tokens WHERE token = ?").bind(String(token)).run();
-  if (Number(row.expires_at) < nowSec) return null;
+
+  const expiresAt = Number(row.expires_at) || 0;
+  if (expiresAt < nowSec) {
+    // 过期就顺手清掉，避免表里堆着没用的行
+    await env.DB.prepare("DELETE FROM web_login_tokens WHERE token = ?").bind(String(token)).run();
+    return null;
+  }
+
+  // 收缩有效期（更新失败不该挡住登录，宽容处理）
+  try {
+    const nextExpiry = Math.min(expiresAt, nowSec + LOGIN_REUSE_WINDOW_SEC);
+    if (nextExpiry !== expiresAt) {
+      await env.DB.prepare("UPDATE web_login_tokens SET expires_at = ? WHERE token = ?")
+        .bind(nextExpiry, String(token)).run();
+    }
+  } catch (e) {
+    logError("收缩登录令牌有效期失败（本次仍放行）：", e);
+  }
+
   return String(row.user_id);
 }
 

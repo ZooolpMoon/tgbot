@@ -134,17 +134,27 @@ async function postJSON(url, body) {
   return { ok: false, error: lastError };
 }
 
-/** 发送纯文本消息；parseMode 传 "HTML" 才会解析标签 */
-export function sendMessage(token, chatId, text, parseMode = null) {
+/**
+ * 发送纯文本消息；parseMode 传 "HTML" 才会解析标签。
+ *
+ * linkPreview: false 会带上 `link_preview_options.is_disabled`。
+ * **发一次性链接时必须关掉**：Telegram 会为了生成预览去抓取消息里的 URL，
+ * 那一次抓取同样会打到我们的接口上（见 web/admin.js 的登录令牌）。
+ */
+export function sendMessage(token, chatId, text, parseMode = null, { linkPreview = true } = {}) {
   const body = { chat_id: chatId, text };
   if (parseMode) body.parse_mode = parseMode;
+  if (!linkPreview) body.link_preview_options = { is_disabled: true };
   return postJSON(`${BASE(token)}/sendMessage`, body);
 }
 
 /** 发送带 inline keyboard 的消息 */
-export function sendMessageWithKeyboard(token, chatId, text, replyMarkup, parseMode = null) {
+export function sendMessageWithKeyboard(
+  token, chatId, text, replyMarkup, parseMode = null, { linkPreview = true } = {}
+) {
   const body = { chat_id: chatId, text, reply_markup: replyMarkup };
   if (parseMode) body.parse_mode = parseMode;
+  if (!linkPreview) body.link_preview_options = { is_disabled: true };
   return postJSON(`${BASE(token)}/sendMessage`, body);
 }
 
