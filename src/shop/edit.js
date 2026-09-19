@@ -245,8 +245,14 @@ export async function handleEditItemInput({ env, token, chatId, userText, adminI
         validationError = "⚠️ 用法无效，请回复：1 仅核销 / 2 + 积分数（例如 2 100）";
       } else if (useType === USE_TYPE.POINTS) {
         const points = Number.parseInt(tail, 10);
+        const price = Number(item.price) || 0;
         if (!Number.isInteger(points) || points <= 0) {
           validationError = "⚠️ 兑换积分必须是大于 0 的整数，请重新输入（例如 2 100）：";
+        } else if (price <= 0 || points > price) {
+          // 兑换值超过售价 = 白送分，必须拦住（和游戏侧「期望值不能 > 1」同一条底线）
+          validationError =
+            `⚠️ 兑换积分不能超过售价（当前 🪙 ${price}` +
+            `${price <= 0 ? "，免费商品不能设置「使用后兑换积分」" : ""}），否则等于白送分。请重新输入：`;
         } else {
           value = { useType, useValue: points };
         }

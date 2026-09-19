@@ -219,13 +219,32 @@ export async function handleShopBuy(token, env, callback, chatId, userKey, userI
 
   let orderId = null;
   try {
+    // **原子下单**：把「限购」条件直接写进 INSERT 本体 —— 并发双击时只有一个请求能落库。
+    // 原先先 SELECT 计数、再 INSERT，两个请求会都读到「未超限」，于是产生两份订单、
+    // 两次扣分与两次扣库存，只能靠事后重新计数去取消多出来的那一单（有中间态噪音）。
     const inserted = await env.DB.prepare(`
       INSERT INTO shop_orders (order_no, user_key, user_id, chat_id, item_id, item_name, item_icon, price, status, remark)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE ? <= 0 OR (
+        SELECT COUNT(*) FROM shop_orders
+         WHERE user_key = ? AND item_id = ? AND status NOT IN ('cancelled', 'refunded')
+      ) < ?
     `).bind(
       orderNo, userKey, userId, chatId, item.id, item.name, item.icon, item.price,
-      autoDelivery ? "done" : "pending", note || ""
+      autoDelivery ? "done" : "pending", note || "",
+      perUserLimit, userKey, item.id, perUserLimit
     ).run();
+
+    if (Number(inserted?.meta?.changes) !== 1) {
+      // 条件不满足 = 名额在「扣分」与「建单」之间被抢走了：把这份扣款与库存还回去
+      if (stockDecremented) {
+        await env.DB.prepare(
+          "UPDATE shop_items SET stock = stock + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        ).bind(item.id).run();
+      }
+      await refundPoint(env, userKey, item.price, `超出限购自动退款 [${item.name}]`);
+      return answerCallback(token, callback.id, `❌ 该商品每人限购 ${perUserLimit} 件，本单已自动退款`, true);
+    }
     orderId = Number(inserted?.meta?.last_row_id) || null;
   } catch (e) {
     // 订单创建失败时回滚：退回积分，并恢复已扣减的库存。

@@ -18,6 +18,7 @@
 
 import { KB } from "../config/constants.js";
 import { logError, logWarn } from "../core/logger.js";
+import { cacheGet, cacheSet } from "./cache.js";
 
 /** 全局作用域标识 */
 export const KB_GLOBAL_SCOPE = "global";
@@ -181,10 +182,35 @@ async function embedTexts(env, texts) {
   return vectors;
 }
 
+/**
+ * 问题向量的 isolate 缓存（v3.8.0）。
+ *
+ * 群里多人问同一句「怎么签到」、或用户反复问同一个 FAQ 时，原先每次都重新调一次
+ * bge-m3 —— 既是白白烧模型额度，也给回复多加一次 AI 往返（RAG 在回答之前）。
+ * key 里带上模型名，换模型（KB_EMBED_MODEL）后缓存自然失效。
+ */
+const EMBED_CACHE_NS = "kb-query-vec";
+const EMBED_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * 规范化问题 + 带上模型名，作为缓存 key。
+ * 去空白 + 转小写：用户手滑多打几个空格、大小写不同，都该命中同一份向量
+ * （中文场景基本无歧义；英文里 "how to" 与 "howto" 会被视作同一问题，可以接受）。
+ */
+function embedCacheKey(env, text) {
+  const normalized = String(text || "").replace(/\s+/g, "").toLowerCase().slice(0, 200);
+  return `${resolveEmbedModel(env)}|${normalized}`;
+}
+
 /** 生成单个文本的向量（检索时用），失败返回 null */
 async function embedOne(env, text) {
+  const key = embedCacheKey(env, text);
+  const cached = cacheGet(EMBED_CACHE_NS, key, env.DB);
+  if (cached) return cached;
+
   try {
     const [vec] = (await embedTexts(env, [text])) || [];
+    if (vec) cacheSet(EMBED_CACHE_NS, key, vec, EMBED_CACHE_TTL_MS, env.DB);
     return vec || null;
   } catch (e) {
     logWarn("知识库向量化失败（本次降级为关键词检索）：", e?.message || e);
@@ -364,15 +390,28 @@ export async function kbStats(env, scopeKey) {
 // 检索
 // ==========================================
 
-/** 取出候选块（本场景 + 全局），带文档标题 */
-async function loadCandidateChunks(env, scopeKey) {
+/** 关键词预筛后，最多给多少条候选补读向量（TOP_K 的若干倍，留足语义排序的余地） */
+const KEYWORD_PREFILTER_LIMIT = 40;
+
+/**
+ * 取候选块（本场景 + 全局）。
+ *
+ * v3.8.0：`embedding` 是个大字段（bge-m3 1024 维 → base64 约 5.4KB/块），
+ * 满库（400 块）时全量读进来约 **2MB**，而最终只用得上 `TOP_K`(4) 条。
+ * 所以拆成两步：先读轻量列做关键词排序，再只给有希望的一小批补读向量。
+ * @param {{withEmbedding?:boolean}} [opts] false = 不读 embedding 大字段
+ */
+async function loadCandidateChunks(env, scopeKey, { withEmbedding = true } = {}) {
   const scopes = scopeKey && scopeKey !== KB_GLOBAL_SCOPE
     ? [scopeKey, KB_GLOBAL_SCOPE]
     : [KB_GLOBAL_SCOPE];
 
   const placeholders = scopes.map(() => "?").join(", ");
+  const cols = withEmbedding
+    ? "c.id, c.doc_id, c.seq, c.content, c.dim, c.embedding, d.title"
+    : "c.id, c.doc_id, c.seq, c.content, c.dim, d.title";
   const { results } = await env.DB.prepare(
-    `SELECT c.id, c.doc_id, c.seq, c.content, c.dim, c.embedding, d.title
+    `SELECT ${cols}
      FROM kb_chunks c
      JOIN kb_docs d ON d.id = c.doc_id
      WHERE d.enabled = 1 AND c.scope_key IN (${placeholders})
@@ -381,6 +420,17 @@ async function loadCandidateChunks(env, scopeKey) {
   ).bind(...scopes, KB.MAX_TOTAL_CHUNKS * 2).all();
 
   return results || [];
+}
+
+/** 按 id 补读 embedding（只读真正要算相似度的那些行） */
+async function loadEmbeddings(env, ids) {
+  const list = [...new Set((ids || []).map(Number).filter((n) => Number.isInteger(n)))];
+  if (list.length === 0) return new Map();
+  const placeholders = list.map(() => "?").join(", ");
+  const { results } = await env.DB.prepare(
+    `SELECT id, embedding FROM kb_chunks WHERE id IN (${placeholders})`
+  ).bind(...list).all();
+  return new Map((results || []).map((r) => [Number(r.id), String(r.embedding || "")]));
 }
 
 /**
@@ -397,16 +447,38 @@ export async function searchKnowledge(env, sceneKey, query, options = {}) {
 
   let rows = [];
   try {
-    rows = await loadCandidateChunks(env, sceneKey);
+    // 只读轻量列：embedding 是大字段，等关键词筛过再补读（见 loadCandidateChunks）
+    rows = await loadCandidateChunks(env, sceneKey, { withEmbedding: false });
   } catch (e) {
     logError("读取知识库失败：", e);
     return [];
   }
   if (rows.length === 0) return [];
 
+  const topK = Math.max(1, Math.floor(Number(options.topK) || KB.TOP_K));
+
+  // 关键词预筛：embedding 是 5.4KB/块的大字段，只给「看起来有戏」的一小批补读。
+  // 如果关键词**一条都没命中**（用户问法与文档用词完全不同），就退回全量读取 ——
+  // 那正是纯语义检索存在的意义，不能为了省流量把它砍掉。
+  const keywordMap = new Map(rows.map((r) => [Number(r.id), bigramScore(question, r.content)]));
+  const bestKeyword = keywordMap.size > 0 ? Math.max(0, ...keywordMap.values()) : 0;
+  const candidates = bestKeyword >= KB.MIN_SCORE_KEYWORD
+    ? [...rows]
+        .sort((a, b) => (keywordMap.get(Number(b.id)) || 0) - (keywordMap.get(Number(a.id)) || 0))
+        .slice(0, KEYWORD_PREFILTER_LIMIT)
+    : rows;
+
   const queryVec = await embedOne(env, question);
   const hasVectors = Boolean(queryVec);
-  const topK = Math.max(1, Math.floor(Number(options.topK) || KB.TOP_K));
+  let embeddingMap = new Map();
+  if (hasVectors) {
+    try {
+      embeddingMap = await loadEmbeddings(env, candidates.map((r) => r.id));
+    } catch (e) {
+      logError("读取知识库向量失败（本次只用关键词）：", e);
+    }
+  }
+
   const minScore = Number.isFinite(Number(options.minScore))
     ? Number(options.minScore)
     : (hasVectors ? KB.MIN_SCORE : KB.MIN_SCORE_KEYWORD);
@@ -414,12 +486,13 @@ export async function searchKnowledge(env, sceneKey, query, options = {}) {
     ? Number(options.strongScore)
     : KB.STRONG_SCORE;
 
-  const scored = rows.map((row) => {
-    const keyword = bigramScore(question, row.content);
+  const scored = candidates.map((row) => {
+    const keyword = keywordMap.get(Number(row.id)) || 0;
     let score = keyword;
+    const embedding = embeddingMap.get(Number(row.id));
 
-    if (hasVectors && Number(row.dim) === queryVec.length) {
-      const vec = decodeEmbedding(row.embedding);
+    if (hasVectors && Number(row.dim) === queryVec.length && embedding) {
+      const vec = decodeEmbedding(embedding);
       if (vec.length === queryVec.length) {
         // 语义相似度为主，关键词命中作为加成，避免同义改写的问法漏检
         score = cosineSimilarity(queryVec, vec) + 0.15 * keyword;

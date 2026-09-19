@@ -1,6 +1,6 @@
 {
   "name": "tgbot",
-  "version": "3.7.0",
+  "version": "3.8.0",
   "private": true,
   "type": "module",
   "description": "Telegram AI Bot on Cloudflare Workers",
@@ -13,6 +13,7 @@
     "backup": "node scripts/backup.mjs",
     "backup:local": "node scripts/backup.mjs --local",
     "backup:config": "node scripts/backup-config.mjs",
+    "backup:info": "node scripts/backup-info.mjs",
     "check": "node scripts/check.mjs",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage"

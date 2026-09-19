@@ -239,11 +239,14 @@ export async function refundDoneOrder(env, order, note = "refunded", { requireRe
       (SELECT COUNT(*) FROM user_bag_items WHERE order_id = ?)                       AS total,
       (SELECT COUNT(*) FROM user_bag_items WHERE order_id = ? AND status = 'unused') AS unused
   `).bind(order.id, order.id).first();
-  const hasBag = (Number(counts?.total) || 0) > 0;
-  const hasUnused = (Number(counts?.unused) || 0) > 0;
+  const total = Number(counts?.total) || 0;
+  const unused = Number(counts?.unused) || 0;
+  const hasBag = total > 0;
 
-  // 背包物品已经用掉：东西已经交付，不能退
-  if (hasBag && !hasUnused) return { ok: false, reason: "used" };
+  // 背包里**只要有一件被用过**，整单就不能退（AGENTS.md 的约定：物品已经用过的一律不退）。
+  // 原先只拦「全部用完」的情况：一个订单买 2 件、用了 1 件时，会把**全款**退回去，
+  // 却只回收剩下那 1 件 —— 等于白送用掉的那件。
+  if (hasBag && unused < total) return { ok: false, reason: "used" };
   // 用户自助退款只支持背包订单；人工发放的订单要管理员确认
   if (!hasBag && requireReclaimable) return { ok: false, reason: "not_bag" };
 
@@ -253,11 +256,12 @@ export async function refundDoneOrder(env, order, note = "refunded", { requireRe
   if ((Number(upd?.meta?.changes) || 0) === 0) return { ok: false, reason: "status" };
 
   if (hasBag) {
-    // 原子回收：万一这一瞬间用户正好点了「使用」，回滚订单状态，不产生「既退款又拿到东西」
+    // 到这里说明全部是 unused（上面已经拦掉部分使用的情况）
     const reclaimed = await env.DB.prepare(
       "UPDATE user_bag_items SET status = 'refunded', used_at = CURRENT_TIMESTAMP WHERE order_id = ? AND status = 'unused'"
     ).bind(order.id).run();
-    if ((Number(reclaimed?.meta?.changes) || 0) === 0) {
+    if ((Number(reclaimed?.meta?.changes) || 0) !== total) {
+      // 万一仍有物品被并发用掉：把订单状态回滚，绝不产生「既退款又拿到东西」
       await env.DB.prepare(
         "UPDATE shop_orders SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'refunded'"
       ).bind(order.id).run();

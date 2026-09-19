@@ -12,7 +12,20 @@ const BASE = (token) => `https://api.telegram.org/bot${token}`;
 
 // 429 / 5xx / 网络抖动时的退避重试次数与最大等待时间
 const MAX_ATTEMPTS = 3;
-const MAX_BACKOFF_MS = 8000;
+/**
+ * 单次退避的上限（毫秒）。
+ *
+ * 原来这里是 8000，而 Telegram 的 `retry_after` 动辄 30 秒 —— `Math.min` 一截断
+ * 就变成「等 8 秒再撞一次 429」，3 次尝试 16 秒耗尽、仍然失败（白等）。
+ * 现在听 Telegram 的，上限抬到 30 秒（webhook 侧 Telegram 等 60 秒，来得及）。
+ */
+const MAX_BACKOFF_MS = 30000;
+/**
+ * 一次请求里累计退避等待的预算（毫秒）。超了就干脆放弃重试 ——
+ * 白等完还是失败，却把 webhook 拖到 Telegram 的 60 秒超时（会触发重推）。
+ * 45 秒 = 容得下一次「Telegram 要求等 30 秒」，再留 15 秒余量。
+ */
+const BACKOFF_BUDGET_MS = 45000;
 
 /** 等待若干毫秒（退避重试用） */
 function sleep(ms) {
@@ -20,7 +33,7 @@ function sleep(ms) {
 }
 
 /** 从响应头或响应体中解析 Telegram 的 retry_after（秒） */
-function parseRetryAfter(res, json) {
+export function parseRetryAfter(res, json) {
   const fromBody = Number(json?.parameters?.retry_after);
   if (Number.isFinite(fromBody) && fromBody > 0) return fromBody;
   const header = res?.headers?.get?.("Retry-After");
@@ -30,10 +43,12 @@ function parseRetryAfter(res, json) {
 }
 
 /**
- * 计算退避时长：有 retry_after 就听 Telegram 的，否则指数退避 + 随机抖动，
- * 并且不超过 MAX_BACKOFF_MS。
+ * 计算退避时长：有 `retry_after` 就听 Telegram 的，否则指数退避 + 随机抖动，
+ * 并且不超过 `MAX_BACKOFF_MS`。
+ * @param {number} attempt 第几次尝试（从 1 开始）
+ * @param {number} retryAfterSec Telegram 要求的等待秒数（0 表示没要求）
  */
-function backoffMs(attempt, retryAfterSec) {
+export function backoffMs(attempt, retryAfterSec) {
   const base = retryAfterSec > 0
     ? retryAfterSec * 1000
     : 400 * Math.pow(2, attempt - 1);
@@ -43,9 +58,21 @@ function backoffMs(attempt, retryAfterSec) {
   return Math.min(MAX_BACKOFF_MS, base + jitter);
 }
 
+/**
+ * 这次退避是否还在总预算内。超了就**不再重试** ——
+ * 白等完还是要失败，却把 webhook 拖到 Telegram 的 60 秒超时（会触发重推）。
+ * @param {number} waited 已经等过的累计毫秒
+ * @param {number} wait 这次打算等的毫秒
+ */
+export function withinBackoffBudget(waited, wait) {
+  return waited + wait <= BACKOFF_BUDGET_MS;
+}
+
 /** 发送 JSON 请求；429 / 5xx / 网络错误按退避策略重试 */
 async function postJSON(url, body) {
   let lastError = null;
+  /** 本次请求已经等待的累计毫秒数，用来卡总预算 */
+  let waited = 0;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     let res;
@@ -59,7 +86,10 @@ async function postJSON(url, body) {
       // 网络层错误：可重试
       lastError = e;
       if (attempt >= MAX_ATTEMPTS) break;
-      await sleep(backoffMs(attempt, 0));
+      const wait = backoffMs(attempt, 0);
+      if (!withinBackoffBudget(waited, wait)) break;
+      waited += wait;
+      await sleep(wait);
       continue;
     }
 
@@ -84,10 +114,20 @@ async function postJSON(url, body) {
       return { ok: false, error: { description: `HTTP ${res.status}` } };
     }
 
+    const wait = backoffMs(attempt, retryAfter);
+    // 预算不够就别硬等：白等完还是要失败，还占着 webhook 的响应时间
+    if (!withinBackoffBudget(waited, wait)) {
+      console.warn(
+        `[Telegram API] HTTP ${res.status}，还需退避 ${Math.round(wait / 1000)}s 超出预算，放弃重试`
+      );
+      return json || { ok: false, error: { description: `HTTP ${res.status}（限流且超出退避预算）` } };
+    }
+
     console.warn(
       `[Telegram API] HTTP ${res.status}，${retryAfter > 0 ? `${retryAfter}s 后` : ""}第 ${attempt + 1} 次尝试`
     );
-    await sleep(backoffMs(attempt, retryAfter));
+    waited += wait;
+    await sleep(wait);
   }
 
   console.error("[Telegram API] 请求最终失败:", lastError);

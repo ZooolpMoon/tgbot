@@ -246,6 +246,21 @@ export async function handleAddItemInput({ env, token, chatId, userText, adminId
     await sendMessage(token, chatId, "⚠️ 积分数必须是大于 0 的整数，请重新输入：");
     return true;
   }
+  // 「用掉后换多少积分」必须 ≤ 售价：否则就是白送分 —— 买 1 分兑 100 分是稳定套利，
+  // 会把整个积分经济冲垮（和游戏侧「期望值不能 > 1」是同一条底线）。
+  const sess = await env.DB.prepare(
+    "SELECT price FROM shop_add_sessions WHERE chat_id = ?"
+  ).bind(chatId).first();
+  const price = Number(sess?.price) || 0;
+  if (price <= 0 || useValue > price) {
+    await sendMessage(
+      token, chatId,
+      `⚠️ 兑换积分数不能超过售价（当前售价 <b>${price}</b> 积分` +
+      `${price <= 0 ? "，免费商品不能设置「使用后兑换积分」" : ""}），否则等于白送分。请重新输入：`,
+      "HTML"
+    );
+    return true;
+  }
   await env.DB.prepare(
     "UPDATE shop_add_sessions SET use_value = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?"
   ).bind(useValue, chatId).run();

@@ -393,13 +393,13 @@ test("引导式添加商品：发放方式选「进背包」+ 用法选「换积
   await say("🧧");    // 图标
   await say("3");     // 发放方式：进背包
   await say("2");     // 用法：使用后换积分
-  await say("300");   // 兑换积分数
+  await say("150");   // 兑换积分数（必须 ≤ 售价 200，否则等于白送分）
 
   const item = db.get("SELECT * FROM shop_items ORDER BY id DESC LIMIT 1");
   assert.equal(item.name, "幸运红包");
   assert.equal(item.delivery, "bag");
   assert.equal(item.use_type, "points");
-  assert.equal(item.use_value, 300);
+  assert.equal(item.use_value, 150);
   assert.equal(db.count("shop_add_sessions"), 0, "会话应结束");
   db.close();
 });
@@ -417,11 +417,11 @@ test("引导式编辑：改发放方式与背包用法，改回人工发放时�
   };
 
   await edit("delivery", "3");
-  await edit("use", "2 500");
+  await edit("use", "2 5");   // 兑换 5 分（售价 10，必须 ≤ 售价）
   let item = db.get("SELECT * FROM shop_items WHERE id = ?", itemId);
   assert.equal(item.delivery, "bag");
   assert.equal(item.use_type, "points");
-  assert.equal(item.use_value, 500);
+  assert.equal(item.use_value, 5);
 
   // 改回人工发放：背包用法应被清掉，避免留下无意义的配置
   await edit("delivery", "1");

@@ -175,13 +175,19 @@ export async function handleCallback({ env, ctx, token, myId, uctx, payload }) {
   }
 
   // ==========================================
-  // 0.5 封禁校验（管理员不受限）
+  // 0.5 封禁校验（机器人管理员不受限，与 message.js 保持一致）
   // ==========================================
   if (myId && fromId !== myId && env.DB) {
     try {
       if (await isUserBlocked(env, userKey)) {
-        await answerCallback(token, callback.id, "🚫 你已被管理员限制使用本机器人", true);
-        return;
+        // 机器人管理员豁免封禁：正常途径封不了他们（banUserById / setUserBlocked 会拒绝），
+        // 这里兜住「先被封、后授权」的历史数据，否则他连 /unban 都发不出去。
+        // **只在真被封时**才多查一次角色 —— 普通用户的按钮路径不受影响。
+        const blockedRole = await getAdminRole(env, fromId, { ownerId: myId });
+        if (!blockedRole) {
+          await answerCallback(token, callback.id, "🚫 你已被管理员限制使用本机器人", true);
+          return;
+        }
       }
     } catch (e) {
       logError("封禁状态校验失败:", e);

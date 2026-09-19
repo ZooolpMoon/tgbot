@@ -71,6 +71,12 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   // （读取带 60 秒 isolate 缓存，不会每条消息都查库）
   const isMaster = Boolean(myId && userId === myId);
   const role = await getAdminRole(env, userId, { ownerId: myId });
+  // 引导式输入的门禁必须与「按钮 / 指令」用**同一套 capability**（v3.8.0 统一）：
+  // 原先这几处只认 owner，于是 admin 点了「添加文档 / 编辑群规 / 添加商品」之后，
+  // 他回复的正文不会被对应流程消费 —— 私聊里还会掉进 AI 对话，扣 1 积分且正文永久丢失。
+  const canManageShop = Boolean(role) && can(role, "manage_shop");
+  const canManageKb = Boolean(role) && can(role, "manage_kb");
+  const canManageGuard = Boolean(role) && can(role, "manage_guard");
 
   // ---------- 群聊里：只处理 @BOT 或 /指令 ----------
   const botUsername = env.BOT_USERNAME ? env.BOT_USERNAME.replace(/^@/, "").trim().toLowerCase() : null;
@@ -100,7 +106,7 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
     // 管理员正在填「知识库 / 群规」引导表单时，群里不 @ 也要放行（否则粘贴正文会被静默丢掉）
     if (!isMentioned && !isCommandLike) {
       const canManageAdmins = Boolean(role) && can(role, "manage_admins");
-      const adminGuideActive = (isMaster || canManageAdmins)
+      const adminGuideActive = canManageAdmins
         && (
           (await isKnowledgeGuideActive(env, chatId))
           || (await isGuardGuideActive(env, chatId))
@@ -155,8 +161,11 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
 
   const userConfig = await loadUserConfig(env, userKey, sceneKey);
 
-  // ---------- 封禁校验（管理员不受限）----------
-  if (userConfig.blocked && !isMaster) {
+  // ---------- 封禁校验（机器人管理员不受限）----------
+  // 用 role 而不是 isMaster：owner / admin / moderator 都该豁免。
+  // 正常途径已经封不了管理员（banUserById / setUserBlocked 会拒绝），
+  // 这里兜住「先被封、后授权」的历史数据，否则他连 /unban 都发不出去。
+  if (userConfig.blocked && !role) {
     await sendAutoDelete(token, chatId, ERR.BLOCKED, null, isGroupCtx, ctx, {
       kind: "cmd", env, sceneKey
     });
@@ -190,13 +199,13 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
 
   // ---------- 管理员引导式文本输入（添加商品 / 编辑商品字段）----------
   // 这两个流程互斥，任何一个命中都会消费掉本条消息
-  if (!isGroupCtx && isMaster && !isCommandLike) {
+  if (!isGroupCtx && canManageShop && !isCommandLike) {
     if (await handleAddItemInput({ env, token, chatId, userText, adminId: userId })) return;
     if (await handleEditItemInput({ env, token, chatId, userText, adminId: userId })) return;
   }
 
   // ---------- 知识库引导式输入（添加文档 / 检索测试，私聊与群聊都支持）----------
-  if (isMaster && (await isKnowledgeGuideActive(env, chatId))) {
+  if (canManageKb && (await isKnowledgeGuideActive(env, chatId))) {
     if (isCommandLike) {
       if (/^\/(cancel|取消)$/i.test(command)) {
         await cancelKnowledgeGuide({ env, token, chatId });
@@ -208,7 +217,7 @@ export async function handleMessage({ env, ctx, token, myId, uctx, payload, isGr
   }
 
   // ---------- 群规引导式输入（编辑 / 追加群规）----------
-  if (isMaster && (await isGuardGuideActive(env, chatId))) {
+  if (canManageGuard && (await isGuardGuideActive(env, chatId))) {
     if (isCommandLike) {
       if (/^\/(cancel|取消)$/i.test(command)) {
         await cancelGuardGuide({ env, token, chatId });

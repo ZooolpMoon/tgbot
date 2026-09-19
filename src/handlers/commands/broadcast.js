@@ -29,12 +29,12 @@ const RECIPIENTS_SQL = `
 /**
  * /broadcast：把正文写入草稿并弹出二次确认（不会直接发送）。
  * 群发对象是「私聊过机器人且未被封禁」的用户。
+ *
+ * 权限**只由注册表的 capability（`broadcast`）决定**，dispatchCommand 已经判过。
+ * v3.8.0 前这里还硬判 `isMaster`（仅 owner），结果是菜单/`/help` 会给 admin 展示
+ * /broadcast，他一点却得到「权限不足」—— 与「指令的可见性 = 能用性」的约定冲突。
  */
-export async function cmdBroadcast({ env, ctx, token, chatId, isMaster, isGroupCtx, rawText }) {
-  if (!isMaster) {
-    await sendAutoDelete(token, chatId, ERR.PERMISSION_DENIED, null, isGroupCtx, ctx);
-    return;
-  }
+export async function cmdBroadcast({ env, ctx, token, chatId, isGroupCtx, rawText }) {
   if (isGroupCtx) {
     await sendAutoDelete(token, chatId, "📢 群发消息仅支持<b>私聊</b>使用。", "HTML", isGroupCtx, ctx);
     return;

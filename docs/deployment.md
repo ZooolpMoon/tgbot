@@ -27,20 +27,47 @@ npx wrangler rollback              # 回滚到上一个版本
 | `[WARN]` | 可恢复的告警（模型回退、Telegram 限流重试、命令菜单同步失败） |
 | `[ERROR]` | 异常（会写明组件，例如「知识库向量化失败」「发送处置公告失败」） |
 
-## 数据备份
+## 数据备份与恢复
+
+数据和配置都只有一份，**两类事故要分开防**：
+
+| 方式 | 命令 | 能救什么 | 救不了什么 |
+|------|------|----------|-----------|
+| 🕰️ D1 Time Travel | `npm run backup:info` | 刚写错数据，想退回几分钟前（窗口约 30 天） | 库被删、账号级事故 |
+| 💾 SQL 快照 | `npm run backup` | 库被删、账号出问题（可以异地留存） | 只能回到最后一次导出的状态 |
+
+**两者互补，别只依赖其中一个。**
+
+### 💾 SQL 快照（建议定期跑）
 
 ```bash
 npm run backup          # 导出线上 D1 → backups/<db>-remote-<时间>.sql
 npm run backup:local    # 导出本地开发库
 ```
 
-恢复：
+- 默认**只保留最近 10 份**同类快照（`node scripts/backup.mjs --keep 20` 可调），不会把 `backups/` 撑爆
+- `backups/` 已在 `.gitignore` 中，不要提交（里面是用户数据）
+- 建议挂一个本机计划任务（`cron` / 任务计划程序）每天跑一次 —— 部署是本地行为，备份也放在本地最省事
+
+恢复（把快照重新执行一遍）：
 
 ```bash
 npx wrangler d1 execute your-db-name --remote --file=backups/xxx.sql
 ```
 
-`backups/` 已在 `.gitignore` 中，不会进仓库。建议定期导出，或用 `cron` / 计划任务定时跑 `npm run backup`。
+> ⚠️ 这是「把 SQL 再跑一遍」，**不是**清库重建。往一个已有数据的库上灌会撞主键冲突或写出重复行。
+> 想整库回滚到某个时刻，用下面的 Time Travel。
+
+### 🕰️ Time Travel（D1 自带的时间点恢复）
+
+```bash
+npm run backup:info     # 看当前可恢复的 bookmark（以及它给出的 restore 命令）
+npx wrangler d1 time-travel restore <db> --config wrangler.production.toml --bookmark=<bookmark>
+# 也可以按时间恢复：--timestamp=2026-09-19T10:00:00Z
+```
+
+- 窗口约 **30 天**，粒度细，适合「刚批量删错了东西」
+- ⚠️ 恢复是**整体回退**：库会回到那个时刻，之后的写入全部消失。动手前先 `npm run backup` 留一份当前快照，别把救火变成二次事故
 
 ## 配置备份（可选）
 
