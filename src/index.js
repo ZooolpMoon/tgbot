@@ -115,8 +115,15 @@ export default {
     try {
       await ensureSchema(env);
       const task = runScheduledTasks(env, env.BOT_TOKEN, ctx, { cron: event?.cron || null });
-      if (ctx?.waitUntil) ctx.waitUntil(task);
-      else await task;
+      // 定时任务里也会 countUsage（例如 cron.run），跑完必须把缓冲落库 ——
+      // 少了这一句，cron 里记的所有用量都会随 isolate 回收丢掉：
+      // 现象是面板上「近 7 天」永远偏低（甚至全 0），但 AI 对话那条路径却是好的。
+      const finish = async () => {
+        await task;
+        await flushUsage(env, { force: true });
+      };
+      if (ctx?.waitUntil) ctx.waitUntil(finish());
+      else await finish();
     } catch (e) {
       logError("定时任务运行异常:", e);
       await alertAdmin(env, env.BOT_TOKEN, { title: "定时任务异常", detail: e?.message || String(e) });

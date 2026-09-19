@@ -241,7 +241,14 @@ node .local/push-via-api.mjs             # 真正推送（会校验 blob/tree �
   `ctx.waitUntil(flushUsage(env, { force: true }))` 一次 batch UPSERT
   - 指标名统一 `域.动作`（`METRIC` 里有常量）；模型维度用 `modelMetric(model)`
   - **统计是近似值**（多 isolate 各算各的），文档与面板都要这么写，不要暗示它是精确计费
-- **Web 管理后台（v3.10.0，`src/web/admin.js`）**：
+- **Web 管理后台（v3.10.0，v3.10.2 起拆成 `web/admin.js` / `web/api.js` / `web/pages.js`）**：
+  - `admin.js` = 登录 / 会话 / 路由；`api.js` = 数据接口；`pages.js` = 样式与页面。
+    页面是「单页 + 原生 fetch」，**不要引入构建步骤或 CDN 依赖**
+  - 新增接口时：写操作先过 `can(viewer.role, capability)`，能复用 services / shop 层
+    函数的一律复用（封禁、订单退款都是这么做的），别在 web 层另写一套 SQL
+  - **功能开关一律写群级键**（`buildGroupScopeKey`），否则会和 Telegram 面板各写各的键
+  - 页面里的前端 JS 用字符串拼接而不是模板字符串 —— `pages.js` 整体已经是模板字符串，
+    里面再套反引号很容易出错
   - 路由在 `index.js` 里**必须在「非 POST 一律返回部署探活文案」之前**拦下，否则 GET 永远进不来
   - 登录是一次性令牌（`web_login_tokens`，5 分钟，用过即删），**不要改成 Telegram Login Widget**：
     那需要在 BotFather 配域名，换域名就登不进去

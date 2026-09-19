@@ -10,7 +10,7 @@ npm run deploy         # 部署（wrangler.toml）
 npm run deploy:prod    # 部署（wrangler.production.toml）
 npm run tail           # 实时看线上日志
 npm run check          # 语法 + import 路径 + 文档版本/测试数一致性自检
-npm test               # 490 个测试用例
+npm test               # 501 个测试用例
 npm run backup         # 导出线上 D1 到 backups/
 npm run backup:local   # 导出本地 D1
 npm run backup:config  # 把生产配置备份到私有仓库（需 .config-backup）
@@ -53,6 +53,7 @@ npm run backup:config  # 把生产配置备份到私有仓库（需 .config-back
 | `v310-automod.test.mjs` | 自动反垃圾：窗口滑出、递进档位、开关关闭不动、冷却、**owner / 群主豁免**、指令不算刷屏 |
 | `v310-features.test.mjs` | 每日群报（隐私默认关、只记文本、模型失败降级）、群内抽奖（**重复开奖不重复发奖**）、长期记忆（空回复保留缓冲） |
 | `v310-usage-web.test.mjs` | 用量统计（累加与合并）、Web 后台（一次性令牌、伪造 cookie、**撤权即失效**、执法员改不了积分） |
+| `v310-web-api.test.mjs` | Web 后台数据接口（走真实路由 + 真实 cookie）：用户限额、清记忆连画像一起清、群级开关键、改价套利守卫、订单退款（积分与库存）、兑换码、权限 |
 
 ```bash
 npm run check && npm test     # 提交前建议跑这一组
